@@ -232,7 +232,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   if (u.m->seq) trackerWatch(u);
   const ModuleDef* d = u.m->def; const Geom g = geom(u); const int x = u.x - viewX, y = u.y - viewY, w = g.w;
   if (x > c.W || y > c.H || x + w < 0 || y + g.h < 0) return;
-  static uint8_t inkTbl[64]; static bool init = false; if (!init) { for (int i = 0; i < 64; i++) inkTbl[i] = (uint8_t)i; inkTbl[9] = 28; inkTbl[18] = 29; inkTbl[21] = 30; inkTbl[4] = 47; init = true; }
+  static uint8_t inkTbl[128]; static bool init = false; if (!init) { for (int i = 0; i < 128; i++) inkTbl[i] = (uint8_t)i; inkTbl[9] = 28; inkTbl[18] = 29; inkTbl[21] = 30; inkTbl[4] = 47; init = true; }
   c.rect(x + 2, y + 2, w, g.h, 26);
   c.ink = inkTbl; c.rect(x, y, w, g.h, 27); c.frame(x, y, w, g.h, 21);
   c.ink = nullptr; const bool fl = u.m->flash.load() > 0, mu = u.m->mute.load();
@@ -319,11 +319,13 @@ void Ui::draw(Canvas& c, float dt) {
   }
   // a dropdown list
   if (dd) {
-    int w = 0; for (auto& it : dd->items) w = std::max(w, Canvas::tw(it)); w += 8; const int h = (int)dd->items.size() * 8 + 4;
+    int w = 0; for (auto& it : dd->items) w = std::max(w, Canvas::tw(it)); w += dd->sw.empty() ? 8 : 16; const int h = (int)dd->items.size() * 8 + 4;
     dd->x = std::max(2, std::min(dd->x, c.W - w)); dd->y = std::max(TOP + 1, std::min(dd->y, c.H - h - 1)); dd->w = w;
     c.rect(dd->x, dd->y + 2, w, h, 26); c.rect(dd->x - 2, dd->y, w, h, 15); c.frame(dd->x - 2, dd->y, w, h, 21);
     for (size_t i = 0; i < dd->items.size(); i++) { const int y = dd->y + 2 + (int)i * 8; if ((int)i == dd->cur) c.rect(dd->x - 1, y - 1, w - 2, 7, 21);
-      c.text(dd->items[i], dd->x + 1, y, (int)i == dd->title ? 18 : (int)i == dd->danger ? 14 : (int)i == dd->cur ? 4 : 9); }
+      const int sw = i < dd->sw.size() ? dd->sw[i] : -1, tx = dd->sw.empty() ? dd->x + 1 : dd->x + 9;   // a colour swatch in front, in the theme menus
+      if (sw >= 0) { c.rect(dd->x + 1, y, 6, 5, sw); c.frame(dd->x + 1, y, 6, 5, 21); }
+      c.text(dd->items[i], tx, y, (int)i == dd->title ? 18 : (int)i == dd->danger ? 14 : (int)i == dd->cur ? 4 : 9); }
   }
   // the name box
   if (ask) {

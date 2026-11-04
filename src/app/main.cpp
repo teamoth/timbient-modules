@@ -9,6 +9,7 @@
 #include "../ui/canvas.h"
 #include "../ui/session.h"
 #include "../ui/ui.h"
+#include "../ui/theme.h"
 #include "audio_files.h"
 #include "midi.h"
 #include <cstdio>
@@ -17,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.5.0";
+static const char* VERSION = "0.5.1";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -170,13 +171,44 @@ int main(int argc, char** argv) {
     ui.openDropdown(d);
   };
 
-  // ---- SETTINGS menu: key, scale, shared tempo, audio buffer ----
+  // ---- THEME: background, module and cable colours, remembered between launches ----
+  static Canvas canvas;
+  Theme theme = themeFrom(settings.get("theme") ? *settings.get("theme") : Json());
+  const bool pondReady = false;   // the pond background arrives in a later update
+  if (theme.bg == "pond" && !pondReady) theme.bg = "#000000";
+  applyTheme(canvas, theme);
+  auto setTheme = [&](const Theme& t) { theme = t; applyTheme(canvas, theme); settings.set("theme", themeJson(theme)); saveSettings(); };
+  std::function<void(int)> openTheme = [&](int x0) {
+    auto nameOf = [](const std::vector<Choice>& list, const std::string& v) { for (auto& c : list) if (v == c.second) return std::string(c.first); return std::string("CUSTOM"); };
+    std::string preset = "CUSTOM"; for (auto& p : presets()) if (sameTheme(p.second, theme)) preset = p.first;
+    const char* labels[6] = {"PRESET", "BACKGROUND", "MODULES", "AUDIO CABLES", "TRIG CABLES", "MOD CABLES"};
+    Dropdown d; d.x = x0; d.y = 11;
+    d.items = {std::string("PRESET  ") + preset, "BACKGROUND  " + nameOf(bgChoices(), theme.bg), "MODULES  " + nameOf(modChoices(), theme.mod), "AUDIO CABLES  " + nameOf(cableChoices(), theme.audio),
+      "TRIG CABLES  " + nameOf(cableChoices(), theme.trig), "MOD CABLES  " + nameOf(cableChoices(), theme.modc), "RESET THEME"};
+    d.pick = [&, x0, labels](int i) {
+      if (i == 6) { setTheme(Theme{}); ui.status("THEME RESET"); return; }
+      Dropdown q; q.x = x0; q.y = 11 + (i ? i * 8 : 0); const int SW = 64;
+      if (i == 0) { int k = 0; for (auto& p : presets()) { canvas.setColour(SW + k, p.second.mod.c_str()); q.items.push_back(p.first); q.sw.push_back(SW + k); if (sameTheme(p.second, theme)) q.cur = k; k++; }
+        q.pick = [&](int j) { setTheme(presets()[j].second); ui.status(std::string("THEME ") + presets()[j].first); }; ui.openDropdown(q); return; }
+      const std::vector<Choice>& list = i == 1 ? bgChoices() : i == 2 ? modChoices() : cableChoices();
+      std::string Theme::*field = i == 1 ? &Theme::bg : i == 2 ? &Theme::mod : i == 3 ? &Theme::audio : i == 4 ? &Theme::trig : &Theme::modc;
+      int k = 0; for (auto& c : list) { if (i == 1 && std::string(c.second) == "pond" && !pondReady) continue; canvas.setColour(SW + k, std::string(c.second) == "pond" ? "#1d4a52" : c.second); q.items.push_back(c.first); q.sw.push_back(SW + k); if (theme.*field == c.second) q.cur = k; k++; }
+      const std::string label = labels[i];
+      q.pick = [&, field, label, i](int j) { std::vector<Choice> l2; const std::vector<Choice>& list2 = i == 1 ? bgChoices() : i == 2 ? modChoices() : cableChoices();
+        for (auto& c : list2) if (!(i == 1 && std::string(c.second) == "pond" && !pondReady)) l2.push_back(c);
+        Theme t = theme; t.*field = l2[j].second; setTheme(t); ui.status(label + " " + l2[j].first); };
+      ui.openDropdown(q);
+    };
+    ui.openDropdown(d);
+  };
+
+  // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("VERSION ") + VERSION};
-    d.title = 4;
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "THEME", std::string("VERSION ") + VERSION};
+    d.title = 5;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
       if (i == 0) { for (int k = 0; k < 12; k++) q.items.push_back(std::string("KEY ") + NOTE_NAMES[k]); q.cur = engine.key.root.load();
@@ -198,6 +230,7 @@ int main(int argc, char** argv) {
       else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / engine.sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
         q.pick = [&](int j) { if (j == sound.bufIdx) return; sound.stop(); sound.bufIdx = j; settings.set("buffer", Json::number(j)); saveSettings();
           if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j])); }; }
+      else if (i == 4) { openTheme(x0); return; }
       else return;
       ui.openDropdown(q);
     };
@@ -210,7 +243,7 @@ int main(int argc, char** argv) {
   win = SDL_CreateWindow("Timbient Modules", 1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
   SDL_SetRenderVSync(ren, 1);
-  Canvas canvas; SDL_Texture* tex = nullptr; int texW = 0, texH = 0; float scale = 3;
+  SDL_Texture* tex = nullptr; int texW = 0, texH = 0; float scale = 3;
   bool texting = false;
   // ZOOM: small steps of about 8%, remembered between launches. The pixels are scaled up sharply at any size.
   int zoom = std::max(-18, std::min(18, (int)settings.num("zoom", 0)));

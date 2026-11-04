@@ -21,7 +21,7 @@ struct UiMod {
 struct UiCable { int from, fromPort, to, toPort, toParam; PType type; };
 
 // a list that drops down from a button: pick one item (an optional title row can't be picked)
-struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; };
+struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; };   // sw: a palette colour shown beside each item
 
 class Ui {
 public:
