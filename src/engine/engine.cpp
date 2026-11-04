@@ -91,17 +91,11 @@ void Engine::reorder() {
   soloGates(); dirty = false;
 }
 
-// SOLO: a soloed module is heard through everything after it; whatever feeds it still feeds it; nothing else passes
+// SOLO (as in SunVox): only sound-making modules (voices) can be soloed. While any voice is soloed, the other voices
+// fall silent; effects, mixers and the rest keep working on whatever still reaches them
 void Engine::soloGates() {
-  std::vector<int> solo; for (auto* m : mods) if (m->solo.load()) solo.push_back(m->id);
-  anySolo = !solo.empty();
-  if (!anySolo) { for (auto& c : cables) c.open = true; return; }
-  std::vector<int> down = solo, up = solo; bool grew = true;
-  auto has = [](const std::vector<int>& v, int x) { return std::find(v.begin(), v.end(), x) != v.end(); };
-  while (grew) { grew = false; for (auto& c : cables) { if (c.type != PType::Audio) continue;
-      if (has(down, c.from) && !has(down, c.to)) { down.push_back(c.to); grew = true; }
-      if (has(up, c.to) && !has(up, c.from)) { up.push_back(c.from); grew = true; } } }
-  for (auto& c : cables) c.open = c.type != PType::Audio || has(down, c.from) || has(up, c.to);
+  anySolo = false; for (auto* m : mods) if (m->def->cat == Cat::Voice && m->solo.load()) anySolo = true;
+  for (auto& c : cables) c.open = true;
 }
 
 void Engine::render(float* L, float* R, int n) {
@@ -125,7 +119,7 @@ void Engine::block(float* L, float* R, int n) {
     else if (midiN < 256) midiNow[midiN++] = mm; } }
   now += n / sr;
   if (dirty) reorder();
-  { int s = 0; for (auto* m : mods) if (m->solo.load(std::memory_order_relaxed)) s += m->id; if (s != soloSig) { soloSig = s; soloGates(); } }   // re-gate only when solo changes
+  { int s = 0; for (auto* m : mods) if (m->def->cat == Cat::Voice && m->solo.load(std::memory_order_relaxed)) s += m->id; if (s != soloSig) { soloSig = s; soloGates(); } }   // re-gate only when solo changes
   blockNo++;
   std::fill(masterL, masterL + n, 0.f); std::fill(masterR, masterR + n, 0.f);
   for (Module* m : order) {
@@ -161,7 +155,8 @@ void Engine::block(float* L, float* R, int n) {
       pos = at; m->trig(q.port[i], q.ev[i]); }
     if (at < n) { pos = at; m->render(at, n); }
     m->t += n / sr; m->processed = blockNo;
-    if (m->mute.load(std::memory_order_relaxed) && d->cat != Cat::Out) for (auto& o : m->out) for (auto& ch : o) std::fill(ch.begin(), ch.begin() + n, 0.f);
+    const bool silent = (m->mute.load(std::memory_order_relaxed) && d->cat != Cat::Out) || (anySolo && d->cat == Cat::Voice && !m->solo.load(std::memory_order_relaxed));
+    if (silent) for (auto& o : m->out) for (auto& ch : o) std::fill(ch.begin(), ch.begin() + n, 0.f);
     const float f = m->flash.load(std::memory_order_relaxed); if (f > 0) m->flash.store(std::max(0.f, f - n / sr), std::memory_order_relaxed);
   }
   // the master: a gentle compressor and a safety limit, then out to the sound card

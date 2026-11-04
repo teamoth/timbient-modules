@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.6.0";
+static const char* VERSION = "0.6.1";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -229,18 +229,7 @@ int main(int argc, char** argv) {
         q.pick = [&](int j) { engine.key.root.store(j); ui.status(std::string("KEY ") + NOTE_NAMES[j]); dirty = true; saveT = 0.5f; }; }
       else if (i == 1) { for (auto& s : scales()) q.items.push_back(s.name); q.cur = engine.key.scale.load();
         q.pick = [&](int j) { engine.key.scale.store(j); ui.status(std::string("SCALE ") + scales()[j].name); dirty = true; saveT = 0.5f; }; }
-      else if (i == 2) { q.items = {"TAP TEMPO", "- 1", "+ 1", "- 10", "+ 10", "50", "60", "66", "72", "80", "90", "100", "110", "120"};
-        static std::vector<double> taps;
-        std::function<void(int)> pickT; pickT = [&, x0](int j) {
-          auto setB = [&](float v) { engine.tempo.bpm.store(std::max(20.f, std::min(240.f, std::round(v)))); char b[32]; std::snprintf(b, 32, "SHARED TEMPO %d BPM", (int)engine.tempo.bpm.load()); ui.status(b); dirty = true; saveT = 0.5f; };
-          const double now = SDL_GetTicks() / 1000.0;
-          if (j == 0) { taps.erase(std::remove_if(taps.begin(), taps.end(), [&](double t) { return now - t > 3; }), taps.end()); taps.push_back(now);
-            if (taps.size() > 1) setB((float)(60.0 / ((taps.back() - taps.front()) / (taps.size() - 1)))); else ui.status("KEEP TAPPING"); }
-          else if (j <= 4) { static const int dlt[5] = {0, -1, 1, -10, 10}; setB(engine.tempo.bpm.load() + dlt[j]); }
-          else { static const int v[] = {50, 60, 66, 72, 80, 90, 100, 110, 120}; setB((float)v[j - 5]); return; }
-          SDL_Delay(0);
-        };
-        q.pick = pickT; }
+      else if (i == 2) { ui.openTempo(x0, 11 + 2 * 8); return; }
       else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / engine.sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
         q.pick = [&](int j) { if (j == sound.bufIdx) return; sound.stop(); sound.bufIdx = j; settings.set("buffer", Json::number(j)); saveSettings();
           if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j])); }; }

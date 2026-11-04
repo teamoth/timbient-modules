@@ -87,7 +87,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
       for (size_t i = 0; i < sq->a.size() && i < (size_t)Module::SEQ_MAX; i++) { const Json& st = sq->a[i];
         if (st.t == Json::ARR && st.a.size() >= 1 && st.a[0].t == Json::NUM) { u->m->seq[i * 2].store((float)st.a[0].n); u->m->seq[i * 2 + 1].store(st.a.size() > 1 && st.a[1].t == Json::NUM ? (float)st.a[1].n : 0.8f); } }
     if (const Json* p = m.get("p")) { const std::string aid = p->str("audio"); if (!aid.empty()) u->audioId = aid; u->dev = p->str("dev"); }
-    u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo")); u->fold = m.truthy("fold");
+    u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold");   // only voices solo now
     idmap[(int)m.num("id")] = u; maxId = std::max(maxId, (int)m.num("id"));
   }
   if (!findDef("out") || std::none_of(ui.mods.begin(), ui.mods.end(), [](const std::unique_ptr<UiMod>& u) { return u->m->def->type == "out"; })) ui.add("out", 340, 60);

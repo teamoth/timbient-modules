@@ -289,9 +289,9 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   }
   if (!d->fixed) { const int fy = y + g.h - FOOT + 1; for (int i = 3; i < w - 3; i += 2) c.px(x + i, fy - 2, 21);
     auto box = [&](int bx, bool on, const char* l, int col) { if (on) c.rect(bx, fy, 9, 7, col); else c.frame(bx, fy, 9, 7, 18); c.text(l, bx + 3, fy + 1, on ? 15 : 9); };
-    box(x + 3, mu, "M", 14);
-    bool hasAudioOut = false; for (auto& o : d->outs) if (o.type == PType::Audio) hasAudioOut = true;
-    if (hasAudioOut) box(x + 14, u.m->solo.load(), "S", 4);
+    if (d->cat == Cat::Trig || d->cat == Cat::Mod) {   // sequencers and mod sources: simply on or off
+      const bool on = !mu; if (on) c.rect(x + 3, fy, 15, 7, 17); else c.frame(x + 3, fy, 15, 7, 18); c.text(on ? "ON" : "OFF", x + (on ? 7 : 5), fy + 1, on ? 15 : 9); }
+    else { box(x + 3, mu, "M", 14); if (d->cat == Cat::Voice) box(x + 14, u.m->solo.load(), "S", 4); }   // only sound makers can be soloed
     box(x + w - 12, false, u.fold ? "+" : "-", 9);
     if (clocked) c.text("CLOCKED", x + w - 15 - Canvas::tw("CLOCKED"), fy + 1, 24); }
   c.ink = nullptr;
@@ -363,6 +363,17 @@ void Ui::draw(Canvas& c, float dt) {
       if (sw >= 0) { c.rect(cx + 1, y, 6, 5, sw); c.frame(cx + 1, y, 6, 5, 21); }
       c.text(dd->items[i], tx, y, i == dd->title ? 18 : i == dd->danger ? 14 : i == dd->cur ? 4 : 9); }
   }
+  // the tempo panel
+  if (tp.open) {
+    tp.x = std::max(2, std::min(tp.x, c.W - TPW - 2)); tp.y = std::max(TOP + 1, std::min(tp.y, c.H - TPH - 2)); const int x = tp.x, y = tp.y, bpm = (int)std::lround(eng.tempo.bpm.load());
+    c.rect(x + 2, y + 2, TPW, TPH, 26); c.rect(x, y, TPW, TPH, 15); c.frame(x, y, TPW, TPH, 21);
+    c.text("SHARED TEMPO", x + 4, y + 3, 18); const std::string v = std::to_string(bpm) + " BPM"; c.text(v, x + TPW - 4 - Canvas::tw(v), y + 3, 4);
+    auto btn = [&](int bx, int by, int w, const char* l) { c.frame(bx, by, w, 7, 18); c.text(l, bx + (w - Canvas::tw(l)) / 2, by + 1, 9); };
+    btn(x + 4, y + 11, 9, "-"); btn(x + TPW - 13, y + 11, 9, "+");
+    const int tx = x + 17, tw = TPW - 34, fx = tx + (int)std::lround((bpm - 20) / 220.f * (tw - 1));
+    for (int i = 0; i < tw; i += 2) c.px(tx + i, y + 14, 18); for (int i = tx; i < fx; i++) c.px(i, y + 14, 7); c.rect(fx - 1, y + 12, 3, 5, 4);
+    btn(x + 4, y + 21, 21, "TAP"); btn(x + 29, y + 21, 17, "-10"); btn(x + 50, y + 21, 17, "+10");
+  }
   // the name box
   if (ask) {
     const int w = std::min(c.W - 10, 150), h = 34, x = (c.W - w) / 2, y = TOP + 30;
@@ -389,6 +400,21 @@ void Ui::keysPress(UiMod& u, int x, int y) {
   eng.trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;
 }
 
+void Ui::setBpm(float v) { const float b = std::round(clampf(v, 20, 240)); eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); changed(); }
+bool Ui::tempoDown(float sx, float sy) {   // true if the tap was inside the panel
+  const int x = tp.x, y = tp.y; if (sx < x || sx >= x + TPW || sy < y || sy >= y + TPH) return false;
+  const float bpm = eng.tempo.bpm.load();
+  if (sy >= y + 10 && sy < y + 19) {
+    if (sx < x + 15) setBpm(bpm - 1); else if (sx >= x + TPW - 15) setBpm(bpm + 1);
+    else { drag.kind = D_TEMPO; pointerMove(sx, sy); }
+  } else if (sy >= y + 20 && sy < y + 29) {
+    if (sx >= x + 4 && sx < x + 25) { taps.erase(std::remove_if(taps.begin(), taps.end(), [&](float t) { return blink - t > 3; }), taps.end()); taps.push_back(blink);
+      if (taps.size() > 1) setBpm(60.f / ((taps.back() - taps.front()) / (taps.size() - 1))); else status("KEEP TAPPING", 1.5f); }
+    else if (sx >= x + 29 && sx < x + 46) setBpm(bpm - 10); else if (sx >= x + 50 && sx < x + 67) setBpm(bpm + 10);
+  }
+  return true;
+}
+
 void Ui::pointerDown(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY;
   drag = Drag(); drag.sx = sx; drag.sy = sy; drag.wx = wx; drag.wy = wy;
@@ -397,6 +423,7 @@ void Ui::pointerDown(float sx, float sy) {
     if (sy >= y + 22 && sy <= y + 32) { if (sx >= x + 3 && sx <= x + 16) keyEnter(); else if (sx >= x + 21 && sx <= x + 50) keyEscape(); }
     return;
   }
+  if (tp.open) { if (!tempoDown(sx, sy)) tp.open = false; return; }   // a tap away closes it
   if (dd) {   // a tap picks from the open list, or closes it
     auto d0 = std::move(dd); const int r = (int)std::floor((sy - d0->y - 1) / 8), col = (int)std::floor((sx - d0->x + 2) / std::max(1, d0->colW)), i = col * d0->rows + r;
     if (sx >= d0->x - 2 && sx < d0->x - 2 + d0->w && r >= 0 && r < d0->rows && i >= 0 && i < (int)d0->items.size() && i != d0->title && d0->pick) d0->pick(i);
@@ -435,8 +462,12 @@ void Ui::pointerDown(float sx, float sy) {
       q.pick = [this, u](int i) { if (i == 1) { status("REMOVED " + u->m->def->name); remove(u); changed(); } }; openDropdown(q); return; }
     drag.kind = D_MOVE; drag.m = u; drag.ox = wx - u->x; drag.oy = wy - u->y; return; }
   if (!d->fixed && ly >= g.h - FOOT) {
-    if (lx >= 3 && lx < 12) { u->m->mute.store(!u->m->mute.load()); status(std::string(u->m->mute.load() ? "MUTED " : "UNMUTED ") + d->name); changed(); return; }
-    if (lx >= 14 && lx < 23) { u->m->solo.store(!u->m->solo.load()); status(std::string(u->m->solo.load() ? "SOLO " : "UNSOLO ") + d->name); changed(); return; }
+    const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod;
+    if (onOff && lx >= 3 && lx < 18) { u->m->mute.store(!u->m->mute.load()); status(d->name + (u->m->mute.load() ? " OFF" : " ON")); changed(); return; }
+    if (!onOff && lx >= 3 && lx < 12) { u->m->mute.store(!u->m->mute.load()); status(std::string(u->m->mute.load() ? "MUTED " : "UNMUTED ") + d->name); changed(); return; }
+    if (d->cat == Cat::Voice && lx >= 14 && lx < 23) { u->m->solo.store(!u->m->solo.load());
+      bool any = false; for (auto& up : mods) if (up->m->def->cat == Cat::Voice && up->m->solo.load()) any = true;
+      status(u->m->solo.load() ? "SOLO " + d->name + ": OTHER VOICES SILENT, EFFECTS STILL WORKING" : any ? "UNSOLO " + d->name : "SOLO OFF: EVERY VOICE PLAYS", 3); changed(); return; }
     if (lx >= g.w - 13 && lx < g.w - 2) { u->fold = !u->fold; changed(); return; }
   }
   // the module's own display (Note Grid pads, the Output's crossfader)
@@ -485,6 +516,7 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_PARAM && drag.held) {}
   else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 ? 40.f : 70.f));
     drag.m->m->p[drag.k].store(v); status(drag.m->m->def->name + "  " + q.label + "  " + fmtParam(q, v, eng.key.root.load()), 1.5f); }
+  else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng.tempo.bpm.load())) { eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
   else if (drag.kind == D_SCROLL) { drag.m->hold = 6; drag.m->scroll = drag.n0 - (sy - drag.sy) / 6; trClamp(*drag.m); }
   else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
     drag.m->m->p[drag.m->m->def->paramIndex("xf")].store(v); char b[32]; std::snprintf(b, 32, "CROSSFADE  A %d / B %d", (int)std::lround((1 - v) * 100), (int)std::lround(v * 100)); status(b, 1); }
@@ -492,6 +524,7 @@ void Ui::pointerMove(float sx, float sy) {
 
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
+  if (d.kind == D_TEMPO) { changed(); return; }
   if (d.kind == D_GRAB) { sel = d.grab; selT = 2.5f; status(cableName(d.grab) + "  (PULL IT AWAY TO UNPLUG)", 2.5f); return; }
   if (d.kind == D_MOVE && d.splice >= 0 && d.splice < (int)cables.size()) {   // drop an effect into a cable
     const UiCable c0 = cables[d.splice]; UiMod *a = byId(c0.from), *b = byId(c0.to), *m = d.m;

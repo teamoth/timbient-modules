@@ -146,7 +146,7 @@ struct Lfo : Module {
 static Reg rLfo(new ModuleDef{"lfo", "LFO", Cat::Mod, {{"CLOCK", PType::Trig}}, {{"MOD", PType::Mod}},
   {OP("shape", "SHAPE", {"SINE", "TRI", "SQUARE", "RANDOM", "DRIFT"}, 4),
    only(fmt(prExp("rate", "RATE", 0.05f, 300, 20), [](float v) { char b[16]; if (v < 1) std::snprintf(b, 16, "%.1fHZ", 1 / v); else if (v < 10) std::snprintf(b, 16, "%.1fS", v); else std::snprintf(b, 16, "%dS", (int)v); return std::string(b); }), "free"),
-   only(OP("sync", "SYNC", {"1/4 BEAT", "1/2 BEAT", "1 BEAT", "2 BEATS", "4 BEATS", "8 BEATS", "16 BEATS", "32 BEATS"}, 4), "clock"),
+   OP("sync", "SYNC", {"1/4 BEAT", "1/2 BEAT", "1 BEAT", "2 BEATS", "4 BEATS", "8 BEATS", "16 BEATS", "32 BEATS"}, 4),   // drawn like the other settings (it is used once a clock is patched in)
    pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 0)}, 7, 58, false, [] { return new Lfo(); }});
 
 // ---------------- OUTPUT: crossfade A/B, level, murk, to the master ----------------

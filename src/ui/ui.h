@@ -55,7 +55,9 @@ public:
   void pointerMove(float x, float y);
   void pointerUp(float x, float y);
   void status(const std::string& s, float t = 2) { statusMsg = s; statusT = t; }
-  void openDropdown(Dropdown d) { dd = std::make_unique<Dropdown>(std::move(d)); menuOpen = false; }
+  void openDropdown(Dropdown d) { dd = std::make_unique<Dropdown>(std::move(d)); menuOpen = false; tp.open = false; }
+  // the shared tempo: a small panel with a slider, - and + buttons and tap tempo; it stays open until you tap somewhere else
+  void openTempo(int x, int y) { tp.open = true; tp.x = x; tp.y = y; dd.reset(); menuOpen = false; }
   // a small box for typing a name
   struct Ask { std::string title, text; std::function<void(const std::string&)> done; };
   std::unique_ptr<Ask> ask;
@@ -85,12 +87,16 @@ private:
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; UiCable grab{}; int splice = -1; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO };
   // cables as curves you can touch
   bool cableEnds(const UiCable& c, float& ax, float& ay, float& bx, float& by);
   int cableAt(int wx, int wy, float maxD, bool audioOnly = false);
   std::string cableName(const UiCable& c);
   UiCable sel{}; float selT = 0;      // a cable tapped: shown brighter for a moment
+  struct TempoPanel { bool open = false; int x = 0, y = 0; } tp; std::vector<float> taps;
+  static constexpr int TPW = 126, TPH = 31;
+  void setBpm(float v);
+  bool tempoDown(float sx, float sy);
   std::unique_ptr<Dropdown> dd; bool menuOpen = false; int lastW = 400; float blink = 0;
   struct MenuItem { std::string type; int x, y, w; };
   std::vector<MenuItem> menuItems;
