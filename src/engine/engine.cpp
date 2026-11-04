@@ -28,6 +28,7 @@ Module* Engine::create(const std::string& type, int id) {
   const size_t np = d->params.size();
   m->p.reset(new std::atomic<float>[np]); for (size_t i = 0; i < np; i++) m->p[i].store(d->params[i].def);
   m->e.assign(np, 0.f); for (size_t i = 0; i < np; i++) m->e[i] = d->params[i].def;
+  m->eff.reset(new std::atomic<float>[np]); for (size_t i = 0; i < np; i++) m->eff[i].store(d->params[i].def);
   m->in.resize(d->ins.size()); m->out.resize(d->outs.size());
   for (auto& b : m->in) for (auto& c : b) c.fill(0.f);
   for (auto& b : m->out) for (auto& c : b) c.fill(0.f);
@@ -141,6 +142,7 @@ void Engine::block(float* L, float* R, int n) {
         nn += (dir < 0.5f ? v * 0.5f : dir < 1.5f ? (v + 1.f) / 2.f : -(v + 1.f) / 2.f) * depth; modded = true;
       }
       m->e[k] = modded ? q.fromNorm(nn) : b;
+      m->eff[k].store(m->e[k], std::memory_order_relaxed);
     }
     // audio inputs: the sum of every open cable into each input
     for (size_t i = 0; i < d->ins.size(); i++) { if (d->ins[i].type != PType::Audio) continue; for (auto& ch : m->in[i]) std::fill(ch.begin(), ch.begin() + n, 0.f); }

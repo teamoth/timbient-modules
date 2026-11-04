@@ -78,21 +78,21 @@ static Reg rClump(new ModuleDef{"clump", "CLUMP SEQ", Cat::Trig, {{"CLOCK", PTyp
 
 // ---------------- ORBITS ----------------
 struct Orbits : Module {
-  float ang[8], fl[8]; int n = 0; ClockIn ck;
+  double ang[8]; float fl[8]; int n = 0; ClockIn ck;   // angles in double, kept within one turn: a float angle that keeps growing loses its small steps and the rings stall
   enum { VEL, CHANCE, RINGS, SPEED, PHASE, HITS, OCT };
-  void prepare() override { for (int i = 0; i < 8; i++) { ang[i] = rng.uni() * TAU; fl[i] = 0; } }
+  void prepare() override { for (int i = 0; i < 8; i++) { ang[i] = rng.uni() * 6.283185307179586; fl[i] = 0; } }
   void blockStart(int nn) override { clockedIn.store(patched(0)); for (int i = 0; i < 8; i++) fl[i] = std::max(0.f, fl[i] - nn / sr); }
   void trig(int port, const Event& ev) override { if (port == 0) ck.tick(t + eng->pos / sr, ev); }
   void render(int a, int b) override {
     n = (int)e[RINGS];
     const float base = clockedIn.load() && ck.cp > 0 ? TAU / (ck.cp * (float)ORBIT_TABLE[std::min(7, (int)(e[SPEED] * 8))]) : 0.5f + e[SPEED] * 4;
-    const float step = TAU / e[HITS];
+    const double step = 6.283185307179586 / e[HITS];
     for (int i = a; i < b; i++) for (int r = 0; r < n; r++) {
-      const float w = base * (1 + e[PHASE] * r * 0.13f) / (1 + r * 0.12f) * (r & 1 ? -1 : 1), pv = ang[r]; ang[r] += w / sr;
+      const double w = base * (1 + e[PHASE] * r * 0.13f) / (1 + r * 0.12f) * (r & 1 ? -1 : 1), pv = ang[r]; ang[r] += w / sr;
       if (std::floor(pv / step) != std::floor(ang[r] / step)) { fl[r] = 0.15f; eng->pos = i; Event ev; ev.note = note((int)e[OCT], n - 1 - r); ev.vel = e[VEL]; emit(0, ev); }
-      if (std::fabs(ang[r]) > 1e4f) ang[r] = std::fmod(ang[r], TAU);
+      if (ang[r] >= 6.283185307179586) ang[r] -= 6.283185307179586; else if (ang[r] < 0) ang[r] += 6.283185307179586;   // a whole turn is a whole number of HITS steps, so crossings are unchanged
     }
-    disp[0].store((float)n); for (int r = 0; r < 8; r++) { disp[1 + r].store(ang[r]); disp[9 + r].store(fl[r]); }
+    disp[0].store((float)n); for (int r = 0; r < 8; r++) { disp[1 + r].store((float)ang[r]); disp[9 + r].store(fl[r]); }
   }
 };
 static Reg rOrbits(new ModuleDef{"orbits", "ORBITS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},

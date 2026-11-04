@@ -21,7 +21,7 @@ struct UiMod {
 struct UiCable { int from, fromPort, to, toPort, toParam; PType type; };
 
 // a list that drops down from a button: pick one item (an optional title row can't be picked)
-struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; };   // sw: a palette colour shown beside each item
+struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; int rows = 1, colW = 60; };   // sw: a palette colour shown beside each item
 
 class Ui {
 public:
@@ -72,7 +72,7 @@ public:
 private:
   UiMod* hit(int wx, int wy, int& lx, int& ly);
   struct JackHit { UiMod* u = nullptr; bool out = false; int port = -1; PType type = PType::Audio; int x = 0, y = 0; };
-  JackHit jackAt(int wx, int wy);
+  JackHit jackAt(int wx, int wy, int tol = 3);
   int paramAt(UiMod* u, int ly);
   void drawModule(Canvas& c, UiMod& u, float dt);
   void drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt);
@@ -84,8 +84,13 @@ private:
   void trackerWatch(UiMod& u);
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
-    JackHit from; bool rev = false; int wx = 0, wy = 0; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL };
+    JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; UiCable grab{}; int splice = -1; } drag;
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB };
+  // cables as curves you can touch
+  bool cableEnds(const UiCable& c, float& ax, float& ay, float& bx, float& by);
+  int cableAt(int wx, int wy, float maxD, bool audioOnly = false);
+  std::string cableName(const UiCable& c);
+  UiCable sel{}; float selT = 0;      // a cable tapped: shown brighter for a moment
   std::unique_ptr<Dropdown> dd; bool menuOpen = false; int lastW = 400; float blink = 0;
   struct MenuItem { std::string type; int x, y, w; };
   std::vector<MenuItem> menuItems;

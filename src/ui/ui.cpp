@@ -74,21 +74,47 @@ UiMod* Ui::hit(int wx, int wy, int& lx, int& ly) {
     if (wx >= u.x && wx < u.x + g.w && wy >= u.y && wy < u.y + g.h) { lx = wx - u.x; ly = wy - u.y; return &u; } }
   return nullptr;
 }
-Ui::JackHit Ui::jackAt(int wx, int wy) {
+Ui::JackHit Ui::jackAt(int wx, int wy, int tol) {
   for (int i = (int)mods.size() - 1; i >= 0; i--) { UiMod& u = *mods[i]; const ModuleDef* d = u.m->def;
-    for (size_t k = 0; k < d->ins.size(); k++) { const int jx = u.x, jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= 3 && std::abs(wy - jy) <= 3) return {&u, false, (int)k, d->ins[k].type, jx, jy}; }
-    for (size_t k = 0; k < d->outs.size(); k++) { const int jx = u.x + d->width - 1, jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= 3 && std::abs(wy - jy) <= 3) return {&u, true, (int)k, d->outs[k].type, jx, jy}; } }
+    for (size_t k = 0; k < d->ins.size(); k++) { const int jx = u.x, jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol) return {&u, false, (int)k, d->ins[k].type, jx, jy}; }
+    for (size_t k = 0; k < d->outs.size(); k++) { const int jx = u.x + d->width - 1, jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol) return {&u, true, (int)k, d->outs[k].type, jx, jy}; } }
   return {};
 }
 int Ui::paramAt(UiMod* u, int ly) { const Geom g = geom(*u); const int j = (ly - g.py) / ROW; return !u->fold && ly >= g.py && j >= 0 && j < (int)u->m->def->params.size() ? j : -1; }
 
 // ---------------- drawing ----------------
-void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col) {
-  const float d = std::hypot((float)(bx - ax), (float)(by - ay)), sag = std::min(30.f, d * 0.25f) + 6;
-  const int steps = std::max(8, (int)(d / 2)); int px0 = ax, py0 = ay;
-  for (int i = 1; i <= steps; i++) { const float t = (float)i / steps, x = ax + (bx - ax) * t, y = ay + (by - ay) * t + sag * 4 * t * (1 - t);
-    const int xi = (int)std::lround(x), yi = (int)std::lround(y); c.line(px0, py0, xi, yi, col); px0 = xi; py0 = yi; }
+// a cable hangs as a curve that sags between its ends (the same shape as the web version)
+static inline void cablePt(float ax, float ay, float bx, float by, float t, float& x, float& y) {
+  const float sag = std::min(28.f, std::hypot(bx - ax, by - ay) * 0.3f + 4), mx = (ax + bx) / 2, my = (ay + by) / 2 + sag;
+  x = (1 - t) * (1 - t) * ax + 2 * (1 - t) * t * mx + t * t * bx; y = (1 - t) * (1 - t) * ay + 2 * (1 - t) * t * my + t * t * by;
 }
+void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col) {
+  int px0 = ax, py0 = ay;
+  for (int i = 1; i <= 20; i++) { float x, y; cablePt((float)ax, (float)ay, (float)bx, (float)by, i / 20.f, x, y); const int xi = (int)std::lround(x), yi = (int)std::lround(y); c.line(px0, py0, xi, yi, col); px0 = xi; py0 = yi; }
+}
+bool Ui::cableEnds(const UiCable& cb, float& ax, float& ay, float& bx, float& by) {
+  UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) return false;
+  ax = (float)(a->x + a->m->def->width - 1); ay = (float)(a->y + jackY(cb.fromPort));
+  if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = (float)(b->x + 2); by = (float)(b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3)); }
+  else { bx = (float)b->x; by = (float)(b->y + jackY(cb.toPort)); }
+  return true;
+}
+int Ui::cableAt(int wx, int wy, float maxD, bool audioOnly) {   // the nearest cable within maxD pixels, or -1
+  int best = -1; float bd = maxD;
+  for (size_t k = 0; k < cables.size(); k++) { const UiCable& cb = cables[k]; if (audioOnly && cb.type != PType::Audio) continue; float ax, ay, bx, by; if (!cableEnds(cb, ax, ay, bx, by)) continue;
+    float x0 = ax, y0 = ay;
+    for (int i = 1; i <= 20; i++) { float x1, y1; cablePt(ax, ay, bx, by, i / 20.f, x1, y1);
+      const float vx = x1 - x0, vy = y1 - y0, l = std::max(1e-6f, vx * vx + vy * vy), t = clampf(((wx - x0) * vx + (wy - y0) * vy) / l, 0, 1), d = std::hypot(wx - x0 - t * vx, wy - y0 - t * vy);
+      if (d < bd) { bd = d; best = (int)k; } x0 = x1; y0 = y1; } }
+  return best;
+}
+std::string Ui::cableName(const UiCable& cb) {
+  UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) return "";
+  std::string s = a->m->def->name + " > " + b->m->def->name;
+  if (cb.type == PType::Mod) s += " " + b->m->def->params[cb.toParam].label; else if (b->m->def->ins[cb.toPort].name != "IN") s += " " + b->m->def->ins[cb.toPort].name;
+  return s;
+}
+static bool sameCable(const UiCable& x, const UiCable& k) { return x.from == k.from && x.fromPort == k.fromPort && x.to == k.to && x.toPort == k.toPort && x.toParam == k.toParam && x.type == k.type; }
 void Ui::drawJack(Canvas& c, int jx, int jy, PType t, bool conn, bool lit) {
   const int col = lit ? 46 : typeCol(t);
   if (t == PType::Trig) { for (int k = -2; k <= 2; k++) { const int s = 2 - std::abs(k); c.px(jx + k, jy - s, col); c.px(jx + k, jy + s, col); if (conn) for (int q = -s; q <= s; q++) c.px(jx + k, jy + q, col); } }
@@ -256,9 +282,10 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     bool modded = false; for (auto& cb : cables) if (cb.type == PType::Mod && cb.to == u.m->id && cb.toParam == (int)j) modded = true;
     if (modded) c.px(x + 2, ry + 3, 11);
     if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, 6); c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
-    const int bx = x + 35, bw = w - 38; const float nb = clampf(q.toNorm(v), 0, 1);
+    const int bx = x + 35, bw = w - 38; const float nb = clampf(q.toNorm(v), 0, 1), n = modded ? clampf(q.toNorm(u.m->eff[j].load(std::memory_order_relaxed)), 0, 1) : nb;
     for (int i = 0; i < bw; i += 2) c.px(bx + i, ry + 4, 18);
-    const int fw = (int)std::lround(nb * bw); for (int i = 0; i < fw; i++) { c.px(bx + i, ry + 4, active ? 4 : idle ? 21 : modded ? 11 : 7); if (active) c.px(bx + i, ry + 3, 4); }
+    const int fw = (int)std::lround(n * bw); for (int i = 0; i < fw; i++) { c.px(bx + i, ry + 4, active ? 4 : idle ? 21 : modded ? 11 : 7); if (active) c.px(bx + i, ry + 3, 4); }   // modulated: green, and moving with it
+    if (modded) { const int bxm = bx + (int)std::lround(nb * (bw - 1)); c.px(bxm, ry + 2, 9); c.px(bxm, ry + 3, 9); c.px(bxm, ry + 5, 9); }   // where you set it
   }
   if (!d->fixed) { const int fy = y + g.h - FOOT + 1; for (int i = 3; i < w - 3; i += 2) c.px(x + i, fy - 2, 21);
     auto box = [&](int bx, bool on, const char* l, int col) { if (on) c.rect(bx, fy, 9, 7, col); else c.frame(bx, fy, 9, 7, 18); c.text(l, bx + 3, fy + 1, on ? 15 : 9); };
@@ -280,8 +307,14 @@ void Ui::draw(Canvas& c, float dt) {
     UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) continue;
     const int ax = a->x + a->m->def->width - 1 - viewX, ay = a->y + jackY(cb.fromPort) - viewY;
     int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = b->x + 2 - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3) - viewY; } else { bx = b->x - viewX; by = b->y + jackY(cb.toPort) - viewY; }
-    drawCable(c, ax, ay, bx, by, a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type));
+    const bool hi = (selT > 0 && sameCable(cb, sel)) || (drag.kind == D_MOVE && drag.splice >= 0 && drag.splice < (int)cables.size() && sameCable(cb, cables[drag.splice]));
+    drawCable(c, ax, ay, bx, by, hi ? 4 : a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type));
   }
+  selT = std::max(0.f, selT - dt);
+  // a long press on a modulated setting pulls its mod cable off
+  if (drag.kind == D_PARAM && !drag.moved && !drag.held) { drag.holdT += dt;
+    if (drag.holdT > 0.6f) for (int k = (int)cables.size() - 1; k >= 0; k--) if (cables[k].type == PType::Mod && cables[k].to == drag.m->m->id && cables[k].toParam == drag.k) {
+      const UiCable c0 = cables[k]; unplug(c0); status("UNPLUGGED MOD FROM " + drag.m->m->def->params[drag.k].label); drag.held = true; changed(); break; } }
   // a cable being dragged, and the jacks it could go to
   if (drag.kind == D_CABLE) {
     drawCable(c, drag.from.x - viewX, drag.from.y - viewY, drag.wx - viewX, drag.wy - viewY, 4);
@@ -319,13 +352,16 @@ void Ui::draw(Canvas& c, float dt) {
   }
   // a dropdown list
   if (dd) {
-    int w = 0; for (auto& it : dd->items) w = std::max(w, Canvas::tw(it)); w += dd->sw.empty() ? 8 : 16; const int h = (int)dd->items.size() * 8 + 4;
-    dd->x = std::max(2, std::min(dd->x, c.W - w)); dd->y = std::max(TOP + 1, std::min(dd->y, c.H - h - 1)); dd->w = w;
+    // a long list wraps into columns so it always fits on screen
+    int cw = 0; for (auto& it : dd->items) cw = std::max(cw, Canvas::tw(it)); cw += dd->sw.empty() ? 8 : 16;
+    const int n = (int)dd->items.size(), rowsFit = std::max(1, (c.H - TOP - 8) / 8), cols = (n + rowsFit - 1) / rowsFit, rows = (n + cols - 1) / cols;
+    const int w = cw * cols, h = rows * 8 + 4;
+    dd->x = std::max(2, std::min(dd->x, c.W - w)); dd->y = std::max(TOP + 1, std::min(dd->y, c.H - h - 1)); dd->w = w; dd->rows = rows; dd->colW = cw;
     c.rect(dd->x, dd->y + 2, w, h, 26); c.rect(dd->x - 2, dd->y, w, h, 15); c.frame(dd->x - 2, dd->y, w, h, 21);
-    for (size_t i = 0; i < dd->items.size(); i++) { const int y = dd->y + 2 + (int)i * 8; if ((int)i == dd->cur) c.rect(dd->x - 1, y - 1, w - 2, 7, 21);
-      const int sw = i < dd->sw.size() ? dd->sw[i] : -1, tx = dd->sw.empty() ? dd->x + 1 : dd->x + 9;   // a colour swatch in front, in the theme menus
-      if (sw >= 0) { c.rect(dd->x + 1, y, 6, 5, sw); c.frame(dd->x + 1, y, 6, 5, 21); }
-      c.text(dd->items[i], tx, y, (int)i == dd->title ? 18 : (int)i == dd->danger ? 14 : (int)i == dd->cur ? 4 : 9); }
+    for (int i = 0; i < n; i++) { const int cx = dd->x + (i / rows) * cw, y = dd->y + 2 + (i % rows) * 8; if (i == dd->cur) c.rect(cx - 1, y - 1, cw - 2, 7, 21);
+      const int sw = i < (int)dd->sw.size() ? dd->sw[i] : -1, tx = dd->sw.empty() ? cx + 1 : cx + 9;   // a colour swatch in front, in the theme menus
+      if (sw >= 0) { c.rect(cx + 1, y, 6, 5, sw); c.frame(cx + 1, y, 6, 5, 21); }
+      c.text(dd->items[i], tx, y, i == dd->title ? 18 : i == dd->danger ? 14 : i == dd->cur ? 4 : 9); }
   }
   // the name box
   if (ask) {
@@ -362,8 +398,8 @@ void Ui::pointerDown(float sx, float sy) {
     return;
   }
   if (dd) {   // a tap picks from the open list, or closes it
-    auto d0 = std::move(dd); const int i = (int)((sy - d0->y - 1) / 8);
-    if (sx >= d0->x - 2 && sx < d0->x - 2 + d0->w && i >= 0 && i < (int)d0->items.size() && i != d0->title && d0->pick) d0->pick(i);
+    auto d0 = std::move(dd); const int r = (int)std::floor((sy - d0->y - 1) / 8), col = (int)std::floor((sx - d0->x + 2) / std::max(1, d0->colW)), i = col * d0->rows + r;
+    if (sx >= d0->x - 2 && sx < d0->x - 2 + d0->w && r >= 0 && r < d0->rows && i >= 0 && i < (int)d0->items.size() && i != d0->title && d0->pick) d0->pick(i);
     return;
   }
   if (menuOpen) { for (auto& it : menuItems) if (sx >= it.x - 1 && sx < it.x + it.w && sy >= it.y - 1 && sy < it.y + 7) {
@@ -381,6 +417,14 @@ void Ui::pointerDown(float sx, float sy) {
     drag.from = j; drag.rev = true; return;
   }
   int lx, ly; UiMod* u = hit(wx, wy, lx, ly);
+  // a cable under the pointer: tap to see it, pull it away to unplug it. Title bars and a module's own controls still win
+  if (!u || ly >= HEAD) {
+    bool onControl = false;
+    if (u) { const Geom g0 = geom(*u); const ModuleDef* d0 = u->m->def;
+      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + d0->vis && (d0->type == "keys" || d0->type == "out" || d0->type == "tracker")); }
+    const int ci = onControl ? -1 : cableAt(wx, wy, u ? 2.5f : 4.f);
+    if (ci >= 0) { drag.kind = D_GRAB; drag.grab = cables[ci]; return; }
+  }
   if (!u) { drag.kind = D_PAN; drag.vx0 = viewX; drag.vy0 = viewY; return; }
   // bring it to the front
   for (size_t i = 0; i < mods.size(); i++) if (mods[i].get() == u) { auto p = std::move(mods[i]); mods.erase(mods.begin() + i); mods.push_back(std::move(p)); break; }
@@ -428,8 +472,18 @@ void Ui::pointerDown(float sx, float sy) {
 void Ui::pointerMove(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; drag.wx = wx; drag.wy = wy;
   if (drag.kind == D_PAN) { viewX = drag.vx0 - (int)(sx - drag.sx); viewY = drag.vy0 - (int)(sy - drag.sy); }
-  else if (drag.kind == D_MOVE) { drag.m->x = wx - drag.ox; drag.m->y = std::max(viewY + TOP + 1, wy - drag.oy); }
-  else if (drag.kind == D_PARAM) { const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 ? 40.f : 70.f));
+  else if (drag.kind == D_MOVE) { drag.m->x = wx - drag.ox; drag.m->y = std::max(viewY + TOP + 1, wy - drag.oy);
+    // an unpatched effect dragged over an audio cable can be dropped into it
+    const ModuleDef* d = drag.m->m->def; bool free = d->inIndex("IN") >= 0 && d->outIndex("OUT") >= 0 && d->ins[d->inIndex("IN")].type == PType::Audio && d->outs[d->outIndex("OUT")].type == PType::Audio;
+    for (auto& cb : cables) if (cb.from == drag.m->m->id || cb.to == drag.m->m->id) free = false;
+    drag.splice = free ? cableAt(wx, wy, 5, true) : -1; if (drag.splice >= 0) status("DROP TO INSERT INTO " + cableName(cables[drag.splice]), 0.3f); }
+  else if (drag.kind == D_GRAB) {
+    if (std::hypot(sx - drag.sx, sy - drag.sy) > 3) {   // pulling a cable away unplugs its input end, and it follows the pointer
+      const UiCable c0 = drag.grab; UiMod* src = byId(c0.from); unplug(c0); status("UNPLUGGED " + std::string(src ? src->m->def->name : ""), 2); changed();
+      if (src) { drag.kind = D_CABLE; drag.from = {src, true, c0.fromPort, c0.type, src->x + src->m->def->width - 1, src->y + jackY(c0.fromPort)}; drag.rev = false; } else drag.kind = D_NONE; } }
+  else if (drag.kind == D_PARAM && !drag.moved && !drag.held && std::fabs(sx - drag.sx) < 2) {}   // not moved far enough to count as a drag yet
+  else if (drag.kind == D_PARAM && drag.held) {}
+  else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 ? 40.f : 70.f));
     drag.m->m->p[drag.k].store(v); status(drag.m->m->def->name + "  " + q.label + "  " + fmtParam(q, v, eng.key.root.load()), 1.5f); }
   else if (drag.kind == D_SCROLL) { drag.m->hold = 6; drag.m->scroll = drag.n0 - (sy - drag.sy) / 6; trClamp(*drag.m); }
   else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
@@ -438,6 +492,14 @@ void Ui::pointerMove(float sx, float sy) {
 
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
+  if (d.kind == D_GRAB) { sel = d.grab; selT = 2.5f; status(cableName(d.grab) + "  (PULL IT AWAY TO UNPLUG)", 2.5f); return; }
+  if (d.kind == D_MOVE && d.splice >= 0 && d.splice < (int)cables.size()) {   // drop an effect into a cable
+    const UiCable c0 = cables[d.splice]; UiMod *a = byId(c0.from), *b = byId(c0.to), *m = d.m;
+    if (a && b) { unplug(c0); connect(a, c0.fromPort, m, m->m->def->inIndex("IN")); connect(m, m->m->def->outIndex("OUT"), b, c0.toPort);
+      const int mi = m->m->def->paramIndex("mix"); if (mi >= 0) m->m->p[mi].store(0);   // fully dry, as the web version does, so nothing jumps out
+      status("INSERTED " + m->m->def->name + (mi >= 0 ? " (FULLY DRY: RAISE ITS MIX)" : ""), 4); }
+    changed(); return; }
+  if (d.kind == D_PARAM && !d.moved && !d.held) { const ParamDef& q = d.m->m->def->params[d.k]; status(d.m->m->def->name + "  " + q.label + "  " + fmtParam(q, d.m->m->p[d.k].load(), eng.key.root.load()) + "  (DRAG SIDEWAYS)", 2.5f); return; }
   if (d.kind == D_MOVE || d.kind == D_PARAM || d.kind == D_XFADE) { changed(); return; }
   if (d.kind != D_CABLE) return;
   if (!d.rev && d.from.type == PType::Mod) {   // a mod cable goes onto a setting
@@ -446,7 +508,8 @@ void Ui::pointerUp(float sx, float sy) {
     else status("DROP A MOD CABLE ON A SETTING");
     return;
   }
-  const JackHit j = jackAt(wx, wy); if (!j.u) return;
+  JackHit j = jackAt(wx, wy); if (!j.u) j = jackAt(wx, wy, 6);   // a little forgiving: near enough to a jack counts
+  if (!j.u) return;
   if (j.type != d.from.type) { status(std::string("THAT ") + (j.out ? "OUTPUT" : "INPUT") + " TAKES A DIFFERENT KIND OF CABLE"); return; }
   bool ok = false;
   if (!d.rev && !j.out) ok = connect(d.from.u, d.from.port, j.u, j.port);

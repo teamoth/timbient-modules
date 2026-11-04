@@ -72,6 +72,7 @@ public:
   // settings: base values written by the screen thread, read by the audio thread
   std::unique_ptr<std::atomic<float>[]> p;
   std::vector<float> e;            // effective values this block (base + modulation), audio thread only
+  std::unique_ptr<std::atomic<float>[]> eff;   // the same, published for the screen (a modulated slider shows where it really is)
   // audio buffers: [port][channel][sample]
   std::vector<std::array<std::array<float, BLOCK>, 2>> in, out;
   EventQueue events;               // triggers waiting for this module

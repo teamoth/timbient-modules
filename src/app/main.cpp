@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.5.2";
+static const char* VERSION = "0.6.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -194,9 +194,10 @@ int main(int argc, char** argv) {
     const char* labels[6] = {"PRESET", "BACKGROUND", "MODULES", "AUDIO CABLES", "TRIG CABLES", "MOD CABLES"};
     Dropdown d; d.x = x0; d.y = 11;
     d.items = {std::string("PRESET  ") + preset, "BACKGROUND  " + nameOf(bgChoices(), theme.bg), "MODULES  " + nameOf(modChoices(), theme.mod), "AUDIO CABLES  " + nameOf(cableChoices(), theme.audio),
-      "TRIG CABLES  " + nameOf(cableChoices(), theme.trig), "MOD CABLES  " + nameOf(cableChoices(), theme.modc), "RESET THEME"};
+      "TRIG CABLES  " + nameOf(cableChoices(), theme.trig), "MOD CABLES  " + nameOf(cableChoices(), theme.modc), "RANDOMISE", "RESET THEME"};
     d.pick = [&, x0, labels](int i) {
-      if (i == 6) { setTheme(Theme{}); ui.status("THEME RESET"); return; }
+      if (i == 6) { setTheme(randomTheme([](int n) { return (int)SDL_rand(n); })); ui.status("RANDOM THEME: TAP RANDOMISE AGAIN FOR ANOTHER", 3); openTheme(x0); return; }   // stays open, to roll again
+      if (i == 7) { setTheme(Theme{}); ui.status("THEME RESET"); return; }
       Dropdown q; q.x = x0; q.y = 11 + (i ? i * 8 : 0); const int SW = 64;
       if (i == 0) { int k = 0; for (auto& p : presets()) { canvas.setColour(SW + k, p.second.mod.c_str()); q.items.push_back(p.first); q.sw.push_back(SW + k); if (sameTheme(p.second, theme)) q.cur = k; k++; }
         q.pick = [&](int j) { setTheme(presets()[j].second); ui.status(std::string("THEME ") + presets()[j].first); }; ui.openDropdown(q); return; }

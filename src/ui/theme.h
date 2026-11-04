@@ -12,12 +12,19 @@ namespace tb {
 struct Theme { std::string bg = "#000000", mod = "#3b3b41", audio = "#6fb3ad", trig = "#b39ddb", modc = "#86b34f"; };
 using Choice = std::pair<const char*, const char*>;
 inline const std::vector<Choice>& bgChoices() { static const std::vector<Choice> v = {{"POND", "pond"}, {"BLACK", "#000000"}, {"CHARCOAL", "#1a1a1d"}, {"SLATE", "#232c33"}, {"NAVY", "#111a2e"}, {"FOREST", "#13201a"}, {"PLUM", "#221624"},
-  {"CLAY", "#3a2a24"}, {"MIDNIGHT", "#0b1020"}, {"EARTH", "#2a1d18"}, {"STEEL", "#5c5f66"}, {"LIGHT GREY", "#c9c9ce"}, {"PAPER", "#ebe6da"}}; return v; }
+  {"CLAY", "#3a2a24"}, {"MIDNIGHT", "#0b1020"}, {"EARTH", "#2a1d18"}, {"STEEL", "#5c5f66"}, {"LIGHT GREY", "#c9c9ce"}, {"PAPER", "#ebe6da"},
+  {"INK", "#0d0d14"}, {"DEEP SEA", "#06222a"}, {"PINE", "#0f2a22"}, {"OXBLOOD", "#2a0f12"}, {"AUBERGINE", "#1e1028"}, {"COCOA", "#24170f"}, {"OLIVE DRAB", "#262a16"}, {"STORM", "#2c3440"},
+  {"DUSK", "#2a2238"}, {"TEAL DARK", "#0f2f33"}, {"RUST", "#3a1d12"}, {"MOSS", "#2c3a22"}, {"SAND", "#d9c9a3"}, {"SAGE", "#b7c4ad"}, {"SKY", "#c4d6e3"}, {"BLUSH", "#e8d3cf"}, {"LAVENDER", "#d6cfe6"}, {"BONE", "#efe9dc"}}; return v; }
 inline const std::vector<Choice>& modChoices() { static const std::vector<Choice> v = {{"GREY", "#3b3b41"}, {"GRAPHITE", "#2a2a2e"}, {"BLACK", "#111114"}, {"SLATE", "#34424a"}, {"NAVY", "#1f2a44"}, {"MOSS", "#39432f"},
-  {"DARK MOSS", "#0f1a10"}, {"DARK GREY", "#2b2b2b"}, {"RUST", "#4a3328"}, {"PLUM", "#3d2d42"}, {"SILVER", "#b8bac0"}, {"BONE", "#d9d3c3"}}; return v; }
+  {"DARK MOSS", "#0f1a10"}, {"DARK GREY", "#2b2b2b"}, {"RUST", "#4a3328"}, {"PLUM", "#3d2d42"}, {"SILVER", "#b8bac0"}, {"BONE", "#d9d3c3"},
+  {"TEAL", "#1f4a4c"}, {"PINE", "#23392c"}, {"WINE", "#4a2230"}, {"INDIGO", "#2b2a55"}, {"BROWN", "#4b3a2a"}, {"OLIVE", "#4a4a2a"}, {"STORM", "#3e4a5a"}, {"MAUVE", "#5a4560"},
+  {"CLAY", "#7a5040"}, {"STONE", "#8f8b82"}, {"SAGE", "#9eae95"}, {"SAND", "#c9b98f"}, {"MIST", "#c6ced6"}, {"ROSE", "#d8b7b4"}, {"LILAC", "#c5bad9"}, {"CREAM", "#e9e1cc"}}; return v; }
 inline const std::vector<Choice>& cableChoices() { static const std::vector<Choice> v = {{"TEAL", "#6fb3ad"}, {"LILAC", "#b39ddb"}, {"GREEN", "#86b34f"}, {"AMBER", "#e0a83c"}, {"CORAL", "#e07a5f"}, {"CREAM", "#ece6cf"},
   {"SKY", "#7fb8e6"}, {"PINK", "#e6a1d8"}, {"DEEP TEAL", "#1f5f5a"}, {"DEEP PURPLE", "#5b3f8f"}, {"GREY", "#8a8a90"}, {"ICE", "#7fd1e8"}, {"LIME", "#a8e07a"}, {"GOLD", "#c9b26b"}, {"PEACH", "#e09a6b"}, {"MINT", "#9fd28b"},
-  {"TAN", "#e3b07a"}, {"ORCHID", "#c8a2c8"}, {"NEON", "#4cff7a"}, {"YELLOW", "#ffd23f"}, {"AZURE", "#4cc9ff"}, {"WHITE", "#e0e0e0"}, {"SILVER", "#bdbdbd"}, {"DEEP GREEN", "#4f7a2a"}, {"OLIVE", "#3f6b1f"}}; return v; }
+  {"TAN", "#e3b07a"}, {"ORCHID", "#c8a2c8"}, {"NEON", "#4cff7a"}, {"YELLOW", "#ffd23f"}, {"AZURE", "#4cc9ff"}, {"WHITE", "#e0e0e0"}, {"SILVER", "#bdbdbd"}, {"DEEP GREEN", "#4f7a2a"}, {"OLIVE", "#3f6b1f"},
+  {"RED", "#e04848"}, {"CRIMSON", "#b0303f"}, {"ORANGE", "#f08a30"}, {"SAFFRON", "#f2b134"}, {"LEMON", "#f2e86b"}, {"CHARTREUSE", "#c2e04a"}, {"EMERALD", "#2fb36a"}, {"JADE", "#3fa38a"},
+  {"CYAN", "#45d6d6"}, {"COBALT", "#3a64d8"}, {"ULTRAMARINE", "#4a3fd0"}, {"VIOLET", "#8a55e0"}, {"MAGENTA", "#d64fb0"}, {"ROSE", "#e88aa0"}, {"SALMON", "#f2a08a"},
+  {"BROWN", "#8a5a3a"}, {"NAVY", "#2a3f7a"}, {"FOREST", "#2f5a3a"}, {"PLUM", "#6a3a6a"}, {"CHARCOAL", "#3a3a40"}, {"BLACK", "#141418"}}; return v; }
 inline const std::vector<std::pair<const char*, Theme>>& presets() { static const std::vector<std::pair<const char*, Theme>> v = {
   {"DEFAULT", Theme{}}, {"PAPER", {"#ebe6da", "#d9d3c3", "#1f5f5a", "#5b3f8f", "#4f7a2a"}}, {"NIGHT", {"#0b1020", "#1f2a44", "#7fd1e8", "#e6a1d8", "#a8e07a"}},
   {"MOSS", {"#13201a", "#39432f", "#c9b26b", "#e09a6b", "#9fd28b"}}, {"CLAY", {"#2a1d18", "#4a3328", "#e3b07a", "#c8a2c8", "#9cc28b"}}, {"TERMINAL", {"#000000", "#0f1a10", "#4cff7a", "#ffd23f", "#4cc9ff"}},
@@ -29,6 +36,17 @@ inline std::string hexOf(const float c[3]) { char b[8]; std::snprintf(b, 8, "#%0
 inline std::string mixHex(const std::string& a, const std::string& b, float k) { float x[3], y[3], z[3]; rgbOf(a, x); rgbOf(b, y); for (int i = 0; i < 3; i++) z[i] = x[i] + (y[i] - x[i]) * k; return hexOf(z); }
 inline float lum(const std::string& h) { float c[3]; rgbOf(h, c); return (0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]) / 255; }
 
+// RANDOMISE: any background and module colour that sit apart, and three cable colours that stand out from both and from each other
+inline float colDist(const std::string& a, const std::string& b) { float x[3], y[3]; rgbOf(a, x); rgbOf(b, y); return std::sqrt((x[0] - y[0]) * (x[0] - y[0]) + (x[1] - y[1]) * (x[1] - y[1]) + (x[2] - y[2]) * (x[2] - y[2])) / 441.7f; }
+template <class R> Theme randomTheme(R&& rnd) {   // rnd(n) gives 0..n-1
+  Theme t; const auto& bgs = bgChoices(); const auto& mods = modChoices(); const auto& cs = cableChoices();
+  do t.bg = bgs[1 + rnd((int)bgs.size() - 1)].second; while (false);
+  for (int k = 0; k < 200; k++) { t.mod = mods[rnd((int)mods.size())].second; if (std::fabs(lum(t.mod) - lum(t.bg)) > 0.08f && colDist(t.mod, t.bg) > 0.12f) break; }
+  std::string* slot[3] = {&t.audio, &t.trig, &t.modc};
+  for (int i = 0; i < 3; i++) for (int k = 0; k < 400; k++) { const std::string c = cs[rnd((int)cs.size())].second; bool ok = colDist(c, t.bg) > 0.3f && colDist(c, t.mod) > 0.25f;
+      for (int j = 0; j < i; j++) if (colDist(c, *slot[j]) < 0.22f) ok = false; if (ok || k == 399) { *slot[i] = c; break; } }
+  return t;
+}
 // set the canvas palette from a theme (the same formulas as the web version)
 inline void applyTheme(Canvas& cv, const Theme& t) {
   const bool pond = t.bg == "pond"; const std::string bg = pond ? "#07131d" : t.bg, md = t.mod; const bool lightMod = lum(md) > 0.5f;
