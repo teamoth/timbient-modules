@@ -1,0 +1,76 @@
+# Builds Timbient Modules for Mac, Windows and Linux on every push to main,
+# and puts the results on the "latest" release so they can be downloaded directly.
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: mac
+          - os: windows-latest
+            name: windows
+          - os: ubuntu-22.04
+            name: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux libraries for SDL
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libdbus-1-dev libudev-dev
+      - name: Configure (Mac: one app for both Intel and Apple Silicon)
+        if: matrix.name == 'mac'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64"
+      - name: Configure
+        if: matrix.name != 'mac'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Package (Mac)
+        if: matrix.name == 'mac'
+        run: |
+          codesign --force --deep --sign - "build/Timbient Modules.app"
+          cp README.md build/
+          cd build && ditto -c -k --keepParent "Timbient Modules.app" ../Timbient-Modules-Mac.zip
+      - name: Package (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "pkg/Timbient Modules" | Out-Null
+          Copy-Item "build/Release/Timbient Modules.exe" "pkg/Timbient Modules/"
+          Compress-Archive -Path "pkg/Timbient Modules" -DestinationPath Timbient-Modules-Windows.zip
+      - name: Package (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          mkdir -p "pkg/timbient-modules" && cp build/timbient-modules pkg/timbient-modules/
+          tar -czf Timbient-Modules-Linux.tar.gz -C pkg timbient-modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timbient-${{ matrix.name }}
+          path: Timbient-Modules-*
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Update the "latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          prerelease: true
+          make_latest: true
+          body: "Built automatically from the newest code. Mac: unzip, move to Applications, then see the README for the one-time Terminal step."
+          files: dist/*
