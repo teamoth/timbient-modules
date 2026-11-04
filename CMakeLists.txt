@@ -53,6 +53,7 @@ if(TIMBIENT_APP)
   elseif(WIN32)
     add_executable(timbient WIN32 src/app/main.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.rc)
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "Timbient Modules")
+    target_compile_definitions(timbient PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)   # stop Windows headers redefining min and max
     if(MSVC)
       set_property(TARGET timbient PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")   # no extra runtime install needed
     endif()
