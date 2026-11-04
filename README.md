@@ -1,8 +1,7 @@
 # Timbient Modules
 
 A pixel modular patch-bay for ambient music: sequencers, voices and effects you patch together with cables.
-This is the native version, written in C++ so the sound runs on its own real-time thread, like SunVox:
-nothing on screen (drawing, resizing, fullscreen) can interrupt it.
+This is the native version, written in C++. Inspired by SunVox.
 
 **Status:** an early preview. It plays a built-in patch so the sound engine can be tested; the full interface is being ported from the web version.
 
