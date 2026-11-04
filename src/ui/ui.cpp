@@ -142,6 +142,18 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     const float ph = D(0);
     for (int cx : {x + 12, x + w - 13}) { for (float a = 0; a < TAU; a += 0.5f) c.pxf(cx + 4 * std::cos(a), y + 2 + 2 * std::sin(a), 18); c.pxf(cx + 2 * std::cos(ph * TAU), y + 2 + std::sin(ph * TAU), 4); }
     for (int i = x + 16; i < x + w - 16; i++) c.px(i, y + 4, 7);
+  } else if (ty == "sample" || ty == "looper") {   // the sound's outline; the chosen region (Sample); playheads and grains
+    const bool smp = ty == "sample";
+    if (u.peaks.empty()) { c.text(u.missing ? "LOAD IT AGAIN" : smp ? "TAP LOAD FILE" : "LISTENING", x + 2, y + 4, u.missing ? 14 : 18); }
+    else {
+      const float a = smp ? m->p[3].load() : 0, b = smp ? a + m->p[4].load() * (1 - a) : 1;
+      for (int i = 0; i < w; i++) { const float fx = (float)i / w; const int h = (int)std::lround(u.peaks[std::min(u.peaks.size() - 1, (size_t)(fx * u.peaks.size()))] * 5), col = fx >= a && fx <= b ? 48 : 21;
+        for (int j = -h; j <= h; j++) c.px(x + i, y + 6 + j, col); }
+      if (smp) { for (float xx : {a, b}) for (int j = 0; j < 12; j += 2) c.px(x + (int)std::lround(xx * (w - 1)), y + j, 24);
+        const int n = (int)D(0); for (int k = 0; k < n && k < 12; k++) { const int px = x + (int)std::lround(clampf(D(1 + k), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(px, y + j, 12); } }
+    }
+    if (!smp) { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, 12);
+      const int n = (int)D(1); for (int k = 0; k < n && k < 30; k++) c.px(x + (int)std::lround(clampf(D(2 + k), 0, 1) * (w - 1)), y + 6 + (int)(std::rand() % 9) - 4, 4); }
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
@@ -160,7 +172,9 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
   } else if (ty == "out") {
     const float n = clampf((20 * std::log10(D(0) + 1e-6f) + 48) / 48, 0, 1); const int fw = (int)(n * w);
     for (int i = 0; i < w; i += 2) c.px(x + i, y + 3, 18); for (int i = 0; i < fw; i++) { const int col = i > w * 0.92f ? 14 : i > w * 0.7f ? 12 : 3; c.px(x + i, y + 1, col); c.px(x + i, y + 2, col); }
-    c.text(m->disp[1].load() > 0.5f ? "RECORDING" : "NOT RECORDING", x + 2, y + 5, m->disp[1].load() > 0.5f ? 14 : 18);
+    if (m->disp[1].load() > 0.5f) { const int sec = (int)m->disp[2].load(); char b[24]; std::snprintf(b, 24, "REC %d:%02d", sec / 60, sec % 60);
+      if (((int)(blink * 2)) % 2) c.rect(x + 2, y + 6, 3, 3, 14); c.text(b, x + 8, y + 5, 14); }
+    else c.text("NOT RECORDING", x + 2, y + 5, 18);
     const int sy = y + 14, tx0 = x + 6, tw0 = w - 12; const float xf = clampf(m->p[2].load(), 0, 1); const int hx = tx0 + (int)std::lround(xf * tw0);
     c.text("A", x, sy - 2, xf < 0.5f ? 9 : 18); c.text("B", x + w - 3, sy - 2, xf > 0.5f ? 9 : 18);
     for (int i = 0; i <= tw0; i++) { c.px(tx0 + i, sy, 21); c.px(tx0 + i, sy + 1, 21); }
@@ -223,7 +237,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   const int root = eng.key.root.load(); const bool clocked = u.m->clockedIn.load();
   for (size_t j = 0; j < (u.fold ? 0 : d->params.size()); j++) {
     const ParamDef& q = d->params[j]; const int ry = y + g.py + (int)j * ROW; const float v = u.m->p[j].load(); const bool active = drag.kind == D_PARAM && drag.m == &u && drag.k == (int)j;
-    if (q.act) { c.text(q.label, x + 3, ry + 1, 9); c.text(">", x + w - 6, ry + 1, 9); continue; }
+    if (q.act) { const bool recOn = d->type == "out" && q.key == "rec" && u.m->disp[1].load() > 0.5f; c.text(recOn ? "STOP + SAVE" : q.label, x + 3, ry + 1, recOn ? 14 : 9); c.text(">", x + w - 6, ry + 1, 9); continue; }
     if (q.play) { const bool on = v > 0.5f; c.rect(x + 3, ry, w - 6, 7, on ? 17 : 21); const int ix = x + 6, iy = ry + 1;
       if (on) c.rect(ix, iy + 1, 3, 3, 15); else for (int k = 0; k < 3; k++) for (int jj = k; jj < 5 - k; jj++) c.px(ix + k, iy + jj, 9);
       c.text(on ? "PLAYING" : "PLAY", x + 13, ry + 1, on ? 15 : 9); continue; }
@@ -248,6 +262,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
 }
 
 void Ui::draw(Canvas& c, float dt) {
+  blink += dt;
   lastW = c.W;
   c.rect(0, 0, c.W, c.H, 25);
   for (auto& u : mods) drawModule(c, *u, dt);
@@ -307,7 +322,7 @@ void Ui::draw(Canvas& c, float dt) {
     c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, 15); c.frame(x, y, w, h, 21);
     c.text(ask->title, x + 4, y + 4, 18); c.rect(x + 4, y + 12, w - 8, 9, 21);
     std::string t = ask->text; const int room = (w - 14) / 4; if ((int)t.size() > room) t = t.substr(t.size() - room);
-    c.text(t, x + 6, y + 14, 4); if (((blink += dt) >= 0) && std::fmod(blink, 1.f) < 0.5f) c.rect(x + 6 + Canvas::tw(t) + 2, y + 13, 1, 7, 4);
+    c.text(t, x + 6, y + 14, 4); if (std::fmod(blink, 1.f) < 0.5f) c.rect(x + 6 + Canvas::tw(t) + 2, y + 13, 1, 7, 4);
     c.text("OK", x + 6, y + 25, 9); c.text("CANCEL", x + 24, y + 25, 9);
   }
   c.toRGBA();
@@ -387,6 +402,7 @@ void Ui::pointerDown(float sx, float sy) {
       if (d->type == "tracker" && q.key == "clear") {   // ask first: this wipes every step
         Dropdown z; z.items = {"CLEAR EVERY STEP?", "YES, CLEAR ALL", "NO, KEEP THEM"}; z.title = 0; z.danger = 1; z.x = u->x - viewX + 8; z.y = u->y - viewY + g.py + pj * ROW + 4;
         z.pick = [this, u](int i) { if (i == 1) { eng.action(u->m->id, "clear"); u->scroll = 0; status("TRACKER CLEARED"); } }; openDropdown(z); return; }
+      if (onAction && onAction(u, q.key)) return;
       eng.action(u->m->id, q.key); return; }
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }

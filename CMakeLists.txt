@@ -25,6 +25,7 @@ set(ENGINE_SOURCES
   src/engine/modules_voice2.cpp
   src/engine/modules_fx2.cpp
   src/engine/modules_trig2.cpp
+  src/engine/modules_audio.cpp
   src/engine/modules_fx.cpp)
 set(UI_SOURCES src/ui/ui.cpp src/ui/session.cpp)
 
@@ -51,17 +52,17 @@ if(TIMBIENT_APP)
   if(APPLE)
     set(MACOSX_BUNDLE_ICON_FILE timbient.icns)
     set_source_files_properties(assets/timbient.icns PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-    add_executable(timbient MACOSX_BUNDLE src/app/main.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.icns)
+    add_executable(timbient MACOSX_BUNDLE src/app/main.cpp src/app/audio_files.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.icns)
     configure_file(assets/Info.plist.in ${CMAKE_BINARY_DIR}/Info.plist)
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "${APP_NAME}" MACOSX_BUNDLE_INFO_PLIST ${CMAKE_BINARY_DIR}/Info.plist)
     target_link_libraries(timbient PRIVATE "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
     target_compile_definitions(timbient PRIVATE MA_NO_RUNTIME_LINKING)
   elseif(WIN32)
-    add_executable(timbient WIN32 src/app/main.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.rc)
+    add_executable(timbient WIN32 src/app/main.cpp src/app/audio_files.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.rc)
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "Timbient Modules")
     target_compile_definitions(timbient PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)   # stop Windows headers redefining min and max
   else()
-    add_executable(timbient src/app/main.cpp ${ENGINE_SOURCES} ${UI_SOURCES})
+    add_executable(timbient src/app/main.cpp src/app/audio_files.cpp ${ENGINE_SOURCES} ${UI_SOURCES})
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "timbient-modules")
     target_link_libraries(timbient PRIVATE pthread dl m)
   endif()

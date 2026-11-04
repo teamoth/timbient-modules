@@ -35,7 +35,7 @@ Module* Engine::create(const std::string& type, int id) {
   return m;
 }
 
-void Engine::collectGarbage() { Module* m; while (garbage.pop(m)) delete m; }
+void Engine::collectGarbage() { Module* m; while (garbage.pop(m)) delete m; AudioBuf* b; while (bufGarbage.pop(b)) delete b; }
 
 bool Module::patched(int inPort) const { for (auto& c : eng->cables) if (c.to == id && c.toPort == inPort && c.type != PType::Mod) return true; return false; }
 int Module::root() const { return eng->key.root.load(std::memory_order_relaxed); }
@@ -70,6 +70,7 @@ void Engine::applyCommands() {
         cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const Cable& k) { return k.from == c.cable.from && k.fromPort == c.cable.fromPort && k.to == c.cable.to && k.toPort == c.cable.toPort && k.toParam == c.cable.toParam && k.type == c.cable.type; }), cables.end());
         dirty = true; break;
       case Command::ACTION: if (Module* m = byId(c.id)) m->action(c.key); break;
+      case Command::SETBUF: if (Module* m = byId(c.id)) { AudioBuf* old = m->swapBuf(c.buf); if (old && !bufGarbage.push(old)) {} } else if (c.buf) bufGarbage.push(c.buf); break;
       case Command::TRIGGER: if (Module* m = byId(c.id)) { Event e = c.ev; e.offset = 0; m->events.push(c.port, e); } break;
       case Command::CLEAR: for (auto* m : mods) garbage.push(m); mods.clear(); cables.clear(); dirty = true; break;
     }
@@ -155,6 +156,10 @@ void Engine::block(float* L, float* R, int n) {
   comp.sr = sr; comp.process(masterL, masterR, n);
   float pk = 0;
   for (int i = 0; i < n; i++) { L[i] = masterL[i]; R[i] = masterR[i]; pk = std::max(pk, std::max(std::fabs(L[i]), std::fabs(R[i]))); }
+  if (recOn.load(std::memory_order_acquire) && !recBuf.empty()) {   // RECORD: copy the master into the ring the screen thread empties
+    const long N = (long)recBuf.size() / 2; long w = recW.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; i++, w++) { recBuf[(w % N) * 2] = L[i]; recBuf[(w % N) * 2 + 1] = R[i]; }
+    recW.store(w, std::memory_order_release); }
   outPeak.store(std::max(pk, outPeak.load(std::memory_order_relaxed) * 0.995f), std::memory_order_relaxed);
 }
 

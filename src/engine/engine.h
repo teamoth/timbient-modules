@@ -46,6 +46,9 @@ struct Event { float note = 60, vel = 1, period = 0, ppb = 0; int offset = 0; };
 
 class Engine;
 class Module;
+
+// a loaded or caught sound (mono), made on the screen thread and handed to a module whole
+struct AudioBuf { std::vector<float> d; float sr = 48000; double dur() const { return d.size() / (double)sr; } };
 struct ModuleDef {
   std::string type, name; Cat cat = Cat::Proc;
   std::vector<PortDef> ins, outs; std::vector<ParamDef> params;
@@ -96,6 +99,9 @@ public:
   virtual void trig(int port, const Event& ev) {}       // a trigger arrived (offset = sample within the block)
   virtual void action(const std::string& key) {}         // an action button was pressed (sent from the screen)
   virtual void display(float* vals, int n) {}            // copy display values for the screen (playheads, meters)
+  virtual AudioBuf* swapBuf(AudioBuf* b) { return b; }   // take a new sound; hand back the old one (freed off the audio thread)
+  // the last few seconds of this module's input, for CATCH (written here, copied out by the screen thread)
+  std::vector<float> ring; std::atomic<long> ringW{0};
 
   // helpers for modules
   void emit(int port, Event ev);                         // send a trigger down every cable from an output
@@ -111,8 +117,8 @@ struct Cable { int from = 0, fromPort = 0, to = 0, toPort = -1, toParam = -1; PT
 
 // commands from the screen thread to the audio thread
 struct Command {
-  enum Kind { ADD, REMOVE, CONNECT, DISCONNECT, ACTION, CLEAR, TRIGGER } kind;
-  Module* mod = nullptr; int id = 0; Cable cable; char key[24] = {0}; Event ev; int port = 0;
+  enum Kind { ADD, REMOVE, CONNECT, DISCONNECT, ACTION, CLEAR, TRIGGER, SETBUF } kind;
+  Module* mod = nullptr; int id = 0; Cable cable; char key[24] = {0}; Event ev; int port = 0; AudioBuf* buf = nullptr;
 };
 
 template <typename T, int N> struct SpscQueue {   // single producer, single consumer, lock-free
@@ -144,6 +150,9 @@ public:
   void action(int id, const std::string& key) { Command k{Command::ACTION}; k.id = id; std::strncpy(k.key, key.c_str(), sizeof(k.key) - 1); send(k); }
   void trigger(int id, int port, Event ev) { Command k{Command::TRIGGER}; k.id = id; k.port = port; k.ev = ev; send(k); }
   void clear() { send({Command::CLEAR}); }
+  void setBuffer(int id, AudioBuf* b) { Command k{Command::SETBUF}; k.id = id; k.buf = b; send(k); }
+  // recording the master output: the audio thread writes here, the screen thread drains it to a file
+  std::atomic<bool> recOn{false}; std::vector<float> recBuf; std::atomic<long> recW{0}; long recR = 0;
   void collectGarbage();                                  // frees modules the audio thread has finished with
 
   // ---- audio thread ----
@@ -168,6 +177,7 @@ private:
   int soloSig = 0;
   SpscQueue<Command, 4096> cmds;
   SpscQueue<Module*, 1024> garbage;
+  SpscQueue<AudioBuf*, 256> bufGarbage;
   std::vector<Module*> order;
   bool dirty = true;
 };

@@ -40,6 +40,7 @@ Json serializePatch(Ui& ui) {
       Json sq = Json::array(); for (int i = 0; i <= last; i++) { const float nt = u.m->seq[i * 2].load(); if (nt < 0) { sq.push(Json()); continue; }
         Json st = Json::array(); st.push(Json::number(nt)); st.push(Json::number(u.m->seq[i * 2 + 1].load())); sq.push(st); }
       p.set("seq", sq); }
+    if (!u.audioId.empty()) p.set("audio", Json::string(u.audioId));
     m.set("p", p);
     m.set("mute", Json::boolean(u.m->mute.load())); m.set("solo", Json::boolean(u.m->solo.load())); m.set("fold", Json::boolean(u.fold)); mods.push(m); }
   d.set("mods", mods);
@@ -84,6 +85,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (const Json* p = m.get("p")) if (const Json* sq = p->get("seq")) if (sq->t == Json::ARR && u->m->seq)
       for (size_t i = 0; i < sq->a.size() && i < (size_t)Module::SEQ_MAX; i++) { const Json& st = sq->a[i];
         if (st.t == Json::ARR && st.a.size() >= 1 && st.a[0].t == Json::NUM) { u->m->seq[i * 2].store((float)st.a[0].n); u->m->seq[i * 2 + 1].store(st.a.size() > 1 && st.a[1].t == Json::NUM ? (float)st.a[1].n : 0.8f); } }
+    if (const Json* p = m.get("p")) { const std::string aid = p->str("audio"); if (!aid.empty()) u->audioId = aid; }
     u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo")); u->fold = m.truthy("fold");
     idmap[(int)m.num("id")] = u; maxId = std::max(maxId, (int)m.num("id"));
   }

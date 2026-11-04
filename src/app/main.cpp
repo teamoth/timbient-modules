@@ -9,13 +9,14 @@
 #include "../ui/canvas.h"
 #include "../ui/session.h"
 #include "../ui/ui.h"
+#include "audio_files.h"
 #include <cstdio>
 #include <ctime>
 #include <mutex>
 
 using namespace tb;
 
-static const char* VERSION = "0.3.1";
+static const char* VERSION = "0.4.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -45,16 +46,26 @@ struct Sound {
 };
 
 // ---------------- results from the system file dialogs (they may arrive on another thread) ----------------
-struct DialogResult { bool open; std::string path; };
+struct DialogResult { bool open; std::string path; int target = 0; };   // target: the module a sound file is for
 static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
 static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "json;txt"}};
 static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
 static void onSaveDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({false, files[0]}); } }
+static const SDL_DialogFileFilter AUDIO_FILTER[] = {{"Sound files", "wav;wave;aif;aiff;flac;mp3"}};
+static void onAudioDialog(void* ud, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0], (int)(intptr_t)ud}); } }
+static std::string b64(const unsigned char* d, size_t n) {
+  static const char* A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; std::string o; o.reserve((n + 2) / 3 * 4);
+  for (size_t i = 0; i < n; i += 3) { const unsigned v = (d[i] << 16) | ((i + 1 < n ? d[i + 1] : 0) << 8) | (i + 2 < n ? d[i + 2] : 0);
+    o += A[(v >> 18) & 63]; o += A[(v >> 12) & 63]; o += i + 1 < n ? A[(v >> 6) & 63] : '='; o += i + 2 < n ? A[v & 63] : '='; }
+  return o;
+}
+static std::string fileUrl(std::string p) { for (auto& c : p) if (c == '\\') c = '/'; return p.size() && p[0] == '/' ? "file://" + p : "file:///" + p; }
 
 int main(int argc, char** argv) {
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError()); return 1; }
 
   // the app's own folder for sessions, the autosave and settings
+  SDL_Window* win = nullptr;
   SessionStore store; { char* pp = SDL_GetPrefPath("Timbient", "Timbient Modules"); store.dir = pp ? pp : "./"; SDL_free(pp); }
   store.load();
   Json settings; Json::parse(readFile(store.path("settings.json")), settings); if (settings.t != Json::OBJ) settings = Json::object();
@@ -74,11 +85,50 @@ int main(int argc, char** argv) {
 
   bool dirty = false; float saveT = 0;
   ui.onChange = [&] { dirty = true; saveT = 1.0f; };
+  // ---- sounds held by Sample and Grain Looper modules: kept as WAV files in the app's folder, named by id ----
+  const std::string audioDir = store.dir + "audio/"; SDL_CreateDirectory(audioDir.c_str());
+  auto giveSound = [&](UiMod* u, AudioBuf* b, bool keep) {   // hand a sound to a module (and keep a copy so sessions bring it back)
+    u->peaks = peaksOf(*b); u->missing = false;
+    if (keep) { char id[40]; std::snprintf(id, 40, "n%llx%04x", (unsigned long long)std::time(nullptr), (unsigned)(SDL_rand(65536)));
+      if (writeWavMono16(audioDir + id + ".wav", *b)) { u->audioId = id; dirty = true; saveT = 0.5f; } else ui.status("COULD NOT KEEP THE SOUND", 4); }
+    engine.setBuffer(u->m->id, b);
+  };
+  auto restoreSound = [&](UiMod* u) {
+    if (u->audioId.empty()) return; std::string err;
+    AudioBuf* b = decodeAudio(audioDir + u->audioId + ".wav", 600, err);
+    if (b) giveSound(u, b, false); else { u->missing = true; ui.status(u->m->def->name + ": ITS SOUND IS NOT HERE. LOAD IT AGAIN", 6); }
+  };
+  auto catchSound = [&](UiMod* u, bool quiet) {   // GRAIN LOOPER: CATCH takes the last LENGTH seconds of what came in
+    Module* m = u->m; if (m->ring.empty()) return; const long N = (long)m->ring.size(), w = m->ringW.load(std::memory_order_acquire);
+    const long n = std::min(std::min(N, w), (long)(m->p[m->def->paramIndex("len")].load() * engine.sr)); if (n < 256) { if (!quiet) ui.status("NOTHING TO CATCH YET"); return; }
+    AudioBuf* b = new AudioBuf(); b->sr = engine.sr; b->d.resize(n); float mx = 0;
+    for (long i = 0; i < n; i++) { b->d[i] = m->ring[(w - n + i) % N]; mx = std::max(mx, std::fabs(b->d[i])); }
+    if (mx < 0.002f) { delete b; if (!quiet) ui.status("NOTHING TO CATCH YET"); return; }
+    for (auto& v : b->d) v *= 0.8f / mx;
+    giveSound(u, b, true); ui.status("CAUGHT " + std::to_string((int)std::lround(n / engine.sr)) + "S");
+  };
   auto loadData = [&](const Json& data, const std::string& what) {
     const std::string note = loadPatch(ui, data); ui.viewX = 0; ui.viewY = 0; dirty = true; saveT = 0.5f;
     ui.status(note.empty() ? "LOADED " + what : note, note.empty() ? 3 : 8);
+    for (auto& up : ui.mods) restoreSound(up.get());
   };
-  SDL_Window* win = nullptr;
+  // ---- RECORD on the Output: straight to a WAV file in Music / Timbient Modules ----
+  std::string recDir; { const char* mu = SDL_GetUserFolder(SDL_FOLDER_MUSIC); recDir = std::string(mu ? mu : store.dir.c_str()) + "Timbient Modules/"; SDL_CreateDirectory(recDir.c_str()); }
+  Recorder rec;
+  auto outMod = [&]() -> Module* { for (auto& up : ui.mods) if (up->m->def->type == "out") return up->m; return nullptr; };
+  ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
+    const std::string& ty = u->m->def->type;
+    if ((ty == "sample" || ty == "looper") && k == "load") { SDL_ShowOpenFileDialog(onAudioDialog, (void*)(intptr_t)u->m->id, win, AUDIO_FILTER, 1, nullptr, false); return true; }
+    if (ty == "looper" && k == "catch") { catchSound(u, false); return true; }
+    if (ty == "out" && k == "rec") {
+      if (!rec.on()) { std::time_t tt = std::time(nullptr); char nm[64]; std::strftime(nm, 64, "timbient-%Y%m%d-%H%M%S.wav", std::localtime(&tt));
+        if (rec.start(engine, recDir + nm)) ui.status("RECORDING"); else ui.status("COULD NOT START A RECORDING IN " + recDir, 6); }
+      else { const std::string p = rec.path; const bool got = rec.stop(engine); if (Module* o = outMod()) o->disp[1].store(0);
+        if (got) { std::string nm = p.substr(p.find_last_of("/\\") + 1); for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); ui.status("SAVED " + nm + " IN MUSIC / TIMBIENT MODULES", 6); } else { std::remove(p.c_str()); ui.status("NOTHING RECORDED"); } }
+      return true; }
+    if (ty == "out" && k == "again") { SDL_OpenURL(fileUrl(recDir).c_str()); ui.status("OPENING YOUR RECORDINGS"); return true; }
+    return false;
+  };
 
   // ---- SESSIONS menu ----
   std::function<void(int)> openSessions = [&](int x0) {
@@ -202,15 +252,30 @@ int main(int argc, char** argv) {
     // files chosen in the system dialogs
     { std::vector<DialogResult> rs; { std::lock_guard<std::mutex> l(dlgMx); rs.swap(dlgResults); }
       for (auto& r : rs) {
+        if (r.target) { UiMod* u = ui.byId(r.target); if (!u) continue; std::string err;   // a sound for a Sample or Grain Looper
+          AudioBuf* b = decodeAudio(r.path, u->m->def->type == "sample" ? 240 : 60, err); if (!b) { ui.status(err, 5); continue; }
+          if (u->m->def->type == "sample") { float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f) for (auto& v : b->d) v *= 0.9f / mx; }   // quiet recordings come in at full level
+          const int secs = (int)std::lround(b->dur()); giveSound(u, b, true); ui.status("LOADED " + std::to_string(secs) + "S"); continue; }
         if (r.open) { Json f; if (!Json::parse(readFile(r.path), f)) { ui.status("THAT FILE COULD NOT BE READ", 5); continue; }
+          if (const Json* pack = f.get("audio")) if (pack->t == Json::OBJ) for (auto& kv : pack->o) {   // a web export with its sounds packed in
+            const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
+            AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000)); if (b) { writeWavMono16(fn, *b); delete b; } }
           if (f.str("timbient") == "sessions" && f.get("sessions")) { int n = 0; for (auto& e : f.get("sessions")->a) if (const Json* dd = e.get("data")) { store.list.push_back({e.str("name", "SESSION"), e.num("t", 0) / 1000.0, *dd}); n++; }
             store.save(); ui.status("ADDED " + std::to_string(n) + " SESSIONS TO THE LIST", 4); continue; }
           const Json* data = patchIn(f); if (!data) { ui.status("THAT IS NOT A TIMBIENT SESSION", 5); continue; }
           std::string nm = r.path; const size_t sl = nm.find_last_of("/\\"); if (sl != std::string::npos) nm = nm.substr(sl + 1); loadData(*data, nm); }
         else { Json f = Json::object(); f.set("timbient", Json::string("patch")); f.set("data", serializePatch(ui)); std::string p = r.path; if (p.find('.') == std::string::npos) p += ".json";
+          Json pack = Json::object(); for (auto& up : ui.mods) if (!up->audioId.empty() && !pack.get(up->audioId)) {   // the sounds go with it, as the web version packs them
+            std::string err; AudioBuf* b = decodeAudio(audioDir + up->audioId + ".wav", 600, err); if (!b) continue;
+            std::vector<unsigned char> raw(b->d.size() * 2); for (size_t i = 0; i < b->d.size(); i++) { const int16_t v = (int16_t)std::lround(clampf(b->d[i], -1, 1) * 32767); raw[i * 2] = (unsigned char)v; raw[i * 2 + 1] = (unsigned char)(v >> 8); }
+            Json a = Json::object(); a.set("sr", Json::number(b->sr)); a.set("b64", Json::string(b64(raw.data(), raw.size()))); pack.set(up->audioId, a); delete b; }
+          if (!pack.o.empty()) f.set("audio", pack);
           ui.status(writeFile(p, f.dump()) ? "SAVED TO FILE" : "COULD NOT SAVE THE FILE", 4); }
       } }
     engine.collectGarbage();
+    if (rec.on()) { rec.pump(engine); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }
+    // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
+    { static float catchT = 0; catchT += 0.016f; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->peaks.empty() && up->audioId.empty()) catchSound(up.get(), true); } }
 
     const Uint64 now = SDL_GetTicksNS(); const float dt = std::min(0.1f, (now - last) / 1e9f); last = now;
     if (dirty) { saveT -= dt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
@@ -223,6 +288,7 @@ int main(int argc, char** argv) {
     SDL_RenderPresent(ren);
   }
   store.writeAutosave(serializePatch(ui));
+  if (rec.on()) rec.stop(engine);
   sound.stop();
   SDL_DestroyTexture(tex); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
   return 0;

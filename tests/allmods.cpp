@@ -30,6 +30,10 @@ int main(int argc, char** argv) {
     else { UiMod* v = ui.add("pluck", 150, 20); ui.connect(m, d->outs[0].name, v, "TRIG"); ui.connect(v, "OUT", out, "A");
       if (d->ins.size()) ui.connect(clk, "PULSE", m, d->ins[0].name);
       if (d->type == "tracker") { for (int i = 0; i < 16; i += 2) { m->m->seq[i * 2].store(60.f + i); m->m->seq[i * 2 + 1].store(0.8f); } } }
+    if (d->type == "sample" || d->type == "looper") {   // give it a sound: a few seconds of a gliding tone with some noise
+      AudioBuf* b = new AudioBuf(); b->sr = 44100; b->d.resize(44100 * 3); float ph = 0; Rng rr(5);
+      for (size_t i = 0; i < b->d.size(); i++) { ph += (220 + i * 0.003f) / 44100.f; b->d[i] = 0.6f * std::sin(TAU * ph) + 0.05f * rr.bi(); }
+      eng.setBuffer(m->m->id, b); }
     const Result r = run(eng, 4);
     const bool silent = r.peak < 0.005f; if (r.bad || silent) fails++;
     std::printf("%-10s peak %.3f  rms %.4f  cost %5.2f%%%s%s\n", d->type.c_str(), r.peak, r.rms, r.cost, r.bad ? "  NOT FINITE" : "", silent ? "  SILENT" : "");
