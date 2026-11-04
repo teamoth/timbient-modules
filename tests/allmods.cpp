@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
   Engine eng; eng.setSampleRate(48000); Ui ui(eng);
   int fails = 0;
   for (const ModuleDef* d : allDefs()) {
-    if (d->type == "out" || d->type == "keys") continue;
+    if (d->type == "out" || d->type == "keys" || d->type == "midi" || d->type == "midiout") continue;   // these need a device or a hand
     ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); ui.set(clk, "sync", 0); ui.set(clk, "bpm", 100);
     UiMod* m = ui.add(d->type, 100, 20);
     if (d->cat == Cat::Voice) { ui.connect(clk, "PULSE", m, "TRIG"); ui.connect(m, "OUT", out, "A"); }

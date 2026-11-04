@@ -10,13 +10,14 @@
 #include "../ui/session.h"
 #include "../ui/ui.h"
 #include "audio_files.h"
+#include "midi.h"
 #include <cstdio>
 #include <ctime>
 #include <mutex>
 
 using namespace tb;
 
-static const char* VERSION = "0.4.0";
+static const char* VERSION = "0.5.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -40,6 +41,7 @@ struct Sound {
     cfg.performanceProfile = bufIdx <= 1 ? ma_performance_profile_low_latency : ma_performance_profile_conservative;
     if (ma_device_init(nullptr, &cfg, &dev) != MA_SUCCESS) return false;
     open = true; if (e.sr != (float)dev.sampleRate && rate == 0) e.setSampleRate((float)dev.sampleRate);
+    e.outLatency = (float)(BUFFERS[bufIdx] * 3) / (float)dev.sampleRate;
     return ma_device_start(&dev) == MA_SUCCESS;
   }
   void stop() { if (open) { ma_device_uninit(&dev); open = false; } }
@@ -77,6 +79,7 @@ int main(int argc, char** argv) {
   if (!sound.start(engine, 0)) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
 
   Ui ui(engine);
+  static Midi midi(engine); midi.start();
   // the first time ever, a demo session is put in the list so there's something to play
   if (store.list.empty() && !settings.truthy("demoAdded")) { ui.demoPatch(); store.list.push_back({"DEMO", (double)std::time(nullptr), serializePatch(ui)}); store.save(); ui.clearPatch(); settings.set("demoAdded", Json::boolean(true)); saveSettings(); }
   // the app opens to an empty session; RESTORE LAST WORK brings back what was there
@@ -126,6 +129,14 @@ int main(int argc, char** argv) {
       else { const std::string p = rec.path; const bool got = rec.stop(engine); if (Module* o = outMod()) o->disp[1].store(0);
         if (got) { std::string nm = p.substr(p.find_last_of("/\\") + 1); for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); ui.status("SAVED " + nm + " IN MUSIC / TIMBIENT MODULES", 6); } else { std::remove(p.c_str()); ui.status("NOTHING RECORDED"); } }
       return true; }
+    if (ty == "midiout" && k == "pick") {   // MIDI OUT: choose the device
+      const auto names = midi.outputs(); if (names.empty()) { ui.status("NO MIDI OUTPUTS FOUND. PLUG ONE IN AND TRY AGAIN", 4); return true; }
+      Dropdown d; const ModuleDef* df = u->m->def; const Ui::Geom g = ui.geom(*u); d.x = u->x - ui.viewX + 10; d.y = u->y - ui.viewY + g.py + 4;
+      for (auto n : names) { for (auto& ch : n) ch = (char)std::toupper((unsigned char)ch); d.items.push_back(n.substr(0, 28)); if (names[d.items.size() - 1] == u->dev) d.cur = (int)d.items.size() - 1; }
+      const int id = u->m->id; (void)df;
+      d.pick = [&, names, id](int i) { UiMod* t = ui.byId(id); if (!t) return; t->dev = names[i]; t->m->devSlot.store(midi.openOutput(names[i])); dirty = true; saveT = 0.5f;
+        std::string up = names[i]; for (auto& ch : up) ch = (char)std::toupper((unsigned char)ch); ui.status("MIDI OUT TO " + up); };
+      ui.openDropdown(d); return true; }
     if (ty == "out" && k == "again") { SDL_OpenURL(fileUrl(recDir).c_str()); ui.status("OPENING YOUR RECORDINGS"); return true; }
     return false;
   };
@@ -274,6 +285,11 @@ int main(int argc, char** argv) {
       } }
     engine.collectGarbage();
     if (rec.on()) { rec.pump(engine); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }
+    // MIDI: notice devices coming and going; give MIDI OUT modules their device
+    { static float mt = 0; midi.poll(0.016f); ui.midiState = midi.state(); mt -= 0.016f;
+      if (mt <= 0) { mt = 2; std::vector<std::string> names; bool listed = false;
+        for (auto& up : ui.mods) if (up->m->def->type == "midiout" && up->m->devSlot.load() < 0) { if (!listed) { names = midi.outputs(); listed = true; }
+          const std::string want = up->dev.empty() ? (names.empty() ? std::string() : names[0]) : up->dev; if (!want.empty()) up->m->devSlot.store(midi.openOutput(want)); } } }
     // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
     { static float catchT = 0; catchT += 0.016f; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->peaks.empty() && up->audioId.empty()) catchSound(up.get(), true); } }
 

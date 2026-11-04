@@ -26,6 +26,7 @@ set(ENGINE_SOURCES
   src/engine/modules_fx2.cpp
   src/engine/modules_trig2.cpp
   src/engine/modules_audio.cpp
+  src/engine/modules_midi.cpp
   src/engine/modules_fx.cpp)
 set(UI_SOURCES src/ui/ui.cpp src/ui/session.cpp)
 
@@ -47,25 +48,31 @@ if(TIMBIENT_APP)
   # miniaudio: one header, straight to CoreAudio / WASAPI / ALSA / PulseAudio
   FetchContent_Declare(miniaudio GIT_REPOSITORY https://github.com/mackron/miniaudio.git GIT_TAG 0.11.22 GIT_SHALLOW TRUE SOURCE_SUBDIR not-a-cmake-project)
   FetchContent_MakeAvailable(miniaudio)
+  # RtMidi: MIDI devices through CoreMIDI / WinMM / ALSA (built straight into the app)
+  FetchContent_Declare(rtmidi GIT_REPOSITORY https://github.com/thestk/rtmidi.git GIT_TAG 6.0.0 GIT_SHALLOW TRUE SOURCE_SUBDIR not-a-cmake-project)
+  FetchContent_MakeAvailable(rtmidi)
 
   set(APP_NAME "Timbient Modules")
   if(APPLE)
     set(MACOSX_BUNDLE_ICON_FILE timbient.icns)
     set_source_files_properties(assets/timbient.icns PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-    add_executable(timbient MACOSX_BUNDLE src/app/main.cpp src/app/audio_files.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.icns)
+    add_executable(timbient MACOSX_BUNDLE src/app/main.cpp src/app/audio_files.cpp src/app/midi.cpp ${rtmidi_SOURCE_DIR}/RtMidi.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.icns)
     configure_file(assets/Info.plist.in ${CMAKE_BINARY_DIR}/Info.plist)
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "${APP_NAME}" MACOSX_BUNDLE_INFO_PLIST ${CMAKE_BINARY_DIR}/Info.plist)
-    target_link_libraries(timbient PRIVATE "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    target_link_libraries(timbient PRIVATE "-framework CoreAudio" "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation" "-framework CoreMIDI" "-framework CoreServices")
+    target_compile_definitions(timbient PRIVATE __MACOSX_CORE__)
     target_compile_definitions(timbient PRIVATE MA_NO_RUNTIME_LINKING)
   elseif(WIN32)
-    add_executable(timbient WIN32 src/app/main.cpp src/app/audio_files.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.rc)
+    add_executable(timbient WIN32 src/app/main.cpp src/app/audio_files.cpp src/app/midi.cpp ${rtmidi_SOURCE_DIR}/RtMidi.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.rc)
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "Timbient Modules")
-    target_compile_definitions(timbient PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)   # stop Windows headers redefining min and max
+    target_compile_definitions(timbient PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN __WINDOWS_MM__)   # NOMINMAX: stop Windows headers redefining min and max
+    target_link_libraries(timbient PRIVATE winmm)
   else()
-    add_executable(timbient src/app/main.cpp src/app/audio_files.cpp ${ENGINE_SOURCES} ${UI_SOURCES})
+    add_executable(timbient src/app/main.cpp src/app/audio_files.cpp src/app/midi.cpp ${rtmidi_SOURCE_DIR}/RtMidi.cpp ${ENGINE_SOURCES} ${UI_SOURCES})
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "timbient-modules")
-    target_link_libraries(timbient PRIVATE pthread dl m)
+    target_link_libraries(timbient PRIVATE pthread dl m asound)
+    target_compile_definitions(timbient PRIVATE __LINUX_ALSA__)
   endif()
-  target_include_directories(timbient PRIVATE ${miniaudio_SOURCE_DIR})
+  target_include_directories(timbient PRIVATE ${miniaudio_SOURCE_DIR} ${rtmidi_SOURCE_DIR})
   target_link_libraries(timbient PRIVATE SDL3::SDL3-static)
 endif()

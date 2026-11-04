@@ -154,6 +154,15 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     }
     if (!smp) { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, 12);
       const int n = (int)D(1); for (int k = 0; k < n && k < 30; k++) c.px(x + (int)std::lround(clampf(D(2 + k), 0, 1) * (w - 1)), y + 6 + (int)(std::rand() % 9) - 4, 4); }
+  } else if (ty == "midi") {
+    const bool ok = midiState.find("DEVICE") != std::string::npos && midiState.rfind("NO", 0) != 0; c.text(midiState, x + 2, y, ok ? 17 : 14);
+    const int ln = (int)D(0); if (ln >= 0) { const std::string nt = noteName(ln); c.text(nt, x + w - 2 - Canvas::tw(nt), y, m->flash.load() > 0 ? 4 : 9); }
+    const int cw = (int)std::lround((D(1) + 1) / 2 * (w - 4)); for (int i = 0; i < w - 4; i++) { c.px(x + 2 + i, y + 7, i < cw ? 11 : 21); c.px(x + 2 + i, y + 8, i < cw ? 11 : 21); }
+  } else if (ty == "midiout") {
+    const bool has = m->devSlot.load() >= 0; std::string nm = has ? (u.dev.empty() ? std::string("FIRST DEVICE") : u.dev) : std::string("NO OUTPUT");
+    for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); c.text(nm.substr(0, 13), x + 2, y, has ? 17 : 14);
+    const int ln = (int)D(0); if (ln >= 0) { const std::string nt = noteName(ln); c.text(nt, x + w - 2 - Canvas::tw(nt), y + 6, m->flash.load() > 0 ? 4 : 9); }
+    if (D(1) > 0.5f) c.text("CLOCK", x + 2, y + 6, ((int)(blink * 4)) % 2 ? 24 : 18);
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {

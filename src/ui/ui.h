@@ -16,6 +16,7 @@ struct UiMod {
   float lit[64] = {0};                               // Note Grid pads that were just pressed
   float scroll = 0, hold = 0; int seqVer = 0, entered = 0;   // the Tracker: first row on show, a pause in FOLLOW after an edit
   std::string audioId; std::vector<float> peaks; bool missing = false;   // Sample / Grain Looper: the sound it holds, and its outline
+  std::string dev;                                                       // MIDI OUT: the device chosen (empty: the first one there)
 };
 struct UiCable { int from, fromPort, to, toPort, toParam; PType type; };
 
@@ -30,6 +31,7 @@ public:
   int viewX = 0, viewY = 0, nextId = 1;
   std::string statusMsg; float statusT = 0;
   bool wantFullscreen = false, isFullscreen = false;
+  std::string midiState = "MIDI OFF";                 // shown on MIDI modules
   std::function<void()> onChange;                     // called after anything that should be saved
   std::function<void(int)> onZoom;                    // the zoom buttons: -1 out, +1 in
   std::function<bool(UiMod*, const std::string&)> onAction;   // the app's own handling of some buttons (LOAD FILE, RECORD...); true if it took it

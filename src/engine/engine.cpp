@@ -111,8 +111,18 @@ void Engine::render(float* L, float* R, int n) {
   cpuLoad.store(cpuLoad.load() * 0.95f + (float)(used / avail) * 0.05f, std::memory_order_relaxed);
 }
 
+double wallSeconds() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
 void Engine::block(float* L, float* R, int n) {
   applyCommands();
+  // MIDI arriving from the devices: clock ticks become pulses (24 per beat, passed on as eighth notes); the rest is kept for MIDI IN modules
+  midiN = 0; midiClock = false;
+  for (auto& q : midiInQ) { MidiMsg mm; while (q.pop(mm)) {
+    if (mm.st == 0xF8) { if (midiLastT >= 0) { const double dt = now - midiLastT; if (dt > 0.001 && dt < 0.5) midiPer = (float)(midiPer * 0.9 + dt * 12 * 0.1); } midiLastT = now;
+      midiTick = (midiTick + 1) % 12; if (midiTick == 0) midiClock = true; }
+    else if (mm.st == 0xFA) midiTick = -1;
+    else if (midiN < 256) midiNow[midiN++] = mm; } }
+  now += n / sr;
   if (dirty) reorder();
   { int s = 0; for (auto* m : mods) if (m->solo.load(std::memory_order_relaxed)) s += m->id; if (s != soloSig) { soloSig = s; soloGates(); } }   // re-gate only when solo changes
   blockNo++;

@@ -89,6 +89,7 @@ public:
   static constexpr int SEQ_MAX = 128;
   std::unique_ptr<std::atomic<float>[]> seq;
   std::atomic<int> cursor{0}, seqVer{0};
+  std::atomic<int> devSlot{-1};    // MIDI OUT: which opened device it sends to
   void allocSeq() { seq.reset(new std::atomic<float>[SEQ_MAX * 2]); for (int i = 0; i < SEQ_MAX; i++) { seq[i * 2].store(-1); seq[i * 2 + 1].store(0.8f); } }
 
   Module() { for (auto& d : disp) d.store(0.f); }
@@ -128,6 +129,10 @@ template <typename T, int N> struct SpscQueue {   // single producer, single con
 };
 
 struct Tempo { std::atomic<float> bpm{72}; };
+// MIDI: bytes from the devices (each input has its own queue, filled by that device's thread), and bytes going out
+struct MidiMsg { uint8_t st = 0, d1 = 0, d2 = 0; };
+struct MidiOutMsg { int slot = 0, n = 0; uint8_t b[3] = {0, 0, 0}; double at = 0; };   // at: when to send, in seconds on the steady clock
+double wallSeconds();
 struct Key { std::atomic<int> root{2}, scale{0}; };
 
 class Engine {
@@ -152,6 +157,11 @@ public:
   void clear() { send({Command::CLEAR}); }
   void setBuffer(int id, AudioBuf* b) { Command k{Command::SETBUF}; k.id = id; k.buf = b; send(k); }
   // recording the master output: the audio thread writes here, the screen thread drains it to a file
+  static constexpr int MIDI_INS = 8;
+  SpscQueue<MidiMsg, 1024> midiInQ[MIDI_INS];
+  SpscQueue<MidiOutMsg, 4096> midiOutQ;
+  MidiMsg midiNow[256]; int midiN = 0; bool midiClock = false; float midiPer = 0.25f; int midiTick = -1; double midiLastT = -1, now = 0;
+  float outLatency = 0.03f;   // how far ahead of the speakers the engine runs (MIDI OUT waits this long so notes line up)
   std::atomic<bool> recOn{false}; std::vector<float> recBuf; std::atomic<long> recW{0}; long recR = 0;
   void collectGarbage();                                  // frees modules the audio thread has finished with
 
