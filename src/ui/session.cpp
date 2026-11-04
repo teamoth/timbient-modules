@@ -34,7 +34,13 @@ Json serializePatch(Ui& ui) {
   Json mods = Json::array();
   for (auto& up : ui.mods) { UiMod& u = *up; const ModuleDef* def = u.m->def; Json m = Json::object();
     m.set("id", Json::number(u.m->id)); m.set("type", Json::string(def->type)); m.set("x", Json::number(u.x)); m.set("y", Json::number(u.y));
-    Json p = Json::object(); for (size_t k = 0; k < def->params.size(); k++) if (!def->params[k].act) p.set(def->params[k].key, Json::number(u.m->p[k].load())); m.set("p", p);
+    Json p = Json::object(); for (size_t k = 0; k < def->params.size(); k++) if (!def->params[k].act) p.set(def->params[k].key, Json::number(u.m->p[k].load()));
+    if (u.m->seq) {   // the Tracker's steps: [note, velocity] or null, up to the last one used
+      int last = -1; for (int i = 0; i < Module::SEQ_MAX; i++) if (u.m->seq[i * 2].load() >= 0) last = i;
+      Json sq = Json::array(); for (int i = 0; i <= last; i++) { const float nt = u.m->seq[i * 2].load(); if (nt < 0) { sq.push(Json()); continue; }
+        Json st = Json::array(); st.push(Json::number(nt)); st.push(Json::number(u.m->seq[i * 2 + 1].load())); sq.push(st); }
+      p.set("seq", sq); }
+    m.set("p", p);
     m.set("mute", Json::boolean(u.m->mute.load())); m.set("solo", Json::boolean(u.m->solo.load())); m.set("fold", Json::boolean(u.fold)); mods.push(m); }
   d.set("mods", mods);
   Json cs = Json::array();
@@ -75,6 +81,9 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (!u) u = ui.add(ty, (int)m.num("x"), (int)m.num("y"));
     if (!u) { skipped.insert(ty); continue; }
     if (const Json* p = m.get("p")) for (size_t k = 0; k < def->params.size(); k++) { const Json* v = p->get(def->params[k].key); if (v && v->t == Json::NUM) u->m->p[k].store((float)v->n); }
+    if (const Json* p = m.get("p")) if (const Json* sq = p->get("seq")) if (sq->t == Json::ARR && u->m->seq)
+      for (size_t i = 0; i < sq->a.size() && i < (size_t)Module::SEQ_MAX; i++) { const Json& st = sq->a[i];
+        if (st.t == Json::ARR && st.a.size() >= 1 && st.a[0].t == Json::NUM) { u->m->seq[i * 2].store((float)st.a[0].n); u->m->seq[i * 2 + 1].store(st.a.size() > 1 && st.a[1].t == Json::NUM ? (float)st.a[1].n : 0.8f); } }
     u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo")); u->fold = m.truthy("fold");
     idmap[(int)m.num("id")] = u; maxId = std::max(maxId, (int)m.num("id"));
   }

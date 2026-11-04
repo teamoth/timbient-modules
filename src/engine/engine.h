@@ -81,6 +81,12 @@ public:
   long processed = -1;             // the last block this module was processed in
   Engine* eng = nullptr;
   Rng rng;
+  // typed-in steps (the Tracker): note and velocity per step, a note below 0 is an empty step.
+  // Written by either thread, one value at a time; seqVer counts changes so the screen can save them.
+  static constexpr int SEQ_MAX = 128;
+  std::unique_ptr<std::atomic<float>[]> seq;
+  std::atomic<int> cursor{0}, seqVer{0};
+  void allocSeq() { seq.reset(new std::atomic<float>[SEQ_MAX * 2]); for (int i = 0; i < SEQ_MAX; i++) { seq[i * 2].store(-1); seq[i * 2 + 1].store(0.8f); } }
 
   Module() { for (auto& d : disp) d.store(0.f); }
   virtual ~Module() {}
@@ -171,6 +177,7 @@ struct ScaleDef { const char* name; std::vector<int> steps; };
 const std::vector<ScaleDef>& scales();
 float midiOf(int degree, int root, int scale);
 inline int degOf(int oct, int step, int scale) { return (oct - 2) * (int)scales()[scale].steps.size() + step; }
+inline int nearDeg(float note, int root, int scale) { int best = 0; float bd = 1e9f; for (int i = -12; i < 90; i++) { const float d = std::fabs(midiOf(i, root, scale) - note); if (d < bd) { bd = d; best = i; } } return best; }
 extern const char* NOTE_NAMES[12];
 
 }  // namespace tb

@@ -37,15 +37,15 @@ struct Smooth {
   inline float tick() { v += (t - v) * k; return v; }
 };
 
-// RBJ biquad filter
+// RBJ biquad filter (double precision inside: narrow, low filters stay clean and stable)
 struct Biquad {
   enum Type { LP, HP, BP, AP, PEAK, NOTCH };
-  float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
-  float z1[2] = {0, 0}, z2[2] = {0, 0};
+  double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+  double z1[2] = {0, 0}, z2[2] = {0, 0};
   void set(Type type, float f, float q, float sr, float gainDb = 0) {
-    f = clampf(f, 10.f, sr * 0.49f); q = std::max(q, 0.0001f);
-    const float w = TAU * f / sr, cw = std::cos(w), sw = std::sin(w), al = sw / (2 * q), A = std::pow(10.f, gainDb / 40.f);
-    float B0, B1, B2, A0, A1, A2;
+    const double F = clampf(f, 10.f, sr * 0.49f), Q = std::max(q, 0.0001f);
+    const double w = 6.283185307179586 * F / sr, cw = std::cos(w), sw = std::sin(w), al = sw / (2 * Q), A = std::pow(10.0, gainDb / 40.0);
+    double B0, B1, B2, A0, A1, A2;
     switch (type) {
       case LP: B0 = (1 - cw) / 2; B1 = 1 - cw; B2 = (1 - cw) / 2; A0 = 1 + al; A1 = -2 * cw; A2 = 1 - al; break;
       case HP: B0 = (1 + cw) / 2; B1 = -(1 + cw); B2 = (1 + cw) / 2; A0 = 1 + al; A1 = -2 * cw; A2 = 1 - al; break;
@@ -57,11 +57,11 @@ struct Biquad {
     b0 = B0 / A0; b1 = B1 / A0; b2 = B2 / A0; a1 = A1 / A0; a2 = A2 / A0;
   }
   inline float run(float x, int ch = 0) {   // transposed direct form II
-    float y = b0 * x + z1[ch];
+    const double y = b0 * x + z1[ch];
     z1[ch] = b1 * x - a1 * y + z2[ch];
     z2[ch] = b2 * x - a2 * y;
     if (!std::isfinite(y)) { reset(); return 0.f; }   // never let a blow-up jam the chain
-    return y;
+    return (float)y;
   }
   void reset() { z1[0] = z1[1] = z2[0] = z2[1] = 0; }
 };

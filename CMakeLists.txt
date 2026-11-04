@@ -22,12 +22,16 @@ set(ENGINE_SOURCES
   src/engine/engine.cpp
   src/engine/modules_trig.cpp
   src/engine/modules_voice.cpp
+  src/engine/modules_voice2.cpp
+  src/engine/modules_fx2.cpp
+  src/engine/modules_trig2.cpp
   src/engine/modules_fx.cpp)
 set(UI_SOURCES src/ui/ui.cpp src/ui/session.cpp)
 
 if(TIMBIENT_TESTS)
   add_executable(timbient_render tests/render.cpp ${ENGINE_SOURCES})
   add_executable(timbient_shot tests/shot.cpp ${ENGINE_SOURCES} ${UI_SOURCES})
+  add_executable(timbient_allmods tests/allmods.cpp ${ENGINE_SOURCES} ${UI_SOURCES})
 endif()
 
 if(TIMBIENT_APP)

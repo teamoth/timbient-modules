@@ -14,6 +14,7 @@ struct UiMod {
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
   float hist[48] = {0}; int hi = 0; float ht = 0;   // recent values, for drawing the LFO's line
   float lit[64] = {0};                               // Note Grid pads that were just pressed
+  float scroll = 0, hold = 0; int seqVer = 0, entered = 0;   // the Tracker: first row on show, a pause in FOLLOW after an edit
 };
 struct UiCable { int from, fromPort, to, toPort, toParam; PType type; };
 
@@ -74,10 +75,12 @@ private:
   void drawJack(Canvas& c, int x, int y, PType t, bool filled, bool lit);
   int jackY(int k) const { return 8 + k * 7 + 3; }
   void keysPress(UiMod& u, int x, int y);
+  void drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt);
+  void trackerWatch(UiMod& u);
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL };
   std::unique_ptr<Dropdown> dd; bool menuOpen = false; int lastW = 400; float blink = 0;
   struct MenuItem { std::string type; int x, y, w; };
   std::vector<MenuItem> menuItems;

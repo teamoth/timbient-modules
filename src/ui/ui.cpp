@@ -119,9 +119,31 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
       c.px(xx, y + vh - 2, 21); c.px(xx + 1, y + vh - 2, 21); if (hh > 0) c.rect(xx, y, 2, hh, k == 47 ? 4 : 12); }
   } else if (ty == "clock") {
     for (int i = 0; i < 4; i++) c.rect(x + 4 + i * 12, y + 1, 8, 3, D(1) > 0.5f && i == (int)D(0) ? 4 : 21);
-  } else if (ty == "lfo") {
-    u.ht += dt; if (u.ht > 0.05f) { u.ht = 0; u.hist[u.hi] = D(0); u.hi = (u.hi + 1) % 48; }
+  } else if (ty == "lfo" || ty == "env" || ty == "rand" || ty == "follow") {   // the modulation's recent path
+    float every = ty == "lfo" ? 0.05f : 0.03f; if (ty == "rand") every = std::min(0.08f, m->p[0].load() / 12);
+    u.ht += dt; if (u.ht > every) { u.ht = 0; u.hist[u.hi] = D(0); u.hi = (u.hi + 1) % 48; }
     int py = -1; for (int k = 0; k < 48; k++) { const float v = u.hist[(u.hi + k) % 48]; const int yy = y + 3 - (int)std::lround(v * 3), xx = x + (int)std::lround(k * (w - 1) / 47.f); if (py >= 0) c.line(xx - 1, py, xx, yy, 11); py = yy; }
+  } else if (ty == "bursts") {   // the burst's notes along a line, and where it has got to
+    for (int i = 0; i < w; i += 2) c.px(x + i, y + 5, 18);
+    const int n = (int)D(0); for (int i = 0; i < n && i < 9; i++) c.rect(x + (int)std::lround(D(1 + i) * (w - 2)), y + 1, 2, 5, 7);
+    const float k = D(10); if (k >= 0 && k <= 1) for (int j = 0; j < 7; j++) c.px(x + (int)std::lround(k * (w - 2)), y + j, 24);
+  } else if (ty == "walker") {
+    const int range = std::max(1, (int)m->p[4].load());
+    for (int i = 0; i < w; i++) c.px(x + i, y + 4, 21); for (int i = 0; i < range; i++) c.px(x + (int)std::lround((float)i / range * (w - 1)), y + 5, 18);
+    c.rect(x + (int)std::lround(D(0) * (w - 3)), y + 2, 3, 2, 24);
+  } else if (ty == "tools") {   // which of the last triggers got through
+    const int n = (int)D(0); const unsigned h = (unsigned)D(1);
+    for (int i = 0; i < 14; i++) c.rect(x + 1 + i * 4, y + 1, 3, 2, i < n ? (((h >> (n - 1 - i)) & 1u) ? 24 : 18) : 21);
+  } else if (ty == "phaser") {
+    for (int i = 0; i < w; i += 2) c.px(x + i, y + 2, 18);
+    const float k = 0.5f + 0.5f * std::sin(D(0) * TAU) * m->p[1].load(); c.rect(x + (int)std::lround(k * (w - 3)), y, 3, 5, 17);
+    if (m->p[5].load() > 0.5f) c.rect(x + (int)std::lround((1 - k) * (w - 3)), y + 1, 3, 3, 3);
+  } else if (ty == "tape") {   // two turning reels
+    const float ph = D(0);
+    for (int cx : {x + 12, x + w - 13}) { for (float a = 0; a < TAU; a += 0.5f) c.pxf(cx + 4 * std::cos(a), y + 2 + 2 * std::sin(a), 18); c.pxf(cx + 2 * std::cos(ph * TAU), y + 2 + std::sin(ph * TAU), 4); }
+    for (int i = x + 16; i < x + w - 16; i++) c.px(i, y + 4, 7);
+  } else if (ty == "tracker") {
+    drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
     const int n = (int)scales()[eng.key.scale.load()].steps.size(), root = eng.key.root.load(), sc = eng.key.scale.load();
     const int oct = (int)m->p[0].load(), rowStep = m->p[1].load() > 0.5f ? 8 : (n >= 6 ? 3 : 2);
@@ -147,7 +169,44 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
   }
 }
 
+// ---------------- the Tracker's list of steps ----------------
+static const int TR_ROWS = 14;
+static int trLen(Module* m) { return std::max(1, std::min(Module::SEQ_MAX, (int)m->p[4].load())); }
+static int trShown(Module* m) { int last = -1; for (int i = Module::SEQ_MAX - 1; i >= 0; i--) if (m->seq[i * 2].load() >= 0) { last = i; break; } return std::max(trLen(m), last + 1); }
+static void trClamp(UiMod& u) { u.scroll = clampf(std::round(u.scroll), 0, (float)std::max(0, trShown(u.m) - TR_ROWS)); }
+static void trShow(UiMod& u, int row) { if (row < u.scroll) u.scroll = (float)row; else if (row >= u.scroll + TR_ROWS) u.scroll = (float)(row - TR_ROWS + 1); trClamp(u); }
+void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
+  Module* m = u.m; const int len = trLen(m), shown = trShown(m), pos = (int)m->disp[0].load(), div = std::max(1, (int)m->disp[1].load()), cur = m->cursor.load();
+  u.hold = std::max(0.f, u.hold - dt);
+  if (m->p[9].load() > 0.5f && u.hold <= 0 && pos >= 0 && (pos < u.scroll || pos >= u.scroll + TR_ROWS)) u.scroll = (float)pos;   // FOLLOW the playhead
+  trClamp(u); const int sc = (int)u.scroll;
+  auto num = [](int r) { char b[16]; std::snprintf(b, 16, "%03d", r + 1); return std::string(b); };
+  for (int i = 0; i < TR_ROWS; i++) { const int r = sc + i, ry = y + 1 + i * 6; if (r >= shown) break;
+    const float nt = m->seq[r * 2].load(), vel = m->seq[r * 2 + 1].load(); const bool has = nt >= 0;
+    if (r >= len) { if (r == len) { for (int k = 0; k < w; k += 2) c.px(x + k, ry - 1, 18); c.text("OFF", x + w - 13, ry, 18); }
+      c.text(num(r), x + 1, ry, 21); c.text(has ? noteName((int)nt) : "---", x + 15, ry, 21); continue; }
+    const bool play = r == pos, isCur = r == cur, beat = r % div == 0;
+    if (play) c.rect(x, ry - 1, w, 7, 17); else if (isCur) c.rect(x, ry - 1, w, 7, 21);
+    c.text(num(r), x + 1, ry, play ? 15 : beat ? 9 : 18);
+    c.text(has ? noteName((int)nt) : "---", x + 15, ry, has ? (play ? 15 : 9) : play ? 15 : 18);
+    if (has) { const int vw = (int)std::lround(vel * 10); for (int k = 0; k < vw; k++) c.px(x + w - 12 + k, ry + 2, play ? 15 : 7); }
+    if (isCur) { c.px(x - 2, ry + 1, 4); c.px(x - 2, ry + 2, 4); c.px(x - 2, ry + 3, 4); c.px(x - 1, ry + 2, 4); }
+  }
+  if (shown > TR_ROWS) {   // where the view is, along the right edge
+    const int H = TR_ROWS * 6, h = std::max(3, (int)std::lround((float)TR_ROWS / shown * H)), sy = (int)std::lround(u.scroll / (shown - TR_ROWS) * (H - h));
+    for (int j = 0; j < H; j++) c.px(x + w + 1, y + j - 1, j >= sy && j < sy + h ? 9 : 21);
+    if (pos >= 0) { const int py = (int)std::lround((float)pos / std::max(1, shown - 1) * (H - 2)); c.px(x + w + 1, y + py - 1, 17); c.px(x + w + 1, y + py, 17); c.px(x + w, y + py, 17); }
+  }
+}
+void Ui::trackerWatch(UiMod& u) {   // notes typed in through ENTER arrive from the audio side: show and save them
+  const int v = u.m->seqVer.load(); if (v == u.seqVer) return; u.seqVer = v;
+  const int en = (int)u.m->disp[4].load();
+  if (en != u.entered) { u.entered = en; char b[32]; std::snprintf(b, 32, "STEP %03d  ", (int)u.m->disp[2].load() + 1); status(b + noteName((int)u.m->disp[3].load()), 1.2f); }
+  u.hold = 6; trShow(u, u.m->cursor.load()); changed();
+}
+
 void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
+  if (u.m->seq) trackerWatch(u);
   const ModuleDef* d = u.m->def; const Geom g = geom(u); const int x = u.x - viewX, y = u.y - viewY, w = g.w;
   if (x > c.W || y > c.H || x + w < 0 || y + g.h < 0) return;
   static uint8_t inkTbl[64]; static bool init = false; if (!init) { for (int i = 0; i < 64; i++) inkTbl[i] = (uint8_t)i; inkTbl[9] = 28; inkTbl[18] = 29; inkTbl[21] = 30; inkTbl[4] = 47; init = true; }
@@ -310,11 +369,20 @@ void Ui::pointerDown(float sx, float sy) {
     const int vx = lx - 3, vy = ly - g.vy;
     if (d->type == "keys") { keysPress(*u, vx, vy); return; }
     if (d->type == "out" && vy >= 11) { drag.kind = D_XFADE; drag.m = u; pointerMove(sx, sy); return; }
+    if (d->type == "tracker") {   // tap a row to put the cursor there; drag up and down to scroll
+      u->hold = 6; const int r = (int)u->scroll + std::max(0, (vy - 1) / 6);
+      if (r < trLen(u->m)) { u->m->cursor.store(r); char b[32]; std::snprintf(b, 32, "CURSOR AT STEP %03d", r + 1); status(b, 1.2f); }
+      drag.kind = D_SCROLL; drag.m = u; drag.n0 = u->scroll; return; }
   }
   const int pj = paramAt(u, ly);
   if (pj >= 0) {
     const ParamDef& q = d->params[pj];
-    if (q.act) { eng.action(u->m->id, q.key); return; }
+    if (q.act) {
+      if (d->type == "tracker") { u->hold = 6; trShow(*u, u->m->cursor.load()); }
+      if (d->type == "tracker" && q.key == "clear") {   // ask first: this wipes every step
+        Dropdown z; z.items = {"CLEAR EVERY STEP?", "YES, CLEAR ALL", "NO, KEEP THEM"}; z.title = 0; z.danger = 1; z.x = u->x - viewX + 8; z.y = u->y - viewY + g.py + pj * ROW + 4;
+        z.pick = [this, u](int i) { if (i == 1) { eng.action(u->m->id, "clear"); u->scroll = 0; status("TRACKER CLEARED"); } }; openDropdown(z); return; }
+      eng.action(u->m->id, q.key); return; }
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }
       Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + pj * ROW + 4;
@@ -331,6 +399,7 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_MOVE) { drag.m->x = wx - drag.ox; drag.m->y = std::max(viewY + TOP + 1, wy - drag.oy); }
   else if (drag.kind == D_PARAM) { const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 ? 40.f : 70.f));
     drag.m->m->p[drag.k].store(v); status(drag.m->m->def->name + "  " + q.label + "  " + fmtParam(q, v, eng.key.root.load()), 1.5f); }
+  else if (drag.kind == D_SCROLL) { drag.m->hold = 6; drag.m->scroll = drag.n0 - (sy - drag.sy) / 6; trClamp(*drag.m); }
   else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
     drag.m->m->p[drag.m->m->def->paramIndex("xf")].store(v); char b[32]; std::snprintf(b, 32, "CROSSFADE  A %d / B %d", (int)std::lround((1 - v) * 100), (int)std::lround(v * 100)); status(b, 1); }
 }
