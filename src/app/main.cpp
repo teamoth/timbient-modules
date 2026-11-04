@@ -18,11 +18,21 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.5.1";
+static const char* VERSION = "0.5.2";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
+// tiny numbers at the end of echo and reverb tails ("denormals") are very slow on Intel processors: treat them as zero
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <xmmintrin.h>
+static inline void flushDenormals() { _mm_setcsr(_mm_getcsr() | 0x8040); }
+#elif defined(__aarch64__) && !defined(_MSC_VER)
+static inline void flushDenormals() { uint64_t f; __asm__ __volatile__("mrs %0, fpcr" : "=r"(f)); f |= (1ull << 24); __asm__ __volatile__("msr fpcr, %0" : : "r"(f)); }
+#else
+static inline void flushDenormals() {}
+#endif
 static void audioCallback(ma_device*, void* output, const void*, ma_uint32 frames) {
+  flushDenormals();
   float* out = (float*)output; static float L[4096], R[4096];
   ma_uint32 done = 0;
   while (done < frames) {
@@ -202,13 +212,16 @@ int main(int argc, char** argv) {
     ui.openDropdown(d);
   };
 
+  // ---- SCREEN: how often the picture is redrawn when nothing is being touched (it always runs at full speed while you work) ----
+  static const int FPS[3] = {60, 30, 20};
+  int fpsIdx = std::max(0, std::min(2, (int)settings.num("fps", 1)));
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "THEME", std::string("VERSION ") + VERSION};
-    d.title = 5;
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", "THEME", std::string("VERSION ") + VERSION};
+    d.title = 6;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
       if (i == 0) { for (int k = 0; k < 12; k++) q.items.push_back(std::string("KEY ") + NOTE_NAMES[k]); q.cur = engine.key.root.load();
@@ -230,7 +243,9 @@ int main(int argc, char** argv) {
       else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / engine.sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
         q.pick = [&](int j) { if (j == sound.bufIdx) return; sound.stop(); sound.bufIdx = j; settings.set("buffer", Json::number(j)); saveSettings();
           if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j])); }; }
-      else if (i == 4) { openTheme(x0); return; }
+      else if (i == 4) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
+        q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
+      else if (i == 5) { openTheme(x0); return; }
       else return;
       ui.openDropdown(q);
     };
@@ -250,8 +265,9 @@ int main(int argc, char** argv) {
   int pendingZoom = 0; float pinchAcc = 0, wheelAcc = 0;
   ui.onZoom = [&](int k) { pendingZoom += k; };
 
-  bool running = true; Uint64 last = SDL_GetTicksNS();
+  bool running = true, hidden = false, held = false; float busyT = 1; Uint64 last = SDL_GetTicksNS(), lastLoop = last;
   while (running) {
+    const Uint64 tl = SDL_GetTicksNS(); const float ldt = std::min(0.25f, (tl - lastLoop) / 1e9f); lastLoop = tl; busyT -= ldt;
     int pw = 0, ph = 0; SDL_GetCurrentRenderOutputSize(ren, &pw, &ph);
     float dens = SDL_GetWindowPixelDensity(win); if (dens <= 0) dens = 1;
     // apply a zoom change, keeping the middle of the view where it was
@@ -264,6 +280,8 @@ int main(int argc, char** argv) {
     const int W = std::max(64, (int)(pw / scale)), H = std::max(48, (int)(ph / scale));
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
+      if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) held = true; if (ev.type == SDL_EVENT_MOUSE_BUTTON_UP) held = false;
+      if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_MOUSE_MOTION || ev.type == SDL_EVENT_MOUSE_WHEEL || ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_PINCH_UPDATE || ev.type == SDL_EVENT_TEXT_INPUT) { busyT = 0.6f; hidden = false; }
       switch (ev.type) {
         case SDL_EVENT_QUIT: running = false; break;
         case SDL_EVENT_TEXT_INPUT: ui.typed(ev.text.text); break;
@@ -286,6 +304,8 @@ int main(int argc, char** argv) {
         case SDL_EVENT_PINCH_UPDATE:   // a trackpad pinch
           pinchAcc += std::log(std::max(0.01f, ev.pinch.scale)); if (std::fabs(pinchAcc) > 0.077f) { pendingZoom += pinchAcc > 0 ? 1 : -1; pinchAcc = 0; } break;
         case SDL_EVENT_PINCH_END: pinchAcc = 0; break;
+        case SDL_EVENT_WINDOW_MINIMIZED: case SDL_EVENT_WINDOW_HIDDEN: case SDL_EVENT_WINDOW_OCCLUDED: hidden = true; break;   // nothing to see: stop drawing
+        case SDL_EVENT_WINDOW_RESTORED: case SDL_EVENT_WINDOW_SHOWN: case SDL_EVENT_WINDOW_EXPOSED: case SDL_EVENT_WINDOW_MAXIMIZED: case SDL_EVENT_WINDOW_FOCUS_GAINED: case SDL_EVENT_WINDOW_RESIZED: hidden = false; break;
         case SDL_EVENT_WINDOW_ENTER_FULLSCREEN: ui.isFullscreen = true; ui.wantFullscreen = true; break;
         case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: ui.isFullscreen = false; ui.wantFullscreen = false; break;
         default: break;
@@ -319,15 +339,18 @@ int main(int argc, char** argv) {
     engine.collectGarbage();
     if (rec.on()) { rec.pump(engine); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }
     // MIDI: notice devices coming and going; give MIDI OUT modules their device
-    { static float mt = 0; midi.poll(0.016f); ui.midiState = midi.state(); mt -= 0.016f;
+    { static float mt = 0; midi.poll(ldt); ui.midiState = midi.state(); mt -= ldt;
       if (mt <= 0) { mt = 2; std::vector<std::string> names; bool listed = false;
         for (auto& up : ui.mods) if (up->m->def->type == "midiout" && up->m->devSlot.load() < 0) { if (!listed) { names = midi.outputs(); listed = true; }
           const std::string want = up->dev.empty() ? (names.empty() ? std::string() : names[0]) : up->dev; if (!want.empty()) up->m->devSlot.store(midi.openOutput(want)); } } }
     // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
-    { static float catchT = 0; catchT += 0.016f; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->peaks.empty() && up->audioId.empty()) catchSound(up.get(), true); } }
+    { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->peaks.empty() && up->audioId.empty()) catchSound(up.get(), true); } }
 
+    if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
+    // draw only when it's time: never while the window can't be seen; at the chosen rate when idle; at full speed while you work
+    { const float every = hidden ? 1e9f : (busyT > 0 || held || ui.ask) ? 0.f : 1.f / FPS[fpsIdx], since = (SDL_GetTicksNS() - last) / 1e9f;
+      if (since < every) { SDL_WaitEventTimeout(nullptr, (Sint32)std::max(1.f, std::min(100.f, (every - since) * 1000))); continue; } }
     const Uint64 now = SDL_GetTicksNS(); const float dt = std::min(0.1f, (now - last) / 1e9f); last = now;
-    if (dirty) { saveT -= dt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
     if (W != canvas.W || H != canvas.H) canvas.resize(W, H);
     ui.draw(canvas, dt);
     if (!tex || texW != W || texH != H) { if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W, H); SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_PIXELART); texW = W; texH = H; }

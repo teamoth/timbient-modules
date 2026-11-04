@@ -81,7 +81,7 @@ struct Looper : Module {
     const double inc = rate * buf->sr / sr, dens = 0.3 + e[DENS] * e[DENS] * 40; Grain& q = g[ng++];
     q.pos = rv ? (off + span) * buf->sr : off * buf->sr; q.inc = rv ? -inc : inc; q.len = std::max(16L, (long)(e[SIZE] * sr)); q.t = 0;
     panGains(rng.bi() * 0.4f, q.gl, q.gr); q.ex = 0.25f + e[TEX] * 3; q.gain = (float)(0.5 / std::sqrt(std::max(1.0, dens * e[SIZE]))); q.x = (float)((off + span / 2) / dur);
-    for (int k = 0; k <= 64; k++) q.win[k] = std::pow(std::sin(PI * k / 64.f), q.ex) * q.gain;
+    for (int k = 0; k <= 64; k++) q.win[k] = (k == 0 || k == 64) ? 0.f : std::pow(std::max(0.f, std::sin(PI * k / 64.f)), q.ex) * q.gain;   // the ends are exactly silent (sin(pi) in floats is a hair below zero, and a power of that is not a number)
   }
   void render(int a, int b) override {
     // keep the last 20 seconds of the input, for CATCH
@@ -97,11 +97,14 @@ struct Looper : Module {
     for (int i = a; i < b; i++) {
       float L = 0, R = 0;
       if (run) { acc += dens / sr; if (acc >= 1) { acc -= 1; if (ng < MAXG) spawn(); }
+        const float* bd = buf->d.data(); const double last = (double)buf->d.size() - 2;
         for (int k = 0; k < ng; ) { Grain& q = g[k];
-          const float u = 64.f * q.t / q.len; const int wi = std::min(63, (int)u); const float s = readBuf(buf->d, q.pos) * (q.win[wi] + (q.win[wi + 1] - q.win[wi]) * (u - wi)); L += s * q.gl; R += s * q.gr; q.pos += q.inc;
+          if (q.pos >= 0 && q.pos <= last) { const long ip = (long)q.pos; const float fr = (float)(q.pos - ip), u = 64.f * q.t / q.len; const int wi = std::min(63, (int)u);
+            const float s = (bd[ip] + (bd[ip + 1] - bd[ip]) * fr) * (q.win[wi] + (q.win[wi + 1] - q.win[wi]) * (u - wi)); L += s * q.gl; R += s * q.gr; }
+          q.pos += q.inc;
           if (++q.t >= q.len) { g[k] = g[--ng]; } else k++; } }
       const float d = dry.tick(), wv = wet.tick();
-      out[0][0][i] = in[0][0][i] * d + L * wv; out[0][1][i] = in[0][1][i] * d + R * wv;
+      out[0][0][i] = in[0][0][i] * d + sane(L) * wv; out[0][1][i] = in[0][1][i] * d + sane(R) * wv;
     }
     disp[0].store(head); const int show = std::min(ng, 30); disp[1].store((float)show); for (int k = 0; k < show; k++) disp[2 + k].store(g[ng - 1 - k].x);
   }
