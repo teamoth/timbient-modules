@@ -274,8 +274,13 @@ void Ui::draw(Canvas& c, float dt) {
   { bool open = false; for (auto& u : mods) if (!u->m->def->fixed && !u->fold) open = true;
     btn(open ? "FOLD ALL" : "OPEN ALL", 9, [this, open] { for (auto& u : mods) if (!u->m->def->fixed) u->fold = open; changed(); }); }
   const std::string fs = isFullscreen ? "WINDOW" : "FULLSCREEN"; const int fx = c.W - Canvas::tw(fs) - 4; c.text(fs, fx, 3, 9); barHits.push_back({fx, fx + Canvas::tw(fs), [this] { wantFullscreen = !isFullscreen; }});
+  int ix0 = fx;
+  if (onZoom) {   // zoom out / in
+    const int zx = fx - 24; for (int i = 0; i < 5; i++) c.px(zx + i, 5, 9); for (int i = 0; i < 5; i++) { c.px(zx + 10 + i, 5, 9); c.px(zx + 12, 3 + i, 9); }
+    barHits.push_back({zx - 1, zx + 5, [this] { onZoom(-1); }}); barHits.push_back({zx + 9, zx + 15, [this] { onZoom(1); }}); ix0 = zx;
+  }
   char info[64]; std::snprintf(info, sizeof info, "AUDIO %d%%", (int)std::lround(eng.cpuLoad.load() * 100));
-  const int ix = fx - Canvas::tw(info) - 10;
+  const int ix = ix0 - Canvas::tw(info) - 10;
   if (statusT > 0) { statusT -= dt; std::string s = statusMsg; const int room = (ix - bx - 4) / 4; if ((int)s.size() > room) s = s.substr(0, std::max(0, room)); c.text(s, bx + 4, 3, 17); }
   else if (ix > bx) c.text(info, ix, 3, 18);
   // the ADD menu

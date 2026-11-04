@@ -30,6 +30,7 @@ public:
   std::string statusMsg; float statusT = 0;
   bool wantFullscreen = false, isFullscreen = false;
   std::function<void()> onChange;                     // called after anything that should be saved
+  std::function<void(int)> onZoom;                    // the zoom buttons: -1 out, +1 in
 
   // building a patch
   UiMod* add(const std::string& type, int x, int y);

@@ -15,7 +15,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.3.0";
+static const char* VERSION = "0.3.1";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -149,15 +149,25 @@ int main(int argc, char** argv) {
   win = SDL_CreateWindow("Timbient Modules", 1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
   SDL_SetRenderVSync(ren, 1);
-  Canvas canvas; SDL_Texture* tex = nullptr; int texW = 0, texH = 0, scale = 3;
+  Canvas canvas; SDL_Texture* tex = nullptr; int texW = 0, texH = 0; float scale = 3;
   bool texting = false;
+  // ZOOM: small steps of about 8%, remembered between launches. The pixels are scaled up sharply at any size.
+  int zoom = std::max(-18, std::min(18, (int)settings.num("zoom", 0)));
+  int pendingZoom = 0; float pinchAcc = 0, wheelAcc = 0;
+  ui.onZoom = [&](int k) { pendingZoom += k; };
 
   bool running = true; Uint64 last = SDL_GetTicksNS();
   while (running) {
     int pw = 0, ph = 0; SDL_GetCurrentRenderOutputSize(ren, &pw, &ph);
     float dens = SDL_GetWindowPixelDensity(win); if (dens <= 0) dens = 1;
-    scale = std::max(2, (int)std::lround(std::min(pw, ph) / 250.f));
-    const int W = std::max(64, pw / scale), H = std::max(48, ph / scale);
+    // apply a zoom change, keeping the middle of the view where it was
+    if (pendingZoom) { const int nz = std::max(-18, std::min(18, zoom + pendingZoom)); pendingZoom = 0;
+      if (nz != zoom) { const float base = (float)std::max(2, (int)std::lround(std::min(pw, ph) / 250.f));
+        const float s0 = clampf(base * std::pow(2.f, zoom / 9.f), 1, 16), s1 = clampf(base * std::pow(2.f, nz / 9.f), 1, 16);
+        ui.viewX += (int)std::lround(pw / s0 / 2 - pw / s1 / 2); ui.viewY += (int)std::lround(ph / s0 / 2 - ph / s1 / 2);
+        zoom = nz; settings.set("zoom", Json::number(zoom)); saveSettings(); char b[32]; std::snprintf(b, 32, "ZOOM %d%%", (int)std::lround(std::pow(2.f, zoom / 9.f) * 100)); ui.status(b, 1.5f); } }
+    scale = clampf(std::max(2, (int)std::lround(std::min(pw, ph) / 250.f)) * std::pow(2.f, zoom / 9.f), 1, 16);
+    const int W = std::max(64, (int)(pw / scale)), H = std::max(48, (int)(ph / scale));
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
       switch (ev.type) {
@@ -167,11 +177,21 @@ int main(int argc, char** argv) {
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
           if (ev.key.key == SDLK_F11 || (ev.key.key == SDLK_F && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)))) ui.wantFullscreen = !ui.isFullscreen;
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
+          if (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS || ev.key.key == SDLK_KP_PLUS) pendingZoom++;
+          if (ev.key.key == SDLK_MINUS || ev.key.key == SDLK_KP_MINUS) pendingZoom--;
+          if (ev.key.key == SDLK_0 && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) pendingZoom = -zoom;
           if (ev.key.key == SDLK_SPACE) { engine.freeze.store(!engine.freeze.load()); ui.status(engine.freeze.load() ? "FROZEN" : "UNFROZEN"); }
           break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN: if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerDown(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
         case SDL_EVENT_MOUSE_MOTION: ui.pointerMove(ev.motion.x * dens / scale, ev.motion.y * dens / scale); break;
         case SDL_EVENT_MOUSE_BUTTON_UP: if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerUp(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
+        case SDL_EVENT_MOUSE_WHEEL:   // with Ctrl or Cmd held: zoom. Otherwise: move around the patch
+          if (SDL_GetModState() & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) { wheelAcc += ev.wheel.y; if (std::fabs(wheelAcc) >= 1) { pendingZoom += wheelAcc > 0 ? 1 : -1; wheelAcc = 0; } }
+          else { ui.viewX -= (int)std::lround(ev.wheel.x * 12); ui.viewY -= (int)std::lround(ev.wheel.y * 12); }
+          break;
+        case SDL_EVENT_PINCH_UPDATE:   // a trackpad pinch
+          pinchAcc += std::log(std::max(0.01f, ev.pinch.scale)); if (std::fabs(pinchAcc) > 0.077f) { pendingZoom += pinchAcc > 0 ? 1 : -1; pinchAcc = 0; } break;
+        case SDL_EVENT_PINCH_END: pinchAcc = 0; break;
         case SDL_EVENT_WINDOW_ENTER_FULLSCREEN: ui.isFullscreen = true; ui.wantFullscreen = true; break;
         case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: ui.isFullscreen = false; ui.wantFullscreen = false; break;
         default: break;
@@ -196,7 +216,7 @@ int main(int argc, char** argv) {
     if (dirty) { saveT -= dt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
     if (W != canvas.W || H != canvas.H) canvas.resize(W, H);
     ui.draw(canvas, dt);
-    if (!tex || texW != W || texH != H) { if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W, H); SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST); texW = W; texH = H; }
+    if (!tex || texW != W || texH != H) { if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W, H); SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_PIXELART); texW = W; texH = H; }
     SDL_UpdateTexture(tex, nullptr, canvas.rgba.data(), W * 4);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
     SDL_FRect dst{0, 0, (float)(W * scale), (float)(H * scale)}; SDL_RenderTexture(ren, tex, nullptr, &dst);
