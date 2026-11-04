@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
   add_compile_options(/utf-8)
+  # one C runtime, built in, for everything (SDL included): nothing extra to install on Windows
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
@@ -54,9 +56,6 @@ if(TIMBIENT_APP)
     add_executable(timbient WIN32 src/app/main.cpp ${ENGINE_SOURCES} ${UI_SOURCES} assets/timbient.rc)
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "Timbient Modules")
     target_compile_definitions(timbient PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)   # stop Windows headers redefining min and max
-    if(MSVC)
-      set_property(TARGET timbient PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")   # no extra runtime install needed
-    endif()
   else()
     add_executable(timbient src/app/main.cpp ${ENGINE_SOURCES} ${UI_SOURCES})
     set_target_properties(timbient PROPERTIES OUTPUT_NAME "timbient-modules")
