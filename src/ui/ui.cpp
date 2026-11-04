@@ -95,7 +95,7 @@ void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col) {
 bool Ui::cableEnds(const UiCable& cb, float& ax, float& ay, float& bx, float& by) {
   UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) return false;
   ax = (float)(a->x + a->m->def->width - 1); ay = (float)(a->y + jackY(cb.fromPort));
-  if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = (float)(b->x + 2); by = (float)(b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3)); }
+  if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = (float)b->x; by = (float)(b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3)); }
   else { bx = (float)b->x; by = (float)(b->y + jackY(cb.toPort)); }
   return true;
 }
@@ -301,15 +301,15 @@ void Ui::draw(Canvas& c, float dt) {
   blink += dt;
   lastW = c.W;
   c.rect(0, 0, c.W, c.H, 25);
-  for (auto& u : mods) drawModule(c, *u, dt);
-  // cables on top
+  // cables first, so modules sit on top of them
   for (auto& cb : cables) {
     UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) continue;
     const int ax = a->x + a->m->def->width - 1 - viewX, ay = a->y + jackY(cb.fromPort) - viewY;
-    int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = b->x + 2 - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3) - viewY; } else { bx = b->x - viewX; by = b->y + jackY(cb.toPort) - viewY; }
+    int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = b->x - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3) - viewY; } else { bx = b->x - viewX; by = b->y + jackY(cb.toPort) - viewY; }
     const bool hi = (selT > 0 && sameCable(cb, sel)) || (drag.kind == D_MOVE && drag.splice >= 0 && drag.splice < (int)cables.size() && sameCable(cb, cables[drag.splice]));
     drawCable(c, ax, ay, bx, by, hi ? 4 : a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type));
   }
+  for (auto& u : mods) drawModule(c, *u, dt);
   selT = std::max(0.f, selT - dt);
   // a long press on a modulated setting pulls its mod cable off
   if (drag.kind == D_PARAM && !drag.moved && !drag.held) { drag.holdT += dt;
@@ -445,7 +445,7 @@ void Ui::pointerDown(float sx, float sy) {
   }
   int lx, ly; UiMod* u = hit(wx, wy, lx, ly);
   // a cable under the pointer: tap to see it, pull it away to unplug it. Title bars and a module's own controls still win
-  if (!u || ly >= HEAD) {
+  if (!u) {   // cables run behind modules, so only where you can see them
     bool onControl = false;
     if (u) { const Geom g0 = geom(*u); const ModuleDef* d0 = u->m->def;
       onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + d0->vis && (d0->type == "keys" || d0->type == "out" || d0->type == "tracker")); }
