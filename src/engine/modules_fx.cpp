@@ -102,7 +102,7 @@ struct Ducker : Module {
 };
 static Reg rDucker(new ModuleDef{"ducker", "DUCKER", Cat::Proc, {{"IN", PType::Audio}, {"KEY", PType::Trig}}, {{"OUT", PType::Audio}},
   {pct("depth", "DEPTH", 0.6f), T("atk", "ATTACK", 0.002f, 2, 0.01f), T("rel", "RELEASE", 0.05f, 12, 0.9f), OP("rbeats", "BEAT REL", {"OFF", "1/2", "1", "2", "3", "4", "8"}, 0),
-   pct("curve", "CURVE", 0), pct("mix", "MIX", 1)}, 0, 58, false, [] { return new Ducker(); }});
+   pct("curve", "CURVE", 0), pct("mix", "MIX", 1)}, 10, 58, false, [] { return new Ducker(); }});
 
 // ---------------- AMP: up to +36 dB, with a soft limiter ----------------
 struct Amp : Module {

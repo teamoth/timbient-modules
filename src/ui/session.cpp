@@ -1,0 +1,108 @@
+// Timbient native: sessions (see session.h)
+#include "session.h"
+#include "../engine/params.h"
+#include <ctime>
+#include <fstream>
+#include <map>
+#include <set>
+#include <sstream>
+
+namespace tb {
+
+std::string readFile(const std::string& path) { std::ifstream f(path, std::ios::binary); if (!f) return ""; std::stringstream ss; ss << f.rdbuf(); return ss.str(); }
+bool writeFile(const std::string& path, const std::string& text) {
+  const std::string tmp = path + ".tmp"; { std::ofstream f(tmp, std::ios::binary); if (!f) return false; f << text; if (!f) return false; }
+  std::remove(path.c_str()); return std::rename(tmp.c_str(), path.c_str()) == 0;   // write then swap, so a crash never leaves half a file
+}
+std::string stamp(double t) {
+  const std::time_t tt = (std::time_t)t; std::tm lt{};
+#ifdef _WIN32
+  localtime_s(&lt, &tt);
+#else
+  localtime_r(&tt, &lt);
+#endif
+  static const char* M[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+  char b[32]; std::snprintf(b, 32, "%d %s %02d:%02d", lt.tm_mday, M[lt.tm_mon], lt.tm_hour, lt.tm_min); return b;
+}
+
+static const char* tyName(PType t) { return t == PType::Audio ? "audio" : t == PType::Trig ? "trig" : "mod"; }
+
+Json serializePatch(Ui& ui) {
+  Json d = Json::object(); d.set("v", Json::number(2));
+  Json key = Json::object(); key.set("root", Json::number(ui.eng.key.root.load())); key.set("scale", Json::number(ui.eng.key.scale.load())); d.set("key", key);
+  d.set("bpm", Json::number(ui.eng.tempo.bpm.load()));
+  Json mods = Json::array();
+  for (auto& up : ui.mods) { UiMod& u = *up; const ModuleDef* def = u.m->def; Json m = Json::object();
+    m.set("id", Json::number(u.m->id)); m.set("type", Json::string(def->type)); m.set("x", Json::number(u.x)); m.set("y", Json::number(u.y));
+    Json p = Json::object(); for (size_t k = 0; k < def->params.size(); k++) if (!def->params[k].act) p.set(def->params[k].key, Json::number(u.m->p[k].load())); m.set("p", p);
+    m.set("mute", Json::boolean(u.m->mute.load())); m.set("solo", Json::boolean(u.m->solo.load())); m.set("fold", Json::boolean(u.fold)); mods.push(m); }
+  d.set("mods", mods);
+  Json cs = Json::array();
+  for (auto& c : ui.cables) { UiMod *a = ui.byId(c.from), *b = ui.byId(c.to); if (!a || !b) continue; Json j = Json::object();
+    j.set("f", Json::number(c.from)); j.set("fp", Json::string(a->m->def->outs[c.fromPort].name)); j.set("t", Json::number(c.to));
+    if (c.type == PType::Mod) { j.set("tq", Json::string(b->m->def->params[c.toParam].key)); } else j.set("tp", Json::string(b->m->def->ins[c.toPort].name));
+    j.set("ty", Json::string(tyName(c.type))); cs.push(j); }
+  d.set("cables", cs);
+  return d;
+}
+
+const Json* patchIn(const Json& f) {
+  if (f.str("timbient") == "patch") return f.get("data");
+  if (f.str("timbient") == "sessions") { const Json* s = f.get("sessions"); if (s && s->t == Json::ARR && !s->a.empty()) return s->a[0].get("data"); return nullptr; }
+  return f.get("mods") ? &f : nullptr;
+}
+
+std::string loadPatch(Ui& ui, const Json& data0) {
+  Json data = data0;   // a copy we can adjust for older sessions
+  ui.clearPatch();
+  if (const Json* k = data.get("key")) { if (k->get("root")) ui.eng.key.root.store((int)k->num("root")); if (k->get("scale")) ui.eng.key.scale.store((int)k->num("scale")); }
+  if (data.num("bpm", 0) > 0) ui.eng.tempo.bpm.store((float)data.num("bpm"));
+  Json* mods = data.getm("mods"); Json* cables = data.getm("cables"); if (!mods || mods->t != Json::ARR) return "THAT FILE HAS NO MODULES";
+  // older web sessions: modules that were merged or replaced
+  for (auto& m : mods->a) {
+    const std::string ty = m.str("type"); Json* p = m.getm("p"); if (!p) { m.set("p", Json::object()); p = m.getm("p"); }
+    if (ty == "ping") { const double r = p->num("ratio", 3.5), dc = p->num("decay", 0.35), ix = p->num("index", 0.5); m.set("type", Json::string("fm2"));
+      p->set("ratio", Json::number(std::round(r * 2) / 2)); p->set("index", Json::number(std::min(10.0, (0.2 + ix * 4) / r * 3))); p->set("idec", Json::number(dc * 0.4)); p->set("isus", Json::number(0)); p->set("hold", Json::number(0.02)); p->set("rel", Json::number(dc * 1.5)); }
+    if (ty == "drone") { m.set("type", Json::string("pad")); }
+    if ((ty == "clock" || ty == "tracker") && !p->get("sync")) p->set("sync", Json::number(0));   // older sessions keep their own tempos
+  }
+  std::map<int, UiMod*> idmap; std::set<std::string> skipped; int maxId = 0;
+  for (auto& m : mods->a) {
+    const std::string ty = m.str("type"); const ModuleDef* def = findDef(ty);
+    if (!def) { skipped.insert(ty); continue; }
+    UiMod* u = nullptr;
+    if (def->fixed) { for (auto& up : ui.mods) if (up->m->def == def) u = up.get(); if (u) { u->x = (int)m.num("x"); u->y = (int)m.num("y"); } }
+    if (!u) u = ui.add(ty, (int)m.num("x"), (int)m.num("y"));
+    if (!u) { skipped.insert(ty); continue; }
+    if (const Json* p = m.get("p")) for (size_t k = 0; k < def->params.size(); k++) { const Json* v = p->get(def->params[k].key); if (v && v->t == Json::NUM) u->m->p[k].store((float)v->n); }
+    u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo")); u->fold = m.truthy("fold");
+    idmap[(int)m.num("id")] = u; maxId = std::max(maxId, (int)m.num("id"));
+  }
+  if (!findDef("out") || std::none_of(ui.mods.begin(), ui.mods.end(), [](const std::unique_ptr<UiMod>& u) { return u->m->def->type == "out"; })) ui.add("out", 340, 60);
+  int lost = 0;
+  if (cables && cables->t == Json::ARR) for (auto& c : cables->a) {
+    auto fi = idmap.find((int)c.num("f")), ti = idmap.find((int)c.num("t")); if (fi == idmap.end() || ti == idmap.end()) { lost++; continue; }
+    UiMod *a = fi->second, *b = ti->second; const std::string ty = c.str("ty"), fp = c.str("fp"); std::string tp = c.str("tp");
+    if (b->m->def->type == "out" && tp == "IN") tp = "A"; if (tp == "SWELL") tp = "TRIG";
+    if (ty == "mod") { const int pk = b->m->def->paramIndex(c.str("tq")); if (pk < 0 || !ui.modulate(a, b, pk)) lost++; }
+    else if (!ui.connect(a, a->m->def->outIndex(fp), b, b->m->def->inIndex(tp))) lost++;
+  }
+  std::string note;
+  if (!skipped.empty()) { note = "NOT IN THE NATIVE VERSION YET: "; bool first = true; for (auto& s : skipped) { const ModuleDef* d = findDef(s); note += (first ? "" : ", ") + (d ? d->name : s); first = false; } }
+  return note;
+}
+
+void SessionStore::load() {
+  list.clear(); Json f; if (!Json::parse(readFile(path("sessions.json")), f)) return;
+  const Json* s = f.get("sessions"); if (!s || s->t != Json::ARR) return;
+  for (auto& e : s->a) { const Json* d = e.get("data"); if (!d) continue; list.push_back({e.str("name", "SESSION"), e.num("t", 0) / 1000.0, *d}); }
+}
+bool SessionStore::save() const {
+  Json f = Json::object(); f.set("timbient", Json::string("sessions")); Json a = Json::array();
+  for (auto& s : list) { Json e = Json::object(); e.set("name", Json::string(s.name)); e.set("t", Json::number(s.t * 1000.0)); e.set("data", s.data); a.push(e); }
+  f.set("sessions", a); return writeFile(path("sessions.json"), f.dump());
+}
+bool SessionStore::writeAutosave(const Json& d) const { return writeFile(path("autosave.json"), d.dump()); }
+bool SessionStore::readAutosave(Json& out) const { return Json::parse(readFile(path("autosave.json")), out) && out.get("mods"); }
+
+}  // namespace tb

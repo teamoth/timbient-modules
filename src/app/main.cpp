@@ -1,4 +1,4 @@
-// Timbient Modules (native): the window (SDL3) and the sound device (miniaudio).
+// Timbient Modules (native): the window (SDL3), the sound device (miniaudio), sessions and settings.
 // Sound is produced on miniaudio's own real-time thread; the window, drawing and input run here,
 // on the main thread, and can never make the audio wait.
 #define MINIAUDIO_IMPLEMENTATION
@@ -7,15 +7,19 @@
 #include <SDL3/SDL_main.h>
 #include "../engine/engine.h"
 #include "../ui/canvas.h"
+#include "../ui/session.h"
 #include "../ui/ui.h"
 #include <cstdio>
+#include <ctime>
+#include <mutex>
 
 using namespace tb;
 
+static const char* VERSION = "0.2.0";
 static Engine* gEngine = nullptr;
 
-// the sound card asks for more audio: render it (non-interleaved) and interleave into its buffer
-static void audioCallback(ma_device* dev, void* output, const void*, ma_uint32 frames) {
+// ---------------- sound ----------------
+static void audioCallback(ma_device*, void* output, const void*, ma_uint32 frames) {
   float* out = (float*)output; static float L[4096], R[4096];
   ma_uint32 done = 0;
   while (done < frames) {
@@ -25,44 +29,145 @@ static void audioCallback(ma_device* dev, void* output, const void*, ma_uint32 f
     done += n;
   }
 }
+static const int BUFFERS[5] = {128, 256, 512, 1024, 2048};
+struct Sound {
+  ma_device dev; bool open = false; int bufIdx = 2;
+  bool start(Engine& e, unsigned rate) {
+    ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
+    cfg.playback.format = ma_format_f32; cfg.playback.channels = 2; cfg.sampleRate = rate;
+    cfg.dataCallback = audioCallback; cfg.periodSizeInFrames = (ma_uint32)BUFFERS[bufIdx]; cfg.periods = 3;
+    cfg.performanceProfile = bufIdx <= 1 ? ma_performance_profile_low_latency : ma_performance_profile_conservative;
+    if (ma_device_init(nullptr, &cfg, &dev) != MA_SUCCESS) return false;
+    open = true; if (e.sr != (float)dev.sampleRate && rate == 0) e.setSampleRate((float)dev.sampleRate);
+    return ma_device_start(&dev) == MA_SUCCESS;
+  }
+  void stop() { if (open) { ma_device_uninit(&dev); open = false; } }
+};
+
+// ---------------- results from the system file dialogs (they may arrive on another thread) ----------------
+struct DialogResult { bool open; std::string path; };
+static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
+static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "json;txt"}};
+static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
+static void onSaveDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({false, files[0]}); } }
 
 int main(int argc, char** argv) {
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError()); return 1; }
 
+  // the app's own folder for sessions, the autosave and settings
+  SessionStore store; { char* pp = SDL_GetPrefPath("Timbient", "Timbient Modules"); store.dir = pp ? pp : "./"; SDL_free(pp); }
+  store.load();
+  Json settings; Json::parse(readFile(store.path("settings.json")), settings); if (settings.t != Json::OBJ) settings = Json::object();
+  auto saveSettings = [&] { writeFile(store.path("settings.json"), settings.dump()); };
+
   // ---- sound first, so the engine knows the sample rate before any module is built ----
   static Engine engine; gEngine = &engine;
-  ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
-  cfg.playback.format = ma_format_f32; cfg.playback.channels = 2; cfg.sampleRate = 0;   // the device's own rate
-  cfg.dataCallback = audioCallback; cfg.periodSizeInFrames = 512; cfg.periods = 3;          // a comfortable buffer: steady on older machines
-  cfg.performanceProfile = ma_performance_profile_conservative;
-  ma_device device;
-  if (ma_device_init(nullptr, &cfg, &device) != MA_SUCCESS) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
-  engine.setSampleRate((float)device.sampleRate);
+  static Sound sound; sound.bufIdx = std::max(0, std::min(4, (int)settings.num("buffer", 2)));
+  if (!sound.start(engine, 0)) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
 
   Ui ui(engine);
-  ui.demoPatch();
-  ma_device_start(&device);
+  // the first time ever, a demo session is put in the list so there's something to play
+  if (store.list.empty() && !settings.truthy("demoAdded")) { ui.demoPatch(); store.list.push_back({"DEMO", (double)std::time(nullptr), serializePatch(ui)}); store.save(); ui.clearPatch(); settings.set("demoAdded", Json::boolean(true)); saveSettings(); }
+  // the app opens to an empty session; RESTORE LAST WORK brings back what was there
+  { Json prev; if (store.readAutosave(prev) && prev.get("mods") && prev.get("mods")->a.size() > 1) writeFile(store.path("previous.json"), prev.dump()); }
+  ui.add("out", 300, 30);
+
+  bool dirty = false; float saveT = 0;
+  ui.onChange = [&] { dirty = true; saveT = 1.0f; };
+  auto loadData = [&](const Json& data, const std::string& what) {
+    const std::string note = loadPatch(ui, data); ui.viewX = 0; ui.viewY = 0; dirty = true; saveT = 0.5f;
+    ui.status(note.empty() ? "LOADED " + what : note, note.empty() ? 3 : 8);
+  };
+  SDL_Window* win = nullptr;
+
+  // ---- SESSIONS menu ----
+  std::function<void(int)> openSessions = [&](int x0) {
+    Dropdown d; d.x = x0; d.y = 11;
+    d.items = {"NEW EMPTY SESSION", "RESTORE LAST WORK", "SAVE AS NEW SESSION", "OPEN FILE...", "SAVE TO FILE..."};
+    for (auto& s : store.list) d.items.push_back(s.name + "  " + stamp(s.t));
+    d.pick = [&, x0](int i) {
+      if (i == 0) { Dropdown q; q.x = x0; q.y = 11; q.items = {"CLEAR EVERYTHING?", "YES, START EMPTY", "NO, KEEP IT"}; q.title = 0; q.danger = 1;
+        q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); dirty = true; saveT = 0.3f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
+      if (i == 1) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) loadData(prev, "YOUR LAST WORK"); else ui.status("NOTHING TO RESTORE"); return; }
+      if (i == 2) { ui.askText("NAME THIS SESSION", "SESSION " + std::to_string(store.list.size() + 1), [&](const std::string& n) {
+          store.list.push_back({n, (double)std::time(nullptr), serializePatch(ui)}); ui.status(store.save() ? "SAVED " + n : "COULD NOT SAVE"); }); return; }
+      if (i == 3) { SDL_ShowOpenFileDialog(onOpenDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
+      if (i == 4) { SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, "timbient-session.json"); return; }
+      const int k = i - 5; if (k < 0 || k >= (int)store.list.size()) return;
+      const std::string nm = store.list[k].name;
+      Dropdown q; q.x = x0; q.y = 11 + i * 8; q.items = {"LOAD " + nm, "SAVE OVER " + nm, "RENAME " + nm, "DELETE " + nm};
+      q.pick = [&, k, nm, x0, i](int j) {
+        if (k >= (int)store.list.size()) return;
+        if (j == 0) loadData(store.list[k].data, nm);
+        else if (j == 1) { store.list[k].data = serializePatch(ui); store.list[k].t = (double)std::time(nullptr); ui.status(store.save() ? "SAVED OVER " + nm : "COULD NOT SAVE"); }
+        else if (j == 2) ui.askText("RENAME SESSION", nm, [&, k](const std::string& n) { if (k < (int)store.list.size()) { store.list[k].name = n; store.save(); ui.status("RENAMED TO " + n); } });
+        else { Dropdown z; z.x = x0; z.y = 11 + i * 8; z.items = {"DELETE " + nm + "?", "YES, DELETE", "NO, KEEP IT"}; z.title = 0; z.danger = 1;
+          z.pick = [&, k, nm](int q2) { if (q2 == 1 && k < (int)store.list.size()) { store.list.erase(store.list.begin() + k); store.save(); ui.status("DELETED " + nm); } }; ui.openDropdown(z); }
+      };
+      ui.openDropdown(q);
+    };
+    ui.openDropdown(d);
+  };
+
+  // ---- SETTINGS menu: key, scale, shared tempo, audio buffer ----
+  std::function<void(int)> openSettings = [&](int x0) {
+    Dropdown d; d.x = x0; d.y = 11;
+    char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
+    char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("VERSION ") + VERSION};
+    d.title = 4;
+    d.pick = [&, x0](int i) {
+      Dropdown q; q.x = x0; q.y = 11;
+      if (i == 0) { for (int k = 0; k < 12; k++) q.items.push_back(std::string("KEY ") + NOTE_NAMES[k]); q.cur = engine.key.root.load();
+        q.pick = [&](int j) { engine.key.root.store(j); ui.status(std::string("KEY ") + NOTE_NAMES[j]); dirty = true; saveT = 0.5f; }; }
+      else if (i == 1) { for (auto& s : scales()) q.items.push_back(s.name); q.cur = engine.key.scale.load();
+        q.pick = [&](int j) { engine.key.scale.store(j); ui.status(std::string("SCALE ") + scales()[j].name); dirty = true; saveT = 0.5f; }; }
+      else if (i == 2) { q.items = {"TAP TEMPO", "- 1", "+ 1", "- 10", "+ 10", "50", "60", "66", "72", "80", "90", "100", "110", "120"};
+        static std::vector<double> taps;
+        std::function<void(int)> pickT; pickT = [&, x0](int j) {
+          auto setB = [&](float v) { engine.tempo.bpm.store(std::max(20.f, std::min(240.f, std::round(v)))); char b[32]; std::snprintf(b, 32, "SHARED TEMPO %d BPM", (int)engine.tempo.bpm.load()); ui.status(b); dirty = true; saveT = 0.5f; };
+          const double now = SDL_GetTicks() / 1000.0;
+          if (j == 0) { taps.erase(std::remove_if(taps.begin(), taps.end(), [&](double t) { return now - t > 3; }), taps.end()); taps.push_back(now);
+            if (taps.size() > 1) setB((float)(60.0 / ((taps.back() - taps.front()) / (taps.size() - 1)))); else ui.status("KEEP TAPPING"); }
+          else if (j <= 4) { static const int dlt[5] = {0, -1, 1, -10, 10}; setB(engine.tempo.bpm.load() + dlt[j]); }
+          else { static const int v[] = {50, 60, 66, 72, 80, 90, 100, 110, 120}; setB((float)v[j - 5]); return; }
+          SDL_Delay(0);
+        };
+        q.pick = pickT; }
+      else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / engine.sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
+        q.pick = [&](int j) { if (j == sound.bufIdx) return; sound.stop(); sound.bufIdx = j; settings.set("buffer", Json::number(j)); saveSettings();
+          if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j])); }; }
+      else return;
+      ui.openDropdown(q);
+    };
+    ui.openDropdown(d);
+  };
+  ui.bar.push_back({"SESSIONS", openSessions});
+  ui.bar.push_back({"SETTINGS", openSettings});
 
   // ---- the window ----
-  SDL_Window* win = SDL_CreateWindow("Timbient Modules", 1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+  win = SDL_CreateWindow("Timbient Modules", 1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
   SDL_SetRenderVSync(ren, 1);
   Canvas canvas; SDL_Texture* tex = nullptr; int texW = 0, texH = 0, scale = 3;
+  bool texting = false;
 
   bool running = true; Uint64 last = SDL_GetTicksNS();
   while (running) {
-    SDL_Event ev;
-    // pixel size of the window and how big each canvas pixel is
     int pw = 0, ph = 0; SDL_GetCurrentRenderOutputSize(ren, &pw, &ph);
     float dens = SDL_GetWindowPixelDensity(win); if (dens <= 0) dens = 1;
-    scale = std::max(2, (int)std::lround(std::min(pw, ph) / dens / 250.f * dens));
+    scale = std::max(2, (int)std::lround(std::min(pw, ph) / 250.f));
     const int W = std::max(64, pw / scale), H = std::max(48, ph / scale);
+    SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
       switch (ev.type) {
         case SDL_EVENT_QUIT: running = false; break;
+        case SDL_EVENT_TEXT_INPUT: ui.typed(ev.text.text); break;
         case SDL_EVENT_KEY_DOWN:
+          if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
           if (ev.key.key == SDLK_F11 || (ev.key.key == SDLK_F && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)))) ui.wantFullscreen = !ui.isFullscreen;
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
+          if (ev.key.key == SDLK_SPACE) { engine.freeze.store(!engine.freeze.load()); ui.status(engine.freeze.load() ? "FROZEN" : "UNFROZEN"); }
           break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN: if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerDown(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
         case SDL_EVENT_MOUSE_MOTION: ui.pointerMove(ev.motion.x * dens / scale, ev.motion.y * dens / scale); break;
@@ -73,9 +178,22 @@ int main(int argc, char** argv) {
       }
     }
     if (ui.wantFullscreen != ui.isFullscreen) { SDL_SetWindowFullscreen(win, ui.wantFullscreen); ui.isFullscreen = ui.wantFullscreen; }
+    if ((bool)ui.ask != texting) { texting = (bool)ui.ask; if (texting) SDL_StartTextInput(win); else SDL_StopTextInput(win); }
+    // files chosen in the system dialogs
+    { std::vector<DialogResult> rs; { std::lock_guard<std::mutex> l(dlgMx); rs.swap(dlgResults); }
+      for (auto& r : rs) {
+        if (r.open) { Json f; if (!Json::parse(readFile(r.path), f)) { ui.status("THAT FILE COULD NOT BE READ", 5); continue; }
+          if (f.str("timbient") == "sessions" && f.get("sessions")) { int n = 0; for (auto& e : f.get("sessions")->a) if (const Json* dd = e.get("data")) { store.list.push_back({e.str("name", "SESSION"), e.num("t", 0) / 1000.0, *dd}); n++; }
+            store.save(); ui.status("ADDED " + std::to_string(n) + " SESSIONS TO THE LIST", 4); continue; }
+          const Json* data = patchIn(f); if (!data) { ui.status("THAT IS NOT A TIMBIENT SESSION", 5); continue; }
+          std::string nm = r.path; const size_t sl = nm.find_last_of("/\\"); if (sl != std::string::npos) nm = nm.substr(sl + 1); loadData(*data, nm); }
+        else { Json f = Json::object(); f.set("timbient", Json::string("patch")); f.set("data", serializePatch(ui)); std::string p = r.path; if (p.find('.') == std::string::npos) p += ".json";
+          ui.status(writeFile(p, f.dump()) ? "SAVED TO FILE" : "COULD NOT SAVE THE FILE", 4); }
+      } }
     engine.collectGarbage();
 
     const Uint64 now = SDL_GetTicksNS(); const float dt = std::min(0.1f, (now - last) / 1e9f); last = now;
+    if (dirty) { saveT -= dt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
     if (W != canvas.W || H != canvas.H) canvas.resize(W, H);
     ui.draw(canvas, dt);
     if (!tex || texW != W || texH != H) { if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W, H); SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST); texW = W; texH = H; }
@@ -84,7 +202,8 @@ int main(int argc, char** argv) {
     SDL_FRect dst{0, 0, (float)(W * scale), (float)(H * scale)}; SDL_RenderTexture(ren, tex, nullptr, &dst);
     SDL_RenderPresent(ren);
   }
-  ma_device_uninit(&device);
+  store.writeAutosave(serializePatch(ui));
+  sound.stop();
   SDL_DestroyTexture(tex); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
   return 0;
 }

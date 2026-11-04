@@ -23,7 +23,7 @@ set(ENGINE_SOURCES
   src/engine/modules_trig.cpp
   src/engine/modules_voice.cpp
   src/engine/modules_fx.cpp)
-set(UI_SOURCES src/ui/ui.cpp)
+set(UI_SOURCES src/ui/ui.cpp src/ui/session.cpp)
 
 if(TIMBIENT_TESTS)
   add_executable(timbient_render tests/render.cpp ${ENGINE_SOURCES})

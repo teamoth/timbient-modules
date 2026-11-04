@@ -74,7 +74,7 @@ struct Clump : Module {
 static Reg rClump(new ModuleDef{"clump", "CLUMP SEQ", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("steps", "STEPS", 2, 16, 8), pct("clump", "CLUMP", 0.6f),
    only(fmt(prExp("speed", "SPEED", 0.2f, 8, 1.6f), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f/S", v); return std::string(b); }), "free"),
-   only(pctX("drift", "DRIFT", 1.6f, 0.25f), "free"), ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 4), pctX("mutate", "MUTATE", 3, 0.2f)}, 7, 58, false, [] { return new Clump(); }});
+   only(pctX("drift", "DRIFT", 1.6f, 0.25f), "free"), ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 4), pctX("mutate", "MUTATE", 3, 0.2f)}, 14, 58, false, [] { return new Clump(); }});
 
 // ---------------- ORBITS ----------------
 struct Orbits : Module {
@@ -97,7 +97,7 @@ struct Orbits : Module {
 };
 static Reg rOrbits(new ModuleDef{"orbits", "ORBITS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), OCTP("oct", -1, 7, 6)},
-  16, 58, false, [] { return new Orbits(); }});
+  26, 58, false, [] { return new Orbits(); }});
 
 // ---------------- RANDOM HOPS ----------------
 struct Hops : Module {
