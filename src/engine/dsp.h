@@ -56,6 +56,13 @@ struct Biquad {
     }
     b0 = B0 / A0; b1 = B1 / A0; b2 = B2 / A0; a1 = A1 / A0; a2 = A2 / A0;
   }
+  void setShelf(bool high, float f, float gainDb, float sr) {   // RBJ shelving filters, slope 1
+    const double A = std::pow(10.0, gainDb / 40.0), w = 6.283185307179586 * clampf(f, 10.f, sr * 0.49f) / sr, cw = std::cos(w), sw = std::sin(w), al = sw / 2 * std::sqrt(2.0), sA = 2 * std::sqrt(A) * al;
+    double B0, B1, B2, A0, A1, A2;
+    if (!high) { B0 = A * ((A + 1) - (A - 1) * cw + sA); B1 = 2 * A * ((A - 1) - (A + 1) * cw); B2 = A * ((A + 1) - (A - 1) * cw - sA); A0 = (A + 1) + (A - 1) * cw + sA; A1 = -2 * ((A - 1) + (A + 1) * cw); A2 = (A + 1) + (A - 1) * cw - sA; }
+    else { B0 = A * ((A + 1) + (A - 1) * cw + sA); B1 = -2 * A * ((A - 1) + (A + 1) * cw); B2 = A * ((A + 1) + (A - 1) * cw - sA); A0 = (A + 1) - (A - 1) * cw + sA; A1 = 2 * ((A - 1) - (A + 1) * cw); A2 = (A + 1) - (A - 1) * cw - sA; }
+    b0 = B0 / A0; b1 = B1 / A0; b2 = B2 / A0; a1 = A1 / A0; a2 = A2 / A0;
+  }
   inline float run(float x, int ch = 0) {   // transposed direct form II
     const double y = b0 * x + z1[ch];
     z1[ch] = b1 * x - a1 * y + z2[ch];

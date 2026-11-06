@@ -71,7 +71,7 @@ void Engine::applyCommands() {
         cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const Cable& k) { return k.from == c.cable.from && k.fromPort == c.cable.fromPort && k.to == c.cable.to && k.toPort == c.cable.toPort && k.toParam == c.cable.toParam && k.type == c.cable.type; }), cables.end());
         dirty = true; break;
       case Command::ACTION: if (Module* m = byId(c.id)) m->action(c.key); break;
-      case Command::SETBUF: if (Module* m = byId(c.id)) { AudioBuf* old = m->swapBuf(c.buf); if (old && !bufGarbage.push(old)) {} } else if (c.buf) bufGarbage.push(c.buf); break;
+      case Command::SETBUF: if (Module* m = byId(c.id)) { AudioBuf* old = m->swapBuf(c.buf, c.port); if (old && !bufGarbage.push(old)) {} } else if (c.buf) bufGarbage.push(c.buf); break;
       case Command::TRIGGER: if (Module* m = byId(c.id)) { Event e = c.ev; e.offset = 0; m->events.push(c.port, e); } break;
       case Command::CLEAR: for (auto* m : mods) garbage.push(m); mods.clear(); cables.clear(); dirty = true; break;
     }

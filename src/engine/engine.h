@@ -91,6 +91,7 @@ public:
   std::unique_ptr<std::atomic<float>[]> seq;
   std::atomic<int> cursor{0}, seqVer{0};
   std::atomic<int> devSlot{-1};    // MIDI OUT: which opened device it sends to
+  std::atomic<float> roots[8];      // SAMPLE in MULTI mode: the note each of its sounds was recorded at
   void allocSeq() { seq.reset(new std::atomic<float>[SEQ_MAX * 2]); for (int i = 0; i < SEQ_MAX; i++) { seq[i * 2].store(-1); seq[i * 2 + 1].store(0.8f); } }
 
   Module() { for (auto& d : disp) d.store(0.f); }
@@ -101,7 +102,7 @@ public:
   virtual void trig(int port, const Event& ev) {}       // a trigger arrived (offset = sample within the block)
   virtual void action(const std::string& key) {}         // an action button was pressed (sent from the screen)
   virtual void display(float* vals, int n) {}            // copy display values for the screen (playheads, meters)
-  virtual AudioBuf* swapBuf(AudioBuf* b) { return b; }   // take a new sound; hand back the old one (freed off the audio thread)
+  virtual AudioBuf* swapBuf(AudioBuf* b, int slot = 0) { return b; }   // take a new sound; hand back the old one (freed off the audio thread)
   // the last few seconds of this module's input, for CATCH (written here, copied out by the screen thread)
   std::vector<float> ring; std::atomic<long> ringW{0};
 
@@ -156,7 +157,7 @@ public:
   void action(int id, const std::string& key) { Command k{Command::ACTION}; k.id = id; std::strncpy(k.key, key.c_str(), sizeof(k.key) - 1); send(k); }
   void trigger(int id, int port, Event ev) { Command k{Command::TRIGGER}; k.id = id; k.port = port; k.ev = ev; send(k); }
   void clear() { send({Command::CLEAR}); }
-  void setBuffer(int id, AudioBuf* b) { Command k{Command::SETBUF}; k.id = id; k.buf = b; send(k); }
+  void setBuffer(int id, AudioBuf* b, int slot = 0) { Command k{Command::SETBUF}; k.id = id; k.buf = b; k.port = slot; send(k); }
   // recording the master output: the audio thread writes here, the screen thread drains it to a file
   static constexpr int MIDI_INS = 8;
   SpscQueue<MidiMsg, 1024> midiInQ[MIDI_INS];
@@ -200,5 +201,6 @@ float midiOf(int degree, int root, int scale);
 inline int degOf(int oct, int step, int scale) { return (oct - 2) * (int)scales()[scale].steps.size() + step; }
 inline int nearDeg(float note, int root, int scale) { int best = 0; float bd = 1e9f; for (int i = -12; i < 90; i++) { const float d = std::fabs(midiOf(i, root, scale) - note); if (d < bd) { bd = d; best = i; } } return best; }
 extern const char* NOTE_NAMES[12];
+inline std::string noteName(int n) { return std::string(NOTE_NAMES[((n % 12) + 12) % 12]) + std::to_string(n / 12 - 1); }
 
 }  // namespace tb

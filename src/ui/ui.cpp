@@ -5,15 +5,16 @@
 #include <cstdio>
 
 namespace tb {
+static inline bool modulatable(const ParamDef& q) { return q.opts.empty() && !q.act; }   // levels can be moved by mod cables; choices and buttons cannot
+
 
 static const int HEAD = 8, ROW = 7, FOOT = 9, TOP = 10;
 static int catCol(Cat c) { switch (c) { case Cat::Trig: return 24; case Cat::Voice: return 7; case Cat::Proc: return 17; case Cat::Mod: return 11; default: return 9; } }
 static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ? 44 : 45; }
-static std::string noteName(int n) { return std::string(NOTE_NAMES[((n % 12) + 12) % 12]) + std::to_string(n / 12 - 1); }
 
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
-  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tools", "midi", "midiout"}},
+  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "midi", "midiout"}},
   {"VOICES", {"tone", "pluck", "bell", "grains", "fm2", "glass", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
   {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "crush", "mixer"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
@@ -77,7 +78,10 @@ UiMod* Ui::hit(int wx, int wy, int& lx, int& ly) {
 Ui::JackHit Ui::jackAt(int wx, int wy, int tol) {
   for (int i = (int)mods.size() - 1; i >= 0; i--) { UiMod& u = *mods[i]; const ModuleDef* d = u.m->def;
     for (size_t k = 0; k < d->ins.size(); k++) { const int jx = u.x, jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol) return {&u, false, (int)k, d->ins[k].type, jx, jy}; }
-    for (size_t k = 0; k < d->outs.size(); k++) { const int jx = u.x + d->width - 1, jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol) return {&u, true, (int)k, d->outs[k].type, jx, jy}; } }
+    for (size_t k = 0; k < d->outs.size(); k++) { const int jx = u.x + d->width - 1, jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol) return {&u, true, (int)k, d->outs[k].type, jx, jy}; }
+    if (!u.fold) { const Geom g = geom(u); const int st = std::min(tol, 3);   // the mod socket beside each setting that can be moved
+      for (size_t k = 0; k < d->params.size(); k++) { if (!modulatable(d->params[k])) continue; const int jx = u.x - 2, jy = u.y + g.py + (int)k * ROW + 3;
+        if (std::abs(wx - jx) <= st && std::abs(wy - jy) <= st) { JackHit h{&u, false, -1, PType::Mod, jx, jy}; h.param = (int)k; return h; } } } }
   return {};
 }
 int Ui::paramAt(UiMod* u, int ly) { const Geom g = geom(*u); const int j = (ly - g.py) / ROW; return !u->fold && ly >= g.py && j >= 0 && j < (int)u->m->def->params.size() ? j : -1; }
@@ -95,7 +99,7 @@ void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col) {
 bool Ui::cableEnds(const UiCable& cb, float& ax, float& ay, float& bx, float& by) {
   UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) return false;
   ax = (float)(a->x + a->m->def->width - 1); ay = (float)(a->y + jackY(cb.fromPort));
-  if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = (float)b->x; by = (float)(b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3)); }
+  if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = (float)(b->x - 2); by = (float)(b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3)); }
   else { bx = (float)b->x; by = (float)(b->y + jackY(cb.toPort)); }
   return true;
 }
@@ -118,8 +122,12 @@ static bool sameCable(const UiCable& x, const UiCable& k) { return x.from == k.f
 void Ui::drawJack(Canvas& c, int jx, int jy, PType t, bool conn, bool lit) {
   const int col = lit ? 46 : typeCol(t);
   if (t == PType::Trig) { for (int k = -2; k <= 2; k++) { const int s = 2 - std::abs(k); c.px(jx + k, jy - s, col); c.px(jx + k, jy + s, col); if (conn) for (int q = -s; q <= s; q++) c.px(jx + k, jy + q, col); } }
-  else { if (conn) c.rect(jx - 2, jy - 2, 5, 5, col); else c.frame(jx - 2, jy - 2, 5, 5, col); }
+  else if (t == PType::Mod) {   // round
+    for (int k = -1; k <= 1; k++) { c.px(jx + k, jy - 2, col); c.px(jx + k, jy + 2, col); c.px(jx - 2, jy + k, col); c.px(jx + 2, jy + k, col); }
+    if (conn) c.rect(jx - 1, jy - 1, 3, 3, col); }
+  else { if (conn) c.rect(jx - 2, jy - 2, 5, 5, col); else c.frame(jx - 2, jy - 2, 5, 5, col); }   // audio: square
 }
+
 
 // each module's own little display
 void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
@@ -130,15 +138,25 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int i = 0; i < w; i += 2) c.px(x + i, base + 1, 18);
     const int n = (int)D(1); for (int k = 0; k < n && k < 16; k++) { const int sx = x + (int)std::lround(D(2 + k) * (w - 3)), h = 2 + (int)std::lround(D(18 + k) * (vh - 6)); c.rect(sx, base + 1 - h, 3, h, D(34 + k) > 0 ? 4 : 24); }
     const int hx = x + (int)std::lround(D(0) * (w - 1)); for (int j = 0; j < vh - 1; j++) if (j % 2 == 0 || j > vh - 5) c.px(hx, y + j, 17);
-  } else if (ty == "orbits") {   // one ellipse per ring, a planet on each; a planet flashes as it crosses the top
+  } else if (ty == "orbits") {   // points of light going round, each with a fading trail behind it
     const float cx = x + w / 2.f, cy = y + vh / 2.f - 0.5f; const int n = std::max(1, (int)D(0));
-    const float RX = w / 2.f - 2, RY = vh / 2.f - 2;
-    c.rect((int)cx - 1, (int)cy - 1, 2, 2, 18);
-    for (int i = 0; i < n && i < 8; i++) { const float f = (i + 1.f) / n, rx = 3 + (RX - 3) * f, ry = 2 + (RY - 2) * f;
-      const float stepA = 1.5f / std::max(rx, 1.f);
-      for (float a = 0; a < TAU; a += stepA * 2) c.pxf(cx + rx * std::cos(a), cy + ry * std::sin(a), 21);
-      const bool lit = D(9 + i) > 0; const int px = (int)std::lround(cx + rx * std::cos(D(1 + i))), py = (int)std::lround(cy + ry * std::sin(D(1 + i)));
+    const float RX = w / 2.f - 2, RY = vh / 2.f - 2; static const int TRAIL[6] = {4, 46, 44, 24, 18, 21};
+    for (int i = 0; i < n && i < 8; i++) { const float f = (i + 1.f) / n, rx = 3 + (RX - 3) * f, ry = 2 + (RY - 2) * f, a0 = D(1 + i), dir = (i & 1) ? -1.f : 1.f;
+      for (int k = 12; k >= 1; k--) { const float a = a0 - dir * k * 0.75f / std::max(rx, 4.f); c.pxf(cx + rx * std::cos(a), cy + ry * std::sin(a), TRAIL[(k - 1) / 2]); }
+      const bool lit = D(9 + i) > 0; const int px = (int)std::lround(cx + rx * std::cos(a0)), py = (int)std::lround(cy + ry * std::sin(a0));
       c.rect(px - 1, py - 1, lit ? 3 : 2, lit ? 3 : 2, lit ? 4 : 24); }
+  } else if (ty == "tombola") {   // the turning drum and its balls
+    const float cx = x + w / 2.f, cy = y + vh / 2.f, R = std::min(w, vh) / 2.f - 1.5f, ang = D(0); const int S = std::max(3, (int)D(1)), n = (int)D(2);
+    for (int s = 0; s < S; s++) { const float a0 = ang + s * TAU / S, a1 = ang + (s + 1) * TAU / S;
+      c.line((int)std::lround(cx + R * std::cos(a0)), (int)std::lround(cy + R * std::sin(a0)), (int)std::lround(cx + R * std::cos(a1)), (int)std::lround(cy + R * std::sin(a1)), 18); }
+    for (int i = 0; i < n && i < 12; i++) { const int bx = (int)std::lround(cx + D(3 + i * 4) * R), by = (int)std::lround(cy + D(4 + i * 4) * R); const float lifeK = D(5 + i * 4); const bool hitNow = D(6 + i * 4) > 0;
+      const int col = hitNow ? 4 : lifeK > 0.66f ? 24 : lifeK > 0.33f ? 44 : 18; c.rect(bx - 1, by - 1, 3, 3, col); if (!hitNow) c.px(bx - 1, by - 1, 26); }
+  } else if (ty == "hops") {   // each hop a stepping stone, placed by pitch, drifting left and fading
+    const int fired = (int)D(0); if (fired != u.hopSeen) { u.hopSeen = fired; if (u.dots.size() > 40) u.dots.erase(u.dots.begin()); u.dots.push_back({0.f, D(1)}); }
+    for (auto& dt2 : u.dots) dt2.first += dt; u.dots.erase(std::remove_if(u.dots.begin(), u.dots.end(), [](const std::pair<float, float>& q) { return q.first > 4; }), u.dots.end());
+    for (int i = 0; i < w; i += 4) c.px(x + i, y + vh - 1, 21);
+    for (auto& q : u.dots) { const int px = x + w - 3 - (int)(q.first * (w - 4) / 4), py = y + vh - 3 - (int)std::lround(q.second * (vh - 5)), col = q.first < 0.15f ? 4 : q.first < 1 ? 24 : q.first < 2.5f ? 44 : 18;
+      c.rect(px, py, q.first < 0.15f ? 3 : 2, 2, col); }
   } else if (ty == "ducker") {   // how far the sound is being pushed down, over the last few seconds
     u.ht += dt; if (u.ht > 0.03f) { u.ht = 0; u.hist[u.hi] = D(0); u.hi = (u.hi + 1) % 48; }
     for (int k = 0; k < 48; k++) { const float v = clampf(u.hist[(u.hi + k) % 48], 0, 1); const int xx = x + (int)std::lround(k * (w - 2) / 47.f), hh = (int)std::lround(v * (vh - 2));
@@ -168,27 +186,24 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     const float ph = D(0);
     for (int cx : {x + 12, x + w - 13}) { for (float a = 0; a < TAU; a += 0.5f) c.pxf(cx + 4 * std::cos(a), y + 2 + 2 * std::sin(a), 18); c.pxf(cx + 2 * std::cos(ph * TAU), y + 2 + std::sin(ph * TAU), 4); }
     for (int i = x + 16; i < x + w - 16; i++) c.px(i, y + 4, 7);
-  } else if (ty == "sample" || ty == "looper") {   // the sound's outline; the chosen region (Sample); playheads and grains
-    const bool smp = ty == "sample";
-    if (u.peaks.empty()) { c.text(u.missing ? "LOAD IT AGAIN" : smp ? "TAP LOAD FILE" : "LISTENING", x + 2, y + 4, u.missing ? 14 : 18); }
+  } else if (ty == "sample" || ty == "looper") {   // the sound's outline; the region or slices (Sample); playheads and grains
+    const bool smp = ty == "sample"; const int kind = smp ? (int)m->p[1].load() : 0, multi = kind >= 2; int top = y;
+    if (multi) {   // KIT / MULTI: a numbered place for each sound; tap one to load, replace, set its ROOT or remove it
+      for (int k = 0; k < UiMod::SLOTS; k++) { const int bx = x + k * 6; const bool has = !u.snd[k].id.empty(), sel = k == u.shown;
+        if (sel) c.rect(bx, y, 5, 5, has ? 24 : 18); else c.frame(bx, y, 5, 5, has ? 24 : 21); c.text(std::to_string(k + 1), bx + 1, y, sel ? 15 : has ? 9 : 18); }
+      top = y + 6; }
+    const UiMod::Snd& sd = u.snd[multi ? u.shown : 0]; const int mid = multi ? top + 3 : y + 6, amp = multi ? 2 : 5;
+    if (sd.peaks.empty()) { c.text(sd.missing ? "LOAD IT AGAIN" : multi ? (u.snd[u.shown].id.empty() ? "TAP A NUMBER" : "") : smp ? "TAP LOAD FILE" : "LISTENING", x + (multi ? 2 : 2), multi ? top : y + 4, sd.missing ? 14 : 18); }
     else {
-      const float a = smp ? m->p[3].load() : 0, b = smp ? a + m->p[4].load() * (1 - a) : 1;
-      for (int i = 0; i < w; i++) { const float fx = (float)i / w; const int h = (int)std::lround(u.peaks[std::min(u.peaks.size() - 1, (size_t)(fx * u.peaks.size()))] * 5), col = fx >= a && fx <= b ? 48 : 21;
-        for (int j = -h; j <= h; j++) c.px(x + i, y + 6 + j, col); }
-      if (smp) { for (float xx : {a, b}) for (int j = 0; j < 12; j += 2) c.px(x + (int)std::lround(xx * (w - 1)), y + j, 24);
-        const int n = (int)D(0); for (int k = 0; k < n && k < 12; k++) { const int px = x + (int)std::lround(clampf(D(1 + k), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(px, y + j, 12); } }
+      const float a0 = smp && kind != 1 ? m->p[5].load() : 0, b0 = smp && kind != 1 ? a0 + m->p[6].load() * (1 - a0) : 1;
+      for (int i = 0; i < w; i++) { const float fx = (float)i / w; const int h = (int)std::lround(sd.peaks[std::min(sd.peaks.size() - 1, (size_t)(fx * sd.peaks.size()))] * amp), col = fx >= a0 && fx <= b0 ? 48 : 21;
+        for (int j = -h; j <= h; j++) c.px(x + i, mid + j, col); }
+      if (smp && kind == 1) { const int N = std::max(1, (int)m->p[2].load()); for (int k = 1; k < N; k++) { const int sx = x + (int)std::lround((float)k / N * (w - 1)); for (int j = 0; j < 12; j += 2) c.px(sx, y + j, 24); } }   // where the slices are cut
+      else if (smp) for (float xx : {a0, b0}) for (int j = top - y; j < 12; j += 2) c.px(x + (int)std::lround(xx * (w - 1)), y + j, 24);
+      if (smp) { const int n = (int)D(0); for (int k = 0; k < n && k < 12; k++) { if (multi && (int)D(20 + k) != u.shown) continue; const int px = x + (int)std::lround(clampf(D(1 + k), 0, 1) * (w - 1)); for (int j = top - y; j < 12; j++) c.px(px, y + j, 12); } }
     }
     if (!smp) { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, 12);
       const int n = (int)D(1); for (int k = 0; k < n && k < 30; k++) c.px(x + (int)std::lround(clampf(D(2 + k), 0, 1) * (w - 1)), y + 6 + (int)(std::rand() % 9) - 4, 4); }
-  } else if (ty == "midi") {
-    const bool ok = midiState.find("DEVICE") != std::string::npos && midiState.rfind("NO", 0) != 0; c.text(midiState, x + 2, y, ok ? 17 : 14);
-    const int ln = (int)D(0); if (ln >= 0) { const std::string nt = noteName(ln); c.text(nt, x + w - 2 - Canvas::tw(nt), y, m->flash.load() > 0 ? 4 : 9); }
-    const int cw = (int)std::lround((D(1) + 1) / 2 * (w - 4)); for (int i = 0; i < w - 4; i++) { c.px(x + 2 + i, y + 7, i < cw ? 11 : 21); c.px(x + 2 + i, y + 8, i < cw ? 11 : 21); }
-  } else if (ty == "midiout") {
-    const bool has = m->devSlot.load() >= 0; std::string nm = has ? (u.dev.empty() ? std::string("FIRST DEVICE") : u.dev) : std::string("NO OUTPUT");
-    for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); c.text(nm.substr(0, 13), x + 2, y, has ? 17 : 14);
-    const int ln = (int)D(0); if (ln >= 0) { const std::string nt = noteName(ln); c.text(nt, x + w - 2 - Canvas::tw(nt), y + 6, m->flash.load() > 0 ? 4 : 9); }
-    if (D(1) > 0.5f) c.text("CLOCK", x + 2, y + 6, ((int)(blink * 4)) % 2 ? 24 : 18);
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
@@ -220,14 +235,14 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
 
 // ---------------- the Tracker's list of steps ----------------
 static const int TR_ROWS = 14;
-static int trLen(Module* m) { return std::max(1, std::min(Module::SEQ_MAX, (int)m->p[4].load())); }
+static int trLen(Module* m) { return std::max(1, std::min(Module::SEQ_MAX, (int)m->p[3].load())); }
 static int trShown(Module* m) { int last = -1; for (int i = Module::SEQ_MAX - 1; i >= 0; i--) if (m->seq[i * 2].load() >= 0) { last = i; break; } return std::max(trLen(m), last + 1); }
 static void trClamp(UiMod& u) { u.scroll = clampf(std::round(u.scroll), 0, (float)std::max(0, trShown(u.m) - TR_ROWS)); }
 static void trShow(UiMod& u, int row) { if (row < u.scroll) u.scroll = (float)row; else if (row >= u.scroll + TR_ROWS) u.scroll = (float)(row - TR_ROWS + 1); trClamp(u); }
 void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
   Module* m = u.m; const int len = trLen(m), shown = trShown(m), pos = (int)m->disp[0].load(), div = std::max(1, (int)m->disp[1].load()), cur = m->cursor.load();
   u.hold = std::max(0.f, u.hold - dt);
-  if (m->p[9].load() > 0.5f && u.hold <= 0 && pos >= 0 && (pos < u.scroll || pos >= u.scroll + TR_ROWS)) u.scroll = (float)pos;   // FOLLOW the playhead
+  if (u.hold <= 0 && pos >= 0 && (pos < u.scroll || pos >= u.scroll + TR_ROWS)) u.scroll = (float)pos;   // follows the playhead, except for a few seconds after you touch it
   trClamp(u); const int sc = (int)u.scroll;
   auto num = [](int r) { char b[16]; std::snprintf(b, 16, "%03d", r + 1); return std::string(b); };
   for (int i = 0; i < TR_ROWS; i++) { const int r = sc + i, ry = y + 1 + i * 6; if (r >= shown) break;
@@ -277,10 +292,12 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
       if (on) c.rect(ix, iy + 1, 3, 3, 15); else for (int k = 0; k < 3; k++) for (int jj = k; jj < 5 - k; jj++) c.px(ix + k, iy + jj, 9);
       c.text(on ? "PLAYING" : "PLAY", x + 13, ry + 1, on ? 15 : 9); continue; }
     int syncI = d->paramIndex("sync"); const bool syncOn = syncI >= 0 && d->params[syncI].tog && u.m->p[syncI].load() > 0.5f;
-    const bool idle = (q.only == "free" && clocked) || (q.only == "clock" && !clocked) || (q.only == "own" && (syncOn || clocked));
+    bool idle = (q.only == "free" && clocked) || (q.only == "clock" && !clocked) || (q.only == "own" && (syncOn || clocked));
+    if (d->type == "sample") { const int kind = (int)u.m->p[1].load(); const bool once = u.m->p[3].load() > 0.5f;   // settings that don't apply to this kind of sound or way of playing
+      idle = idle || (q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once); }
     c.text(q.label.substr(0, 8), x + 3, ry + 1, active ? 4 : idle ? 21 : 18);
     bool modded = false; for (auto& cb : cables) if (cb.type == PType::Mod && cb.to == u.m->id && cb.toParam == (int)j) modded = true;
-    if (modded) c.px(x + 2, ry + 3, 11);
+    if (modulatable(q)) drawJack(c, x - 2, ry + 3, PType::Mod, modded, false);   // its mod socket: filled when something moves it
     if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, 6); c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
     const int bx = x + 35, bw = w - 38; const float nb = clampf(q.toNorm(v), 0, 1), n = modded ? clampf(q.toNorm(u.m->eff[j].load(std::memory_order_relaxed)), 0, 1) : nb;
     for (int i = 0; i < bw; i += 2) c.px(bx + i, ry + 4, 18);
@@ -305,7 +322,7 @@ void Ui::draw(Canvas& c, float dt) {
   for (auto& cb : cables) {
     UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) continue;
     const int ax = a->x + a->m->def->width - 1 - viewX, ay = a->y + jackY(cb.fromPort) - viewY;
-    int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = b->x - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3) - viewY; } else { bx = b->x - viewX; by = b->y + jackY(cb.toPort) - viewY; }
+    int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = b->x - 2 - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3) - viewY; } else { bx = b->x - viewX; by = b->y + jackY(cb.toPort) - viewY; }
     const bool hi = (selT > 0 && sameCable(cb, sel)) || (drag.kind == D_MOVE && drag.splice >= 0 && drag.splice < (int)cables.size() && sameCable(cb, cables[drag.splice]));
     drawCable(c, ax, ay, bx, by, hi ? 4 : a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type));
   }
@@ -438,6 +455,11 @@ void Ui::pointerDown(float sx, float sy) {
   if (j.u) {
     drag.kind = D_CABLE;
     if (j.out) { drag.from = j; return; }
+    if (j.param >= 0) {   // a setting's mod socket: pull its last mod cable off, or start a cable from it
+      for (int k = (int)cables.size() - 1; k >= 0; k--) if (cables[k].type == PType::Mod && cables[k].to == j.u->m->id && cables[k].toParam == j.param) {
+        const UiCable c0 = cables[k]; unplug(c0); UiMod* src = byId(c0.from);
+        drag.from = {src, true, c0.fromPort, c0.type, src->x + src->m->def->width - 1, src->y + jackY(c0.fromPort)}; status("UNPLUGGED"); changed(); return; }
+      drag.from = j; drag.rev = true; return; }
     for (int k = (int)cables.size() - 1; k >= 0; k--) if (cables[k].to == j.u->m->id && cables[k].toPort == j.port && cables[k].type != PType::Mod) {
       const UiCable c0 = cables[k]; unplug(c0); UiMod* src = byId(c0.from);
       drag.from = {src, true, c0.fromPort, c0.type, src->x + src->m->def->width - 1, src->y + jackY(c0.fromPort)}; status("UNPLUGGED"); changed(); return; }
@@ -448,7 +470,7 @@ void Ui::pointerDown(float sx, float sy) {
   if (!u) {   // cables run behind modules, so only where you can see them
     bool onControl = false;
     if (u) { const Geom g0 = geom(*u); const ModuleDef* d0 = u->m->def;
-      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + d0->vis && (d0->type == "keys" || d0->type == "out" || d0->type == "tracker")); }
+      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + d0->vis && (d0->type == "keys" || d0->type == "out" || d0->type == "tracker" || d0->type == "sample")); }
     const int ci = onControl ? -1 : cableAt(wx, wy, u ? 2.5f : 4.f);
     if (ci >= 0) { drag.kind = D_GRAB; drag.grab = cables[ci]; return; }
   }
@@ -475,6 +497,18 @@ void Ui::pointerDown(float sx, float sy) {
     const int vx = lx - 3, vy = ly - g.vy;
     if (d->type == "keys") { keysPress(*u, vx, vy); return; }
     if (d->type == "out" && vy >= 11) { drag.kind = D_XFADE; drag.m = u; pointerMove(sx, sy); return; }
+    if (d->type == "sample" && (int)u->m->p[1].load() >= 2 && vy < 6) {   // KIT / MULTI: a sound's place
+      const int k = std::min(UiMod::SLOTS - 1, std::max(0, lx - 3) / 6); u->shown = k; const bool has = !u->snd[k].id.empty(), multi = (int)u->m->p[1].load() == 3;
+      Dropdown z; z.x = u->x - viewX + 4; z.y = u->y - viewY + g.vy + 6;
+      z.items = {"SOUND " + std::to_string(k + 1) + (has ? "  " + (u->snd[k].name.empty() ? std::string("(CAUGHT)") : u->snd[k].name.substr(0, 20)) : std::string("  (EMPTY)")), has ? "REPLACE..." : "LOAD..."};
+      if (has && multi) z.items.push_back("ROOT  " + noteName((int)u->snd[k].root)); if (has) z.items.push_back("REMOVE");
+      z.title = 0; const int id = u->m->id;
+      z.pick = [this, id, k, has, multi](int i) { UiMod* t = byId(id); if (!t) return;
+        if (i == 1) { if (onAction) onAction(t, "load:" + std::to_string(k)); return; }
+        if (has && multi && i == 2) { Dropdown r; r.x = t->x - viewX + 4; r.y = TOP + 2; for (int n = 24; n <= 96; n++) r.items.push_back(noteName(n)); r.cur = (int)t->snd[k].root - 24;
+          r.pick = [this, id, k](int j) { UiMod* t2 = byId(id); if (!t2) return; t2->snd[k].root = (float)(24 + j); t2->m->roots[k].store((float)(24 + j)); status("SOUND " + std::to_string(k + 1) + " ROOT " + noteName(24 + j)); changed(); }; openDropdown(r); return; }
+        if (has) { eng.setBuffer(id, nullptr, k); t->snd[k] = UiMod::Snd(); status("REMOVED SOUND " + std::to_string(k + 1)); changed(); } };
+      openDropdown(z); return; }
     if (d->type == "tracker") {   // tap a row to put the cursor there; drag up and down to scroll
       u->hold = 6; const int r = (int)u->scroll + std::max(0, (vy - 1) / 6);
       if (r < trLen(u->m)) { u->m->cursor.store(r); char b[32]; std::snprintf(b, 32, "CURSOR AT STEP %03d", r + 1); status(b, 1.2f); }
@@ -536,14 +570,18 @@ void Ui::pointerUp(float sx, float sy) {
   if (d.kind == D_MOVE || d.kind == D_PARAM || d.kind == D_XFADE) { changed(); return; }
   if (d.kind != D_CABLE) return;
   if (!d.rev && d.from.type == PType::Mod) {   // a mod cable goes onto a setting
-    int lx, ly; UiMod* u = hit(wx, wy, lx, ly); const int pj = u ? paramAt(u, ly) : -1;
-    if (u && pj >= 0 && !u->m->def->params[pj].act && u != d.from.u) { if (modulate(d.from.u, u, pj)) { status(d.from.u->m->def->name + " NOW MOVES " + u->m->def->name + " " + u->m->def->params[pj].label); changed(); } }
+    int lx, ly; UiMod* u = hit(wx, wy, lx, ly); int pj = u ? paramAt(u, ly) : -1;
+    { const JackHit sk = jackAt(wx, wy, 4); if (sk.u && sk.param >= 0) { u = sk.u; pj = sk.param; } }   // dropped on a socket
+    if (u && pj >= 0 && !modulatable(u->m->def->params[pj])) { status(u->m->def->params[pj].label + " IS A CHOICE, NOT A LEVEL: IT CAN'T BE MODULATED"); return; }
+    if (u && pj >= 0 && u != d.from.u) { if (modulate(d.from.u, u, pj)) { status(d.from.u->m->def->name + " NOW MOVES " + u->m->def->name + " " + u->m->def->params[pj].label); changed(); } }
     else status("DROP A MOD CABLE ON A SETTING");
     return;
   }
   JackHit j = jackAt(wx, wy); if (!j.u) j = jackAt(wx, wy, 6);   // a little forgiving: near enough to a jack counts
   if (!j.u) return;
   if (j.type != d.from.type) { status(std::string("THAT ") + (j.out ? "OUTPUT" : "INPUT") + " TAKES A DIFFERENT KIND OF CABLE"); return; }
+  if (d.rev && d.from.param >= 0) { if (j.out && j.u != d.from.u && modulate(j.u, d.from.u, d.from.param)) { status(j.u->m->def->name + " NOW MOVES " + d.from.u->m->def->name + " " + d.from.u->m->def->params[d.from.param].label); changed(); } return; }
+  if (!d.rev && j.param >= 0) return;
   bool ok = false;
   if (!d.rev && !j.out) ok = connect(d.from.u, d.from.port, j.u, j.port);
   else if (d.rev && j.out) ok = connect(j.u, j.port, d.from.u, d.from.port);

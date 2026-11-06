@@ -24,7 +24,7 @@ inline ParamDef PITCH() { return ST("pitch", "PITCH", -24, 24, 0); }
 inline std::vector<ParamDef> envP(float a, float d, float su, float h, float r) {
   return {T("atk", "ATTACK", 0.002f, 10, a), T("dec", "DECAY", 0.01f, 10, d), pct("sus", "SUSTAIN", su), T("hold", "HOLD", 0.01f, 30, h), T("rel", "RELEASE", 0.01f, 20, r)};
 }
-inline ParamDef OCTP(const char* k, float mn, float mx, float v) { auto p = pr(k, "OCT", mn, mx, v); p.step = 1; p.fmt = [](float x) { char b[8]; std::snprintf(b, 8, "%d", (int)x); return std::string("@") + b; }; return p; }   // '@' becomes the key's root note on screen
+inline ParamDef OCTP(const char* k, float mn, float mx, float v) { auto p = pr(k, "OCTAVE", mn, mx, v); p.step = 1; p.fmt = [](float x) { char b[8]; std::snprintf(b, 8, "%d", (int)x); return std::string("@") + b; }; return p; }   // '@' becomes the key's root note on screen
 inline std::string fmtSecs(float v) { char b[16]; if (v < 1) std::snprintf(b, 16, "%dMS", (int)std::round(v * 1000)); else std::snprintf(b, 16, "%.1fS", v); return b; }
 
 // format a setting's value for the screen

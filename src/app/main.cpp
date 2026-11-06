@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.6.2";
+static const char* VERSION = "0.7.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -59,13 +59,29 @@ struct Sound {
 };
 
 // ---------------- results from the system file dialogs (they may arrive on another thread) ----------------
-struct DialogResult { bool open; std::string path; int target = 0; };   // target: the module a sound file is for
+struct DialogResult { bool open; std::string path; int target = 0, slot = 0; };   // target: the module a sound file is for
 static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
 static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "json;txt"}};
 static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
 static void onSaveDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({false, files[0]}); } }
 static const SDL_DialogFileFilter AUDIO_FILTER[] = {{"Sound files", "wav;wave;aif;aiff;flac;mp3"}};
-static void onAudioDialog(void* ud, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0], (int)(intptr_t)ud}); } }
+// a sound file chosen for a Sample or Grain Looper: ud carries the module id and the place (-1: fill the empty places, one per file)
+static void onAudioDialog(void* ud, const char* const* files, int) {
+  if (!files) return; const intptr_t v = (intptr_t)ud; const int id = (int)(v >> 8), slot = (int)(v & 0xff) - 1; std::lock_guard<std::mutex> l(dlgMx);
+  for (int i = 0; files[i]; i++) dlgResults.push_back({true, files[i], id, slot});
+}
+// a note named in a file name ("cello_C3.wav", "Pad F#2", "bass-Bb1"): its MIDI number, or -1
+static int noteInName(std::string n) {
+  const size_t sl = n.find_last_of("/\\"); if (sl != std::string::npos) n = n.substr(sl + 1); const size_t dot = n.rfind('.'); if (dot != std::string::npos) n = n.substr(0, dot);
+  static const int base[7] = {9, 11, 0, 2, 4, 5, 7};   // A B C D E F G
+  for (int i = (int)n.size() - 1; i >= 0; i--) { const char c = (char)std::toupper((unsigned char)n[i]); if (c < 'A' || c > 'G') continue;
+    if (i > 0 && std::isalpha((unsigned char)n[i - 1])) continue;   // must start a word
+    size_t j = i + 1; int acc = 0; if (j < n.size() && (n[j] == '#' || n[j] == 's')) { acc = 1; j++; } else if (j < n.size() && n[j] == 'b') { acc = -1; j++; }
+    bool neg = false; if (j < n.size() && n[j] == '-') { neg = true; j++; } if (j >= n.size() || !std::isdigit((unsigned char)n[j])) continue;
+    const int oct = (n[j] - '0') * (neg ? -1 : 1); if (j + 1 < n.size() && std::isalnum((unsigned char)n[j + 1])) continue;
+    return std::max(0, std::min(127, 12 * (oct + 1) + base[c - 'A'] + acc)); }
+  return -1;
+}
 static std::string b64(const unsigned char* d, size_t n) {
   static const char* A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; std::string o; o.reserve((n + 2) / 3 * 4);
   for (size_t i = 0; i < n; i += 3) { const unsigned v = (d[i] << 16) | ((i + 1 < n ? d[i + 1] : 0) << 8) | (i + 2 < n ? d[i + 2] : 0);
@@ -101,16 +117,16 @@ int main(int argc, char** argv) {
   ui.onChange = [&] { dirty = true; saveT = 1.0f; };
   // ---- sounds held by Sample and Grain Looper modules: kept as WAV files in the app's folder, named by id ----
   const std::string audioDir = store.dir + "audio/"; SDL_CreateDirectory(audioDir.c_str());
-  auto giveSound = [&](UiMod* u, AudioBuf* b, bool keep) {   // hand a sound to a module (and keep a copy so sessions bring it back)
-    u->peaks = peaksOf(*b); u->missing = false;
+  auto giveSound = [&](UiMod* u, AudioBuf* b, bool keep, int slot = 0, const std::string& name = "") {   // hand a sound to a module (and keep a copy so sessions bring it back)
+    UiMod::Snd& sd = u->snd[slot]; sd.peaks = peaksOf(*b); sd.missing = false; if (keep) sd.name = name;
     if (keep) { char id[40]; std::snprintf(id, 40, "n%llx%04x", (unsigned long long)std::time(nullptr), (unsigned)(SDL_rand(65536)));
-      if (writeWavMono16(audioDir + id + ".wav", *b)) { u->audioId = id; dirty = true; saveT = 0.5f; } else ui.status("COULD NOT KEEP THE SOUND", 4); }
-    engine.setBuffer(u->m->id, b);
+      if (writeWavMono16(audioDir + id + ".wav", *b)) { sd.id = id; dirty = true; saveT = 0.5f; } else ui.status("COULD NOT KEEP THE SOUND", 4); }
+    u->m->roots[slot].store(sd.root); engine.setBuffer(u->m->id, b, slot);
   };
   auto restoreSound = [&](UiMod* u) {
-    if (u->audioId.empty()) return; std::string err;
-    AudioBuf* b = decodeAudio(audioDir + u->audioId + ".wav", 600, err);
-    if (b) giveSound(u, b, false); else { u->missing = true; ui.status(u->m->def->name + ": ITS SOUND IS NOT HERE. LOAD IT AGAIN", 6); }
+    for (int k = 0; k < UiMod::SLOTS; k++) { UiMod::Snd& sd = u->snd[k]; if (sd.id.empty()) continue; std::string err;
+      AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err);
+      if (b) giveSound(u, b, false, k); else { sd.missing = true; ui.status(u->m->def->name + ": A SOUND IS NOT HERE. LOAD IT AGAIN", 6); } }
   };
   auto catchSound = [&](UiMod* u, bool quiet) {   // GRAIN LOOPER: CATCH takes the last LENGTH seconds of what came in
     Module* m = u->m; if (m->ring.empty()) return; const long N = (long)m->ring.size(), w = m->ringW.load(std::memory_order_acquire);
@@ -132,7 +148,9 @@ int main(int argc, char** argv) {
   auto outMod = [&]() -> Module* { for (auto& up : ui.mods) if (up->m->def->type == "out") return up->m; return nullptr; };
   ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
     const std::string& ty = u->m->def->type;
-    if ((ty == "sample" || ty == "looper") && k == "load") { SDL_ShowOpenFileDialog(onAudioDialog, (void*)(intptr_t)u->m->id, win, AUDIO_FILTER, 1, nullptr, false); return true; }
+    if ((ty == "sample" || ty == "looper") && (k == "load" || k.rfind("load:", 0) == 0)) {   // LOAD FILE: KIT and MULTI take several at once, into the empty places
+      const bool many = ty == "sample" && u->m->p[1].load() >= 2 && k == "load"; const int slot = k == "load" ? (many ? -1 : 0) : std::atoi(k.c_str() + 5);
+      SDL_ShowOpenFileDialog(onAudioDialog, (void*)(((intptr_t)u->m->id << 8) | (intptr_t)(slot + 1)), win, AUDIO_FILTER, 1, nullptr, many); return true; }
     if (ty == "looper" && k == "catch") { catchSound(u, false); return true; }
     if (ty == "out" && k == "rec") {
       if (!rec.on()) { std::time_t tt = std::time(nullptr); char nm[64]; std::strftime(nm, 64, "timbient-%Y%m%d-%H%M%S.wav", std::localtime(&tt));
@@ -307,9 +325,13 @@ int main(int argc, char** argv) {
     { std::vector<DialogResult> rs; { std::lock_guard<std::mutex> l(dlgMx); rs.swap(dlgResults); }
       for (auto& r : rs) {
         if (r.target) { UiMod* u = ui.byId(r.target); if (!u) continue; std::string err;   // a sound for a Sample or Grain Looper
+          int slot = r.slot; if (slot < 0) { for (int k = 0; k < UiMod::SLOTS; k++) if (u->snd[k].id.empty()) { slot = k; break; } if (slot < 0) { ui.status("ALL 8 PLACES ARE FULL: TAP A NUMBER TO REPLACE ONE", 5); continue; } }
           AudioBuf* b = decodeAudio(r.path, u->m->def->type == "sample" ? 240 : 60, err); if (!b) { ui.status(err, 5); continue; }
           if (u->m->def->type == "sample") { float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f) for (auto& v : b->d) v *= 0.9f / mx; }   // quiet recordings come in at full level
-          const int secs = (int)std::lround(b->dur()); giveSound(u, b, true); ui.status("LOADED " + std::to_string(secs) + "S"); continue; }
+          std::string nm = r.path.substr(r.path.find_last_of("/\\") + 1); for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch);
+          const int rn = noteInName(r.path); u->snd[slot].root = rn >= 0 ? (float)rn : 60.f; u->shown = slot;   // MULTI: the ROOT note from the file name, if it names one
+          const int secs = (int)std::lround(b->dur()); giveSound(u, b, true, slot, nm);
+          ui.status("LOADED " + std::to_string(secs) + "S" + (u->m->def->type == "sample" && u->m->p[1].load() >= 2 ? " INTO PLACE " + std::to_string(slot + 1) + (rn >= 0 ? ", ROOT " + noteName(rn) : "") : "")); continue; }
         if (r.open) { Json f; if (!Json::parse(readFile(r.path), f)) { ui.status("THAT FILE COULD NOT BE READ", 5); continue; }
           if (const Json* pack = f.get("audio")) if (pack->t == Json::OBJ) for (auto& kv : pack->o) {   // a web export with its sounds packed in
             const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
@@ -319,10 +341,10 @@ int main(int argc, char** argv) {
           const Json* data = patchIn(f); if (!data) { ui.status("THAT IS NOT A TIMBIENT SESSION", 5); continue; }
           std::string nm = r.path; const size_t sl = nm.find_last_of("/\\"); if (sl != std::string::npos) nm = nm.substr(sl + 1); loadData(*data, nm); }
         else { Json f = Json::object(); f.set("timbient", Json::string("patch")); f.set("data", serializePatch(ui)); std::string p = r.path; if (p.find('.') == std::string::npos) p += ".json";
-          Json pack = Json::object(); for (auto& up : ui.mods) if (!up->audioId.empty() && !pack.get(up->audioId)) {   // the sounds go with it, as the web version packs them
-            std::string err; AudioBuf* b = decodeAudio(audioDir + up->audioId + ".wav", 600, err); if (!b) continue;
+          Json pack = Json::object(); for (auto& up : ui.mods) for (auto& sd : up->snd) if (!sd.id.empty() && !pack.get(sd.id)) {   // the sounds go with it, as the web version packs them
+            std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (!b) continue;
             std::vector<unsigned char> raw(b->d.size() * 2); for (size_t i = 0; i < b->d.size(); i++) { const int16_t v = (int16_t)std::lround(clampf(b->d[i], -1, 1) * 32767); raw[i * 2] = (unsigned char)v; raw[i * 2 + 1] = (unsigned char)(v >> 8); }
-            Json a = Json::object(); a.set("sr", Json::number(b->sr)); a.set("b64", Json::string(b64(raw.data(), raw.size()))); pack.set(up->audioId, a); delete b; }
+            Json a = Json::object(); a.set("sr", Json::number(b->sr)); a.set("b64", Json::string(b64(raw.data(), raw.size()))); pack.set(sd.id, a); delete b; }
           if (!pack.o.empty()) f.set("audio", pack);
           ui.status(writeFile(p, f.dump()) ? "SAVED TO FILE" : "COULD NOT SAVE THE FILE", 4); }
       } }
@@ -334,7 +356,7 @@ int main(int argc, char** argv) {
         for (auto& up : ui.mods) if (up->m->def->type == "midiout" && up->m->devSlot.load() < 0) { if (!listed) { names = midi.outputs(); listed = true; }
           const std::string want = up->dev.empty() ? (names.empty() ? std::string() : names[0]) : up->dev; if (!want.empty()) up->m->devSlot.store(midi.openOutput(want)); } } }
     // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
-    { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->peaks.empty() && up->audioId.empty()) catchSound(up.get(), true); } }
+    { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->snd[0].peaks.empty() && up->snd[0].id.empty()) catchSound(up.get(), true); } }
 
     if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
     // draw only when it's time: never while the window can't be seen; at the chosen rate when idle; at full speed while you work

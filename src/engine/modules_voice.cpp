@@ -55,14 +55,14 @@ static Reg rTone(new ModuleDef{"tone", "TONE", Cat::Voice, {{"TRIG", PType::Trig
 // ---------------- PAD: detuned saws across the stereo field, a slowly moving filter, a breath of air ----------------
 struct PadV : VoiceBase { Osc o[7]; float pan[7], ratio[7], gl[7], gr[7]; Biquad lp, bp; float lph = 0, lrate = 0.1f; int n = 5; int cnt = 0; };
 struct Pad : Poly<PadV> {
-  enum { PITCHK, VOICES, DETUNE, CUT, MOTION, AIR, ATK, DEC, SUS, HOLD, REL, WIDTH, LEVELK };
+  enum { PITCHK, VOICES, DETUNE, CUT, RES, MOTION, AIR, ATK, DEC, SUS, HOLD, REL, WIDTH, LEVELK };
   Pad() { gainScale = 0.18f; selfPan = true; }
   void start(PadV& x) override {
     x.n = (int)e[VOICES]; for (int k = 0; k < x.n; k++) { x.o[k].ph = rng.uni(); x.pan[k] = x.n > 1 ? (float)k / (x.n - 1) * 2 - 1 : 0; x.ratio[k] = std::pow(2.f, x.pan[k] * e[DETUNE] * 30 / 1200.f); panGains(x.pan[k] * e[WIDTH], x.gl[k], x.gr[k]); }
     x.lph = rng.uni(); x.lrate = rng.range(0.07f, 0.2f); x.lp.reset(); x.bp.reset(); x.bp.set(Biquad::BP, std::min(12000.f, x.f * 6), 1.5f, sr); x.cnt = 0;
   }
   void voice(PadV& x, float& l, float& r) override {
-    if ((x.cnt++ & 31) == 0) { x.lph += 32 * x.lrate / sr; const float c = e[CUT] + std::sin(TAU * x.lph) * e[CUT] * e[MOTION] * 0.7f; x.lp.set(Biquad::LP, std::max(40.f, c), 0.7f, sr); }
+    if ((x.cnt++ & 31) == 0) { x.lph += 32 * x.lrate / sr; const float c = e[CUT] + std::sin(TAU * x.lph) * e[CUT] * e[MOTION] * 0.7f; x.lp.set(Biquad::LP, std::max(40.f, c), 0.7f + e[RES] * e[RES] * 9, sr); }   // RES: none at 0 (as before), a singing peak at full
     float L = 0, R = 0; const float sc = 1.f / std::sqrt((float)x.n);
     for (int k = 0; k < x.n; k++) { const float s = x.o[k].tick(Osc::SAW, x.f * x.ratio[k], sr) * sc; L += s * x.gl[k]; R += s * x.gr[k]; }
     L = x.lp.run(L, 0); R = x.lp.run(R, 1);
@@ -70,7 +70,7 @@ struct Pad : Poly<PadV> {
     l = L; r = R;
   }
 };
-static std::vector<ParamDef> padParams() { std::vector<ParamDef> p = {PITCH(), ST("voices", "VOICES", 2, 7, 5), pct("detune", "DETUNE", 0.35f), prHz("cut", "CUTOFF", 100, 10000, 1400), pct("motion", "MOTION", 0.4f), pct("air", "AIR", 0.2f)};
+static std::vector<ParamDef> padParams() { std::vector<ParamDef> p = {PITCH(), ST("voices", "VOICES", 2, 7, 5), pct("detune", "DETUNE", 0.35f), prHz("cut", "CUTOFF", 100, 10000, 1400), pct("res", "RES", 0), pct("motion", "MOTION", 0.4f), pct("air", "AIR", 0.2f)};
   for (auto& q : envP(1.6f, 1, 0.8f, 3, 3.5f)) p.push_back(q); p.push_back(pct("width", "WIDTH", 0.8f)); p.push_back(LEVEL()); return p; }
 static Reg rPad(new ModuleDef{"pad", "PAD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, padParams(), 0, 58, false, [] { return new Pad(); }});
 

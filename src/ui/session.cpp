@@ -40,7 +40,11 @@ Json serializePatch(Ui& ui) {
       Json sq = Json::array(); for (int i = 0; i <= last; i++) { const float nt = u.m->seq[i * 2].load(); if (nt < 0) { sq.push(Json()); continue; }
         Json st = Json::array(); st.push(Json::number(nt)); st.push(Json::number(u.m->seq[i * 2 + 1].load())); sq.push(st); }
       p.set("seq", sq); }
-    if (!u.audioId.empty()) p.set("audio", Json::string(u.audioId));
+    if (!u.snd[0].id.empty()) p.set("audio", Json::string(u.snd[0].id));   // the first sound, as the web version keeps it
+    { int last = -1; for (int k = 0; k < UiMod::SLOTS; k++) if (!u.snd[k].id.empty()) last = k;
+      if (last > 0 || (last == 0 && (u.snd[0].root != 60 || !u.snd[0].name.empty()))) { Json a = Json::array();   // every sound: [id, root, name] or null
+        for (int k = 0; k <= last; k++) { if (u.snd[k].id.empty()) { a.push(Json()); continue; } Json e = Json::array(); e.push(Json::string(u.snd[k].id)); e.push(Json::number(u.snd[k].root)); e.push(Json::string(u.snd[k].name)); a.push(e); }
+        p.set("sounds", a); } }
     if (!u.dev.empty()) p.set("dev", Json::string(u.dev));
     m.set("p", p);
     m.set("mute", Json::boolean(u.m->mute.load())); m.set("solo", Json::boolean(u.m->solo.load())); m.set("fold", Json::boolean(u.fold)); mods.push(m); }
@@ -86,8 +90,15 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (const Json* p = m.get("p")) if (const Json* sq = p->get("seq")) if (sq->t == Json::ARR && u->m->seq)
       for (size_t i = 0; i < sq->a.size() && i < (size_t)Module::SEQ_MAX; i++) { const Json& st = sq->a[i];
         if (st.t == Json::ARR && st.a.size() >= 1 && st.a[0].t == Json::NUM) { u->m->seq[i * 2].store((float)st.a[0].n); u->m->seq[i * 2 + 1].store(st.a.size() > 1 && st.a[1].t == Json::NUM ? (float)st.a[1].n : 0.8f); } }
-    if (const Json* p = m.get("p")) { const std::string aid = p->str("audio"); if (!aid.empty()) u->audioId = aid; u->dev = p->str("dev"); }
-    u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold");   // only voices solo now
+    if (const Json* p = m.get("p")) { const std::string aid = p->str("audio"); if (!aid.empty()) u->snd[0].id = aid;
+      if (const Json* a = p->get("sounds")) if (a->t == Json::ARR) for (size_t k = 0; k < a->a.size() && k < (size_t)UiMod::SLOTS; k++) { const Json& e = a->a[k];
+        if (e.t == Json::ARR && e.a.size() >= 1 && e.a[0].t == Json::STR) { u->snd[k].id = e.a[0].s; if (e.a.size() > 1 && e.a[1].t == Json::NUM) u->snd[k].root = (float)e.a[1].n; if (e.a.size() > 2 && e.a[2].t == Json::STR) u->snd[k].name = e.a[2].s;
+          u->m->roots[k].store(u->snd[k].root); } } u->dev = p->str("dev"); }
+    bool stopped = false;
+    if (const Json* p = m.get("p")) {   // older sessions: a RUN setting became the footer's ON/OFF; Orbits gained RANGE
+      if ((ty == "clock" || ty == "tracker") && p->get("run") && p->get("run")->t == Json::NUM && p->get("run")->n < 0.5) stopped = true;
+      if (ty == "orbits" && !p->get("range") && p->get("rings")) u->m->p[def->paramIndex("range")].store((float)p->num("rings", 5)); }
+    u->m->mute.store(m.truthy("mute") || stopped); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold");   // only voices solo now
     idmap[(int)m.num("id")] = u; maxId = std::max(maxId, (int)m.num("id"));
   }
   if (!findDef("out") || std::none_of(ui.mods.begin(), ui.mods.end(), [](const std::unique_ptr<UiMod>& u) { return u->m->def->type == "out"; })) ui.add("out", 340, 60);

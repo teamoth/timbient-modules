@@ -15,8 +15,11 @@ struct UiMod {
   float hist[48] = {0}; int hi = 0; float ht = 0;   // recent values, for drawing the LFO's line
   float lit[64] = {0};                               // Note Grid pads that were just pressed
   float scroll = 0, hold = 0; int seqVer = 0, entered = 0;   // the Tracker: first row on show, a pause in FOLLOW after an edit
-  std::string audioId; std::vector<float> peaks; bool missing = false;   // Sample / Grain Looper: the sound it holds, and its outline
+  // Sample / Grain Looper: the sounds held (Grain Looper uses only the first), each kept as a file named by id
+  struct Snd { std::string id, name; float root = 60; std::vector<float> peaks; bool missing = false; };
+  static constexpr int SLOTS = 8; Snd snd[SLOTS]; int shown = 0;
   std::string dev;                                                       // MIDI OUT: the device chosen (empty: the first one there)
+  std::vector<std::pair<float, float>> dots; int hopSeen = 0;            // Random Hops: recent hops (age, height); Tombola uses dots too
 };
 struct UiCable { int from, fromPort, to, toPort, toParam; PType type; };
 
@@ -73,7 +76,7 @@ public:
 
 private:
   UiMod* hit(int wx, int wy, int& lx, int& ly);
-  struct JackHit { UiMod* u = nullptr; bool out = false; int port = -1; PType type = PType::Audio; int x = 0, y = 0; };
+  struct JackHit { UiMod* u = nullptr; bool out = false; int port = -1; PType type = PType::Audio; int x = 0, y = 0; int param = -1; };   // param: a setting's mod socket
   JackHit jackAt(int wx, int wy, int tol = 3);
   int paramAt(UiMod* u, int ly);
   void drawModule(Canvas& c, UiMod& u, float dt);

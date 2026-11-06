@@ -21,30 +21,31 @@ static float bpmOf(Module* m, int syncK, int bpmK) { return m->e[syncK] > 0.5f ?
 struct Clock : Module {
   double next = -1; long n = 0; double now = 0;
   void render(int a, int b) override {
-    const float run = e[0]; const int div = (int)e[3]; const float ppb = (float)PPB_TABLE[div], per = 60.f / bpmOf(this, 1, 2) / ppb;
+    const float run = mute.load(std::memory_order_relaxed) ? 0.f : 1.f;   // the footer's ON/OFF starts and stops it
+    const int div = (int)e[2]; const float ppb = (float)PPB_TABLE[div], per = 60.f / bpmOf(this, 0, 1) / ppb;
     for (int i = a; i < b; i++) {
       now = t + (i) / sr;
       if (run < 0.5f) { next = -1; continue; }
       if (next < 0 || now - next > 1) next = now;
       while (now >= next) {
         eng->pos = i;
-        Event ev; ev.note = note(4, 0); ev.vel = e[5]; ev.period = per; ev.ppb = ppb; emit(0, ev);
-        if (n % (long)(ppb * 4) == 0) { Event bar; bar.note = note(3, 0); bar.vel = e[5]; bar.period = per * ppb * 4; bar.ppb = 0.25f; emit(1, bar); }
-        next += per * (1 + (n % 2 == 0 ? 1 : -1) * e[4] * 0.5f); n++;
+        Event ev; ev.note = note(4, 0); ev.vel = e[4]; ev.period = per; ev.ppb = ppb; emit(0, ev);
+        if (n % (long)(ppb * 4) == 0) { Event bar; bar.note = note(3, 0); bar.vel = e[4]; bar.period = per * ppb * 4; bar.ppb = 0.25f; emit(1, bar); }
+        next += per * (1 + (n % 2 == 0 ? 1 : -1) * e[3] * 0.5f); n++;
       }
     }
     disp[0].store((float)((n - 1) / (long)ppb % 4)); disp[1].store(run);
   }
 };
 static Reg rClock(new ModuleDef{"clock", "CLOCK", Cat::Trig, {}, {{"PULSE", PType::Trig}, {"BAR", PType::Trig}},
-  {playBtn(OP("run", "RUN", {"STOP", "RUN"}, 1)), tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), only(fmt(ST("bpm", "BPM", 20, 240, 72), [](float v) { return std::to_string((int)v); }), "own"),
-   OP("div", "PULSE", {"1/4", "1/8", "1/16", "1/8T"}, 1), pct("swing", "SWING", 0), pct("vel", "VELOCITY", 1)}, 5, 58, false, [] { return new Clock(); }});
+  {tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), only(fmt(ST("bpm", "BPM", 20, 240, 72), [](float v) { return std::to_string((int)v); }), "own"),
+   OP("div", "STEP", {"1/4", "1/8", "1/16", "1/8T"}, 1), pct("swing", "SWING", 0), pct("vel", "VELOCITY", 1)}, 5, 58, false, [] { return new Clock(); }});
 
 // ---------------- CLUMP SEQ ----------------
 struct Clump : Module {
   struct Step { float r, r2, f, fl, pos; int o; };
   Step st[16]; int nsteps = 0, total = 1, unit = 0; float ph = 0; ClockIn ck;
-  enum { VEL, CHANCE, STEPS, CLUMP, SPEED, DRIFT, RANGE, OCT, MUTATE };
+  enum { VEL, CHANCE, STEPS, CLUMP, SPEED, DRIFT, MUTATE, RANGE, OCT };
   void prepare() override { for (auto& s : st) { s.r = rng.uni(); s.r2 = rng.uni(); s.f = rng.uni(); s.fl = 0; } }
   void layout() {
     nsteps = (int)e[STEPS]; int o = 0;
@@ -74,12 +75,12 @@ struct Clump : Module {
 static Reg rClump(new ModuleDef{"clump", "CLUMP SEQ", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("steps", "STEPS", 2, 16, 8), pct("clump", "CLUMP", 0.6f),
    only(fmt(prExp("speed", "SPEED", 0.2f, 8, 1.6f), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f/S", v); return std::string(b); }), "free"),
-   only(pctX("drift", "DRIFT", 1.6f, 0.25f), "free"), ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 4), pctX("mutate", "MUTATE", 3, 0.2f)}, 14, 58, false, [] { return new Clump(); }});
+   only(pctX("drift", "DRIFT", 1.6f, 0.25f), "free"), pctX("mutate", "MUTATE", 3, 0.2f), ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 4)}, 14, 58, false, [] { return new Clump(); }});
 
 // ---------------- ORBITS ----------------
 struct Orbits : Module {
   double ang[8]; float fl[8]; int n = 0; ClockIn ck;   // angles in double, kept within one turn: a float angle that keeps growing loses its small steps and the rings stall
-  enum { VEL, CHANCE, RINGS, SPEED, PHASE, HITS, OCT };
+  enum { VEL, CHANCE, RINGS, SPEED, PHASE, HITS, RANGE, OCT };
   void prepare() override { for (int i = 0; i < 8; i++) { ang[i] = rng.uni() * 6.283185307179586; fl[i] = 0; } }
   void blockStart(int nn) override { clockedIn.store(patched(0)); for (int i = 0; i < 8; i++) fl[i] = std::max(0.f, fl[i] - nn / sr); }
   void trig(int port, const Event& ev) override { if (port == 0) ck.tick(t + eng->pos / sr, ev); }
@@ -89,21 +90,23 @@ struct Orbits : Module {
     const double step = 6.283185307179586 / e[HITS];
     for (int i = a; i < b; i++) for (int r = 0; r < n; r++) {
       const double w = base * (1 + e[PHASE] * r * 0.13f) / (1 + r * 0.12f) * (r & 1 ? -1 : 1), pv = ang[r]; ang[r] += w / sr;
-      if (std::floor(pv / step) != std::floor(ang[r] / step)) { fl[r] = 0.15f; eng->pos = i; Event ev; ev.note = note((int)e[OCT], n - 1 - r); ev.vel = e[VEL]; emit(0, ev); }
+      if (std::floor(pv / step) != std::floor(ang[r] / step)) { fl[r] = 0.15f; eng->pos = i; Event ev; ev.note = note((int)e[OCT], n > 1 ? (int)std::lround((n - 1 - r) * (e[RANGE] - 1) / (n - 1)) : 0); /* the rings share out RANGE scale notes */ ev.vel = e[VEL]; emit(0, ev); }
       if (ang[r] >= 6.283185307179586) ang[r] -= 6.283185307179586; else if (ang[r] < 0) ang[r] += 6.283185307179586;   // a whole turn is a whole number of HITS steps, so crossings are unchanged
     }
     disp[0].store((float)n); for (int r = 0; r < 8; r++) { disp[1 + r].store((float)ang[r]); disp[9 + r].store(fl[r]); }
   }
 };
 static Reg rOrbits(new ModuleDef{"orbits", "ORBITS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), OCTP("oct", -1, 7, 6)},
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), ST("range", "RANGE", 1, 14, 5), OCTP("oct", -1, 7, 6)},
   26, 58, false, [] { return new Orbits(); }});
 
 // ---------------- RANDOM HOPS ----------------
 struct Hops : Module {
   double next = 0.5; double q[16]; int nq = 0; ClockIn ck;
   enum { VEL, CHANCE, RATE, CLUSTER, SPREAD, OCT };
-  void fire() { Event ev; ev.note = note((int)e[OCT], (int)(rng.uni() * e[SPREAD])); ev.vel = rng.range(0.5f, 1) * e[VEL]; emit(0, ev); }
+  int fired = 0;
+  void fire() { const int st = (int)(rng.uni() * e[SPREAD]); Event ev; ev.note = note((int)e[OCT], st); ev.vel = rng.range(0.5f, 1) * e[VEL]; emit(0, ev);
+    disp[1].store(e[SPREAD] > 1 ? st / (e[SPREAD] - 1) : 0.5f); disp[2].store(ev.vel); disp[0].store((float)++fired); }   // for the display: where the hop landed
   void hop(double now) { fire(); if (rng.uni() < e[CLUSTER]) { const int k = 2 + (int)(rng.uni() * 3); for (int i = 0; i < k && nq < 16; i++) q[nq++] = now + rng.range(0.02f, 0.25f); } }
   void blockStart(int) override { clockedIn.store(patched(0)); }
   void trig(int port, const Event& ev) override { if (port != 0) return; ck.tick(t + eng->pos / sr, ev); if (rng.uni() < clampf(e[RATE] * (ck.cp > 0 ? ck.cp : 0.5f), 0, 1)) hop(t + eng->pos / sr); }
@@ -116,8 +119,8 @@ struct Hops : Module {
   }
 };
 static Reg rHops(new ModuleDef{"hops", "RANDOM HOPS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), fmt(prExp("rate", "RATE", 0.1f, 20, 2), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f/S", v); return std::string(b); }),
-   pct("cluster", "CLUSTER", 0.3f), ST("spread", "SPREAD", 1, 14, 8), OCTP("oct", 1, 8, 6)}, 0, 58, false, [] { return new Hops(); }});
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), fmt(prExp("rate", "SPEED", 0.1f, 20, 2), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f/S", v); return std::string(b); }),
+   pct("cluster", "CLUMP", 0.3f), ST("spread", "RANGE", 1, 14, 8), OCTP("oct", 1, 8, 6)}, 16, 58, false, [] { return new Hops(); }});
 
 // ---------------- NOTE GRID: pads pressed on screen arrive here and go out as notes ----------------
 struct Keys : Module {
@@ -149,25 +152,28 @@ static Reg rLfo(new ModuleDef{"lfo", "LFO", Cat::Mod, {{"CLOCK", PType::Trig}}, 
    OP("sync", "SYNC", {"1/4 BEAT", "1/2 BEAT", "1 BEAT", "2 BEATS", "4 BEATS", "8 BEATS", "16 BEATS", "32 BEATS"}, 4),   // drawn like the other settings (it is used once a clock is patched in)
    pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 0)}, 7, 58, false, [] { return new Lfo(); }});
 
-// ---------------- OUTPUT: crossfade A/B, level, murk, to the master ----------------
+// ---------------- OUTPUT: crossfade A/B, LOW / MID / HIGH EQ, level, to the master ----------------
 struct Out : Module {
-  Biquad lp; float gA = 1, gB = 0, lev = 0.85f, peak = 0;
-  enum { REC, AGAIN, XF, LEVEL_, MURK };
+  Biquad lo, mid, hi; float gA = 1, gB = 0, lev = 0.85f, peak = 0, sig[3] = {99, 99, 99};
+  enum { REC, AGAIN, XF, LEVEL_, LOW, MID, HIGH };
   void render(int a, int b) override {
     const float x = clampf(e[XF], 0, 1), ta = std::cos(x * PI / 2), tb = std::sin(x * PI / 2), k = 1 - std::exp(-1.f / (0.012f * sr));
-    const float mk = e[MURK]; if (mk < 19000) lp.set(Biquad::LP, mk, 0.4f, sr);
+    if (e[LOW] != sig[0] || e[MID] != sig[1] || e[HIGH] != sig[2]) { sig[0] = e[LOW]; sig[1] = e[MID]; sig[2] = e[HIGH];   // two gentle shelves and a broad middle
+      lo.setShelf(false, 200, e[LOW], sr); mid.set(Biquad::PEAK, 1000, 0.6f, sr, e[MID]); hi.setShelf(true, 4000, e[HIGH], sr); }
+    const bool flat = std::fabs(e[LOW]) < 0.05f && std::fabs(e[MID]) < 0.05f && std::fabs(e[HIGH]) < 0.05f;
     for (int i = a; i < b; i++) {
       gA += (ta - gA) * k; gB += (tb - gB) * k; lev += (e[LEVEL_] - lev) * k;
       for (int ch = 0; ch < 2; ch++) {
         float v = in[0][ch][i] * gA + in[1][ch][i] * gB;
-        if (mk < 19000) v = lp.run(v, ch);
+        if (!flat) v = hi.run(mid.run(lo.run(v, ch), ch), ch);
         v = sane(v) * lev; (ch ? eng->masterR : eng->masterL)[i] += v; peak = std::max(peak * 0.99995f, std::fabs(v));
       }
     }
     disp[0].store(peak);
   }
 };
+static ParamDef eqP(const char* k, const char* l) { auto p = pr(k, l, -12, 12, 0); p.fmt = [](float v) { char b[16]; std::snprintf(b, 16, "%+.1fDB", v); return std::string(std::fabs(v) < 0.05f ? "0DB" : b); }; return p; }
 static Reg rOut(new ModuleDef{"out", "OUTPUT", Cat::Out, {{"A", PType::Audio}, {"B", PType::Audio}}, {},
-  {ACT("rec", "RECORD"), ACT("again", "SAVE AGAIN"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), prHz("murk", "MURK", 300, 20000, 7000)}, 21, 58, true, [] { return new Out(); }});
+  {ACT("rec", "RECORD"), ACT("again", "SAVE AGAIN"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), eqP("low", "LOW"), eqP("mid", "MID"), eqP("high", "HIGH")}, 21, 58, true, [] { return new Out(); }});
 
 }  // namespace tb
