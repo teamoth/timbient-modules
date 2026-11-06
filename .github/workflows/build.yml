@@ -35,23 +35,31 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release --parallel
+      - name: "Test: what each MI voice costs, and that all modules make clean sound"
+        if: matrix.name == 'linux'
+        run: |
+          cmake -B build-tests -DCMAKE_BUILD_TYPE=Release -DTIMBIENT_APP=OFF -DTIMBIENT_TESTS=ON
+          cmake --build build-tests --parallel --target timbient_micost timbient_allmods
+          ./build-tests/timbient_micost
+          ./build-tests/timbient_allmods
       - name: Package (Mac)
         if: matrix.name == 'mac'
         run: |
           codesign --force --deep --sign - "build/Timbient Modules.app"
-          cp README.md build/
-          cd build && ditto -c -k --keepParent "Timbient Modules.app" ../Timbient-Modules-Mac.zip
+          mkdir -p pkg && cp -R "build/Timbient Modules.app" pkg/ && cp CREDITS.md pkg/
+          ditto -c -k pkg Timbient-Modules-Mac.zip
       - name: Package (Windows)
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "pkg/Timbient Modules" | Out-Null
           Copy-Item "build/Release/Timbient Modules.exe" "pkg/Timbient Modules/"
+          Copy-Item "CREDITS.md" "pkg/Timbient Modules/"
           Compress-Archive -Path "pkg/Timbient Modules" -DestinationPath Timbient-Modules-Windows.zip
       - name: Package (Linux)
         if: matrix.name == 'linux'
         run: |
-          mkdir -p "pkg/timbient-modules" && cp build/timbient-modules pkg/timbient-modules/
+          mkdir -p "pkg/timbient-modules" && cp build/timbient-modules CREDITS.md pkg/timbient-modules/
           tar -czf Timbient-Modules-Linux.tar.gz -C pkg timbient-modules
       - uses: actions/upload-artifact@v4
         with:

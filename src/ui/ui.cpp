@@ -1,5 +1,6 @@
 // Timbient native: drawing the patch and handling the pointer (see ui.h)
 #include "ui.h"
+#include "../engine_mi/mi_labels.h"
 #include "../engine/params.h"
 #include <cmath>
 #include <cstdio>
@@ -15,7 +16,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "midi", "midiout"}},
-  {"VOICES", {"tone", "pluck", "bell", "grains", "glass", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
+  {"VOICES", {"tone", "pluck", "bell", "mi", "grains", "glass", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
   {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "crush", "mixer"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
@@ -294,9 +295,13 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     int syncI = d->paramIndex("sync"); const bool syncOn = syncI >= 0 && d->params[syncI].tog && u.m->p[syncI].load() > 0.5f;
     bool idle = (q.only == "free" && clocked) || (q.only == "clock" && !clocked) || (q.only == "own" && (syncOn || clocked));
     if (q.only == "esync" && u.m->p[0].load() > 0.5f) idle = true;   // ECHO: TIME is set by the tempo instead
+    if (q.only == "adsr" && u.m->p[6].load() < 0.5f) idle = true;   // MI VOICES: the envelope is only used in ADSR
     if (d->type == "sample") { const int kind = (int)u.m->p[1].load(); const bool once = u.m->p[3].load() > 0.5f;   // settings that don't apply to this kind of sound or way of playing
       idle = idle || (q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once); }
-    c.text(q.label.substr(0, 8), x + 3, ry + 1, active ? 4 : idle ? 21 : 18);
+    std::string lab = q.label;
+    if (d->type == "mi") { const int w3 = q.key == "harm" ? 0 : q.key == "timb" ? 1 : q.key == "morph" ? 2 : -1;   // MI VOICES: each voice names its three main controls
+      if (w3 >= 0) lab = miEngines()[std::max(0, std::min(MI_ENGINES - 1, (int)u.m->p[0].load()))].k[w3]; }
+    c.text(lab.substr(0, 8), x + 3, ry + 1, active ? 4 : idle ? 21 : 18);
     bool modded = false; for (auto& cb : cables) if (cb.type == PType::Mod && cb.to == u.m->id && cb.toParam == (int)j) modded = true;
     if (modulatable(q)) drawJack(c, x - 2, ry + 3, PType::Mod, modded, false);   // its mod socket: filled when something moves it
     if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, 6); c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }

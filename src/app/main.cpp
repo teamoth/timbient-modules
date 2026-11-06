@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.7.1";
+static const char* VERSION = "0.8.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -239,8 +239,8 @@ int main(int argc, char** argv) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", "THEME", std::string("VERSION ") + VERSION};
-    d.title = 6;
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", "THEME", "ABOUT AND CREDITS"};
+    d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
       if (i == 0) { for (int k = 0; k < 12; k++) q.items.push_back(std::string("KEY ") + NOTE_NAMES[k]); q.cur = engine.key.root.load();
@@ -254,6 +254,8 @@ int main(int argc, char** argv) {
       else if (i == 4) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
       else if (i == 5) { openTheme(x0); return; }
+      else if (i == 6) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+          "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);
     };

@@ -33,3 +33,9 @@ SDL3 and miniaudio are downloaded automatically during the build.
 - `src/ui`: the pixel interface
 - `src/app`: the window (SDL3) and the sound device (miniaudio)
 - `tests`: offline tests that render patches to WAV files and the interface to images
+
+## Credits
+
+The MI VOICES module uses the original open-source code of Mutable Instruments' Plaits, by Emilie Gillet (MIT licence).
+Timbient Modules also uses SDL 3, miniaudio and RtMidi. Timbient Modules is not made by or affiliated with Mutable Instruments.
+The full notices are in [CREDITS.md](CREDITS.md), which also comes inside each download.
