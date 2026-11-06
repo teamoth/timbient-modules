@@ -17,7 +17,7 @@ struct Filter : Module {
   }
 };
 static Reg rFilter(new ModuleDef{"filter", "FILTER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {OP("type", "TYPE", {"LOWPASS", "HIGHPASS", "BANDPASS"}, 0), prHz("cut", "CUTOFF", 40, 16000, 1800), pct("res", "RES", 0.2f), pct("mix", "MIX", 1)}, 0, 58, false, [] { return new Filter(); }});
+  {OP("type", "TYPE", {"LOWPASS", "HIGHPASS", "BANDPASS"}, 0), prHz("cut", "CUTOFF", 40, 16000, 1800), pct("res", "RES", 0.2f), pct("mix", "MIX", 1)}, 0, 68, false, [] { return new Filter(); }});
 
 // ---------------- ECHO: a ping-pong pair with a darkening feedback loop ----------------
 struct Echo : Module {
@@ -41,7 +41,7 @@ struct Echo : Module {
   }
 };
 static Reg rEcho(new ModuleDef{"echo", "ECHO", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {OP("sync", "TEMPO", {"FREE", "1/16", "1/8T", "1/8", "1/8 DOT", "1/4", "1/4 DOT", "1/2", "1 BAR"}, 0), only(T("time", "TIME", 0.05f, 4, 0.71f), "esync"), pct("spread", "WIDTH", 0.6f), pr("fb", "FEEDBACK", 0, 0.95f, 0.5f), prHz("tone", "TONE", 300, 8000, 1600), pct("mix", "MIX", 0.4f)}, 0, 58, false, [] { return new Echo(); }});
+  {OP("sync", "TEMPO", {"FREE", "1/16", "1/8T", "1/8", "1/8 DOT", "1/4", "1/4 DOT", "1/2", "1 BAR"}, 0), only(T("time", "TIME", 0.05f, 4, 0.71f), "esync"), pct("spread", "WIDTH", 0.6f), pr("fb", "FEEDBACK", 0, 0.95f, 0.5f), prHz("tone", "TONE", 300, 8000, 1600), pct("mix", "MIX", 0.4f)}, 0, 68, false, [] { return new Echo(); }});
 
 // ---------------- REVERB: eight damped feedback combs per side and four diffusers, any length for the same cost ----------------
 struct Reverb : Module {
@@ -75,7 +75,7 @@ struct Reverb : Module {
 };
 static Reg rReverb(new ModuleDef{"reverb", "REVERB", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {fmt(prExp("size", "SIZE", 1, 30, 5), [](float v) { char b[16]; std::snprintf(b, 16, "%.1fS", v); return std::string(b); }),
-   fmt(pr("pre", "PRE-DELAY", 0, 0.25f, 0), [](float v) { return std::to_string((int)std::lround(v * 1000)) + "MS"; }), pct("damp", "DAMP", 0.4f), pct("mix", "MIX", 0.5f)}, 0, 58, false, [] { return new Reverb(); }});
+   fmt(pr("pre", "PRE-DELAY", 0, 0.25f, 0), [](float v) { return std::to_string((int)std::lround(v * 1000)) + "MS"; }), pct("damp", "DAMP", 0.4f), pct("mix", "MIX", 0.5f)}, 0, 68, false, [] { return new Reverb(); }});
 
 // ---------------- DUCKER: dips on each KEY trigger, then breathes back (CURVE), optionally timed in beats ----------------
 struct Ducker : Module {
@@ -105,7 +105,7 @@ struct Ducker : Module {
 };
 static Reg rDucker(new ModuleDef{"ducker", "DUCKER", Cat::Proc, {{"IN", PType::Audio}, {"KEY", PType::Trig}}, {{"OUT", PType::Audio}},
   {pct("depth", "DEPTH", 0.6f), T("atk", "ATTACK", 0.002f, 2, 0.01f), T("rel", "RELEASE", 0.05f, 12, 0.9f), OP("rbeats", "BEAT REL", {"OFF", "1/2", "1", "2", "3", "4", "8"}, 0),
-   pct("curve", "CURVE", 0), pct("mix", "MIX", 1)}, 10, 58, false, [] { return new Ducker(); }});
+   pct("curve", "CURVE", 0), pct("mix", "MIX", 1)}, 10, 68, false, [] { return new Ducker(); }});
 
 // ---------------- AMP: up to +36 dB, with a soft limiter ----------------
 struct Amp : Module {
@@ -119,7 +119,7 @@ struct Amp : Module {
   }
 };
 static Reg rAmp(new ModuleDef{"amp", "AMP", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::round(v)) + "DB"; }), OP("limit", "LIMIT", {"OFF", "ON"}, 1)}, 5, 58, false, [] { return new Amp(); }});
+  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::round(v)) + "DB"; }), OP("limit", "LIMIT", {"OFF", "ON"}, 1)}, 5, 68, false, [] { return new Amp(); }});
 
 // ---------------- MIXER: four channels, each with level, pan and a send ----------------
 struct Mixer : Module {
@@ -141,6 +141,6 @@ static std::vector<ParamDef> mixerParams() { std::vector<ParamDef> p; for (int k
     ParamDef q = pr("", "", -1, 1, 0); q.key = "p" + n; q.label = "PAN " + n; q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("C"); return std::string(v < 0 ? "L" : "R") + std::to_string((int)std::round(std::fabs(v) * 100)); }; p.push_back(q);
     ParamDef s = pct("", "", 0); s.key = "s" + n; s.label = "SEND " + n; p.push_back(s); } return p; }
 static Reg rMixer(new ModuleDef{"mixer", "MIXER", Cat::Proc, {{"1", PType::Audio}, {"2", PType::Audio}, {"3", PType::Audio}, {"4", PType::Audio}}, {{"OUT", PType::Audio}, {"SEND", PType::Audio}},
-  mixerParams(), 8, 58, false, [] { return new Mixer(); }});
+  mixerParams(), 8, 68, false, [] { return new Mixer(); }});
 
 }  // namespace tb

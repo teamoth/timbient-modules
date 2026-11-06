@@ -30,7 +30,7 @@ struct Vca : Module {
 };
 static Reg rVca(new ModuleDef{"vca", "ENVELOPE VCA", Cat::Proc, {{"IN", PType::Audio}, {"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   {T("atk", "ATTACK", 0.002f, 4, 0.02f), T("dec", "DECAY", 0.01f, 4, 0.3f), pct("sus", "SUSTAIN", 0.6f), T("hold", "HOLD", 0.01f, 8, 0.6f), T("rel", "RELEASE", 0.01f, 8, 1.5f), pct("mix", "MIX", 1)},
-  0, 58, false, [] { return new Vca(); }});
+  0, 68, false, [] { return new Vca(); }});
 
 // ---------------- RESONATOR: eight tuned bands, like striking a string or plate with the incoming sound ----------------
 struct Resonator : Module {
@@ -54,7 +54,7 @@ struct Resonator : Module {
   }
 };
 static Reg rResonator(new ModuleDef{"resonator", "RESONATOR", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {pct("struct", "STRUCT", 0.25f), pct("bright", "BRIGHT", 0.5f), pct("damp", "DAMP", 0.5f), pct("pos", "POSITION", 0.3f), OCTP("oct", 1, 5, 3), pct("mix", "MIX", 0.7f)}, 0, 58, false, [] { return new Resonator(); }});
+  {pct("struct", "STRUCT", 0.25f), pct("bright", "BRIGHT", 0.5f), pct("damp", "DAMP", 0.5f), pct("pos", "POSITION", 0.3f), OCTP("oct", 1, 5, 3), pct("mix", "MIX", 0.7f)}, 0, 68, false, [] { return new Resonator(); }});
 
 // ---------------- PHASER: two chains of allpass filters swept by one LFO; STEREO sweeps the right side the opposite way ----------------
 struct Phaser : Module {
@@ -80,7 +80,7 @@ struct Phaser : Module {
 static Reg rPhaser(new ModuleDef{"phaser", "PHASER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {fmt(prExp("rate", "RATE", 0.02f, 8, 0.25f), [](float v) { char b[16]; std::snprintf(b, 16, v < 1 ? "%.2fHZ" : "%.1fHZ", v); return std::string(b); }), pct("depth", "DEPTH", 0.7f),
    prHz("centre", "CENTRE", 150, 4000, 700), OP("stages", "STAGES", {"2", "4", "6", "8"}, 1), pr("fb", "FEEDBACK", 0, 0.9f, 0.45f), OP("stereo", "STEREO", {"OFF", "ON"}, 1), pct("mix", "MIX", 0.5f)},
-  5, 58, false, [] { return new Phaser(); }});
+  5, 68, false, [] { return new Phaser(); }});
 
 // ---------------- TAPE: wow, flutter, saturation, a darker tone and some hiss ----------------
 struct Tape : Module {
@@ -103,7 +103,7 @@ struct Tape : Module {
 };
 static Reg rTape(new ModuleDef{"tape", "TAPE", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {pct("wow", "WOW", 0.3f), pct("flutter", "FLUTTER", 0.2f), pct("sat", "SATURATE", 0.3f), prHz("tone", "TONE", 800, 16000, 6000), pct("hiss", "HISS", 0.1f), pct("mix", "MIX", 1)},
-  5, 58, false, [] { return new Tape(); }});
+  5, 68, false, [] { return new Tape(); }});
 
 // ---------------- BITCRUSH: fewer bits, a lower sample rate ----------------
 struct Crush : Module {
@@ -117,7 +117,7 @@ struct Crush : Module {
   }
 };
 static Reg rCrush(new ModuleDef{"crush", "BITCRUSH", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {ST("bits", "BITS", 1, 16, 8), prHz("rate", "RESAMPLE", 400, 44100, 11025), pct("mix", "MIX", 1)}, 0, 58, false, [] { return new Crush(); }});
+  {ST("bits", "BITS", 1, 16, 8), prHz("rate", "RESAMPLE", 400, 44100, 11025), pct("mix", "MIX", 1)}, 0, 68, false, [] { return new Crush(); }});
 
 // ---------------- TRIG ENV: each trigger draws a rise and a fall ----------------
 struct TrigEnv : Module {
@@ -133,7 +133,7 @@ struct TrigEnv : Module {
 };
 static Reg rEnv(new ModuleDef{"env", "TRIG ENV", Cat::Mod, {{"TRIG", PType::Trig}}, {{"MOD", PType::Mod}},
   {T("atk", "ATTACK", 0.002f, 8, 0.05f), T("dec", "DECAY", 0.02f, 16, 1.5f), pct("curve", "CURVE", 0.6f), pct("vsens", "VEL SENS", 0.5f), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 1)},
-  7, 58, false, [] { return new TrigEnv(); }});
+  7, 68, false, [] { return new TrigEnv(); }});
 
 // ---------------- RANDOM: a new value every so often (or on each trigger), with a glide between ----------------
 struct RandomMod : Module {
@@ -150,7 +150,7 @@ struct RandomMod : Module {
 };
 static Reg rRand(new ModuleDef{"rand", "RANDOM", Cat::Mod, {{"TRIG", PType::Trig}}, {{"MOD", PType::Mod}},
   {fmt(prExp("rate", "EVERY", 0.05f, 60, 2), [](float v) { return fmtSecs(v); }), T("glide", "GLIDE", 0.001f, 8, 0.05f), pct("chance", "CHANCE", 1), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 0)},
-  7, 58, false, [] { return new RandomMod(); }});
+  7, 68, false, [] { return new RandomMod(); }});
 
 // ---------------- FOLLOWER: how loud the incoming sound is, as a modulation ----------------
 struct Follower : Module {
@@ -165,6 +165,6 @@ struct Follower : Module {
 };
 static Reg rFollow(new ModuleDef{"follow", "FOLLOWER", Cat::Mod, {{"IN", PType::Audio}}, {{"MOD", PType::Mod}},
   {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::lround(v)) + "DB"; }), T("atk", "ATTACK", 0.002f, 2, 0.02f), T("rel", "RELEASE", 0.02f, 8, 0.4f), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 1)},
-  7, 58, false, [] { return new Follower(); }});
+  7, 68, false, [] { return new Follower(); }});
 
 }  // namespace tb

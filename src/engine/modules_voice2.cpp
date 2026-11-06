@@ -25,7 +25,7 @@ struct Glass : Poly<GlassV> {
   }
 };
 static Reg rGlass(new ModuleDef{"glass", "GLASS", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), pr("glide", "BEND", 0, 0.1f, 0.025f), T("decay", "RING", 0.2f, 4, 0.9f)}, ENVD(), 0.4f), 0, 58, false, [] { return new Glass(); }});
+  vp({PITCH(), pr("glide", "BEND", 0, 0.1f, 0.025f), T("decay", "RING", 0.2f, 4, 0.9f)}, ENVD(), 0.4f), 0, 68, false, [] { return new Glass(); }});
 
 // ---------------- NOISE CLICK: a burst of noise through a tuned band ----------------
 struct ClickV : VoiceBase { Biquad bp; float t = 0, d = 0.08f, kd = 0; };
@@ -40,7 +40,7 @@ struct Click : Poly<ClickV> {
   }
 };
 static Reg rClick(new ModuleDef{"click", "NOISE CLICK", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), pr("q", "FOCUS", 1, 30, 12), T("decay", "RING", 0.01f, 0.5f, 0.08f), pr("tune", "BAND", 0.5f, 4, 2)}, ENVD(), 0.4f), 0, 58, false, [] { return new Click(); }});
+  vp({PITCH(), pr("q", "FOCUS", 1, 30, 12), T("decay", "RING", 0.01f, 0.5f, 0.08f), pr("tune", "BAND", 0.5f, 4, 2)}, ENVD(), 0.4f), 0, 68, false, [] { return new Click(); }});
 
 // ---------------- GRAIN CLOUD: a scatter of tiny sine grains around the note ----------------
 struct GrainsV : VoiceBase { static constexpr int G = 12; float at[G], dur[G], fr[G], ph[G], gl[G], gr[G]; int n = 0; float t = 0; };
@@ -60,7 +60,7 @@ struct Grains : Poly<GrainsV> {
   }
 };
 static Reg rGrains(new ModuleDef{"grains", "GRAIN CLOUD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), ST("dens", "DENSITY", 1, 12, 7), T("spread", "SCATTER", 0.02f, 1, 0.18f), T("grain", "GRAIN", 0.005f, 0.12f, 0.03f)}, ENVD(), 0.5f), 0, 58, false, [] { return new Grains(); }});
+  vp({PITCH(), ST("dens", "DENSITY", 1, 12, 7), T("spread", "SCATTER", 0.02f, 1, 0.18f), T("grain", "GRAIN", 0.005f, 0.12f, 0.03f)}, ENVD(), 0.5f), 0, 68, false, [] { return new Grains(); }});
 
 // ---------------- ANALOG: an oscillator and a sub through a resonant lowpass that snaps open on each note ----------------
 struct AnalogV : VoiceBase { Osc o, sub; Biquad lp; float t = 0, top = 1000; int cnt = 0; };
@@ -80,7 +80,7 @@ struct Analog : Poly<AnalogV> {
 };
 static Reg rAnalog(new ModuleDef{"analog", "ANALOG", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   vp({PITCH(), OP("wave", "WAVE", {"SAW", "SQUARE", "TRI"}, 0), pct("sub", "SUB", 0.3f), prHz("cut", "CUTOFF", 60, 12000, 700), pct("res", "RES", 0.3f), pct("fenv", "FILT ENV", 0.5f), T("fdec", "FILT DEC", 0.01f, 6, 0.4f)},
-     envP(0.005f, 0.4f, 0.6f, 0.6f, 0.8f), 0.3f), 0, 58, false, [] { return new Analog(); }});
+     envP(0.005f, 0.4f, 0.6f, 0.6f, 0.8f), 0.3f), 0, 68, false, [] { return new Analog(); }});
 
 // ---------------- FORMANT: a sung vowel, which can glide to another vowel ----------------
 static const float FORMANTS[5][3] = {{730, 1090, 2440}, {530, 1840, 2480}, {270, 2290, 3010}, {570, 840, 2410}, {300, 870, 2240}};   // A E I O U
@@ -105,7 +105,7 @@ struct Formant : Poly<FormantV> {
 static Reg rFormant(new ModuleDef{"formant", "FORMANT", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   vp({PITCH(), fmt(pct("vowel", "VOWEL", 0.2f), [](float v) { return std::string(1, "AEIOU"[std::min(4, (int)std::lround(v * 4))]) + " " + std::to_string((int)std::lround(v * 100)); }),
       fmt(pr("glide", "MOVE TO", -1, 1, 0), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::lround(v * 100)); }),
-      T("gtime", "MOVE TIME", 0.05f, 8, 1.5f), pct("vib", "VIBRATO", 0.3f), pct("breath", "BREATH", 0.15f)}, envP(0.08f, 0.5f, 0.8f, 1.5f, 1.5f), 0.3f), 0, 58, false, [] { return new Formant(); }});
+      T("gtime", "MOVE TIME", 0.05f, 8, 1.5f), pct("vib", "VIBRATO", 0.3f), pct("breath", "BREATH", 0.15f)}, envP(0.08f, 0.5f, 0.8f, 1.5f, 1.5f), 0.3f), 0, 68, false, [] { return new Formant(); }});
 
 // ---------------- BREATH: noise breathing through a narrow resonance at the note, a little pure tone under it ----------------
 struct BreathV : VoiceBase { Biquad b1, b2; float fph = 0, fr = 5, sph = 0, g1 = 0, g2 = 0; bool two = false; };
@@ -128,7 +128,7 @@ struct Breath : Poly<BreathV> {
 };
 static Reg rBreath(new ModuleDef{"breath", "BREATH", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   vp({PITCH(), pct("noise", "NOISE", 0.6f), fmt(prExp("q", "FOCUS", 5, 200, 40), [](float v) { return std::to_string((int)std::lround(v)); }), pct("tone", "SINE", 0.3f), OP("hm", "OVERTONE", {"OFF", "2ND", "3RD"}, 1), pct("flutter", "FLUTTER", 0.2f)},
-     envP(0.25f, 0.6f, 0.7f, 1.2f, 1.8f), 0.4f), 0, 58, false, [] { return new Breath(); }});
+     envP(0.25f, 0.6f, 0.7f, 1.2f, 1.8f), 0.4f), 0, 68, false, [] { return new Breath(); }});
 
 // ---------------- ADDITIVE: a stack of sine partials; the upper ones fade sooner (TILT DEC) ----------------
 struct AddV : VoiceBase { static constexpr int P = 16; float c[P], s[P], cw[P], sw[P], a[P], lv[P], kd[P], gl[P], gr[P]; int n = 0, cnt = 0; float t = 0; };
@@ -158,7 +158,7 @@ struct Additive : Poly<AddV> {
 };
 static Reg rAdditive(new ModuleDef{"additive", "ADDITIVE", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   vp({PITCH(), ST("parts", "PARTIALS", 2, 16, 10), pct("bright", "BRIGHT", 0.5f), pct("even", "EVEN", 0.7f), pct("stretch", "STRETCH", 0), pct("decay", "TILT DEC", 0.4f), pct("shimmer", "SHIMMER", 0.2f)},
-     envP(0.01f, 0.5f, 0.7f, 1.5f, 2), 0.4f), 0, 58, false, [] { return new Additive(); }});
+     envP(0.01f, 0.5f, 0.7f, 1.5f, 2), 0.4f), 0, 68, false, [] { return new Additive(); }});
 
 // ---------------- WAVEFOLD: a sine pushed into a folding curve; FOLD DEC lets it relax back towards a sine ----------------
 struct FoldV : VoiceBase { float ph = 0, t = 0, drive = 0.12f, pk = 0.5f; Biquad lp, hp; float prev = 0; };
@@ -180,6 +180,6 @@ struct Fold : Poly<FoldV> {
 };
 static Reg rFold(new ModuleDef{"fold", "WAVEFOLD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   vp({PITCH(), pct("fold", "FOLD", 0.5f), T("fdec", "FOLD DEC", 0.01f, 6, 0.5f), pct("fsus", "FOLD SUS", 0.2f), pct("sym", "SYMMETRY", 0), prHz("cut", "SOFTEN", 500, 16000, 6000)},
-     envP(0.003f, 0.4f, 0.6f, 0.8f, 1.2f), 0.3f), 0, 58, false, [] { return new Fold(); }});
+     envP(0.003f, 0.4f, 0.6f, 0.8f, 1.2f), 0.3f), 0, 68, false, [] { return new Fold(); }});
 
 }  // namespace tb

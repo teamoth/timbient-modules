@@ -62,6 +62,6 @@ static Reg rMi(new ModuleDef{"mi", "MI VOICES", Cat::Voice, {{"TRIG", PType::Tri
       pct("decay", "LPG DEC", 0.5f), pct("colour", "COLOUR", 0.5f), OP("env", "ENVELOPE", {"NATURAL", "ADSR"}, 0), PITCH()};
     for (auto& q : envP(0.01f, 0.3f, 0.6f, 1, 1.5f)) { q.only = "adsr"; p.push_back(q); }
     p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.4f)); p.push_back(LEVEL()); return p; }(),
-  0, 76, false, [] { return new MiVoices(); }});
+  0, 86, false, [] { return new MiVoices(); }});
 
 }  // namespace tb

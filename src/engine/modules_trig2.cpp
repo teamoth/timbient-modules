@@ -33,7 +33,7 @@ struct Bursts : Module {
 };
 static Reg rBursts(new ModuleDef{"bursts", "BURSTS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("hits", "HITS", 2, 9, 5), pr("clump", "CLUMP", 0, 0.9f, 0.5f), T("len", "LENGTH", 0.4f, 6, 1.8f), T("rest", "REST", 0.2f, 12, 3), ST("range", "RANGE", 1, 8, 4), OCTP("oct", 1, 7, 6)},
-  7, 58, false, [] { return new Bursts(); }});
+  7, 68, false, [] { return new Bursts(); }});
 
 // ---------------- WALKER: a head that gets pushed along the scale and slides to a stop ----------------
 struct Walker : Module {
@@ -52,7 +52,7 @@ struct Walker : Module {
 };
 static Reg rWalker(new ModuleDef{"walker", "WALKER", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), pct("push", "PUSH", 0.4f), pct("glide", "SLIDE", 0.5f), ST("range", "RANGE", 1, 16, 10), OCTP("oct", 1, 8, 6)},
-  6, 58, false, [] { return new Walker(); }});
+  6, 68, false, [] { return new Walker(); }});
 
 // ---------------- TRIG TOOLS: thin, repeat and transpose whatever passes through ----------------
 struct Tools : Module {
@@ -76,7 +76,7 @@ struct Tools : Module {
 };
 static Reg rTools(new ModuleDef{"tools", "TRIG TOOLS", Cat::Trig, {{"IN", PType::Trig}}, {{"OUT", PType::Trig}},
   {pct("chance", "CHANCE", 1), ST("div", "DIVIDE", 1, 16, 1), ST("rep", "REPEATS", 0, 8, 0), T("gap", "REP GAP", 0.03f, 1, 0.12f), pct("fall", "REP FALL", 0.3f),
-   ST("steps", "SHIFT", -7, 7, 0), ST("oct", "OCTAVE", -3, 3, 0), OP("quant", "QUANTISE", {"OFF", "ON"}, 0)}, 4, 58, false, [] { return new Tools(); }});
+   ST("steps", "SHIFT", -7, 7, 0), ST("oct", "OCTAVE", -3, 3, 0), OP("quant", "QUANTISE", {"OFF", "ON"}, 0)}, 4, 68, false, [] { return new Tools(); }});
 
 // ---------------- TRACKER: notes typed in step by step ----------------
 static const int TRK_DIV[3] = {1, 2, 4};
@@ -120,7 +120,7 @@ static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PT
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float v) { return std::to_string((int)v); }), "own"),
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), ST("estep", "ADVANCE", 0, 8, 1), OP("rec", "RECORD", {"OFF", "ON"}, 1), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL")},
-  85, 58, false, [] { return new Tracker(); }});
+  85, 68, false, [] { return new Tracker(); }});
 
 }  // namespace tb
 
@@ -137,8 +137,9 @@ struct Tombola : Module {
     Ball& q = b[n++]; q.x = rng.range(-0.3f, 0.3f); q.y = rng.range(-0.5f, -0.1f); q.vx = rng.range(-0.6f, 0.6f); q.vy = 0; q.age = 0; q.cool = 0.3f; q.flash = 0; q.deg = deg; q.midi = midi;
   }
   void prepare() override { for (int i = 0; i < 3; i++) addBall((int)(rng.uni() * e[RANGE]), 0); }
-  void trig(int port, const Event& ev) override { if (port == 0) addBall(-1, ev.note); }   // ADD: another sequencer drops balls in, with its notes
-  void action(const std::string& k) override { if (k == "shake") for (int i = 0; i < n; i++) { b[i].vx += rng.range(-2.5f, 2.5f); b[i].vy += rng.range(-3.5f, -1); } }
+  void shake() { for (int i = 0; i < n; i++) { b[i].vx += rng.range(-2.5f, 2.5f); b[i].vy += rng.range(-3.5f, -1); } }
+  void trig(int port, const Event& ev) override { if (port == 0) addBall(-1, ev.note); else if (port == 1) shake(); }   // ADD: another sequencer drops balls in, with its notes. SHAKE: each pulse (a slow clock, say) shakes the drum
+  void action(const std::string& k) override { if (k == "shake") shake(); }
   void render(int a, int bEnd) override {
     const float dt = (bEnd - a) / sr; eng->pos = a;
     const int S = (int)e[SIDES]; const float w = e[SPIN] * TAU, ap = std::cos(PI / S), life = e[DISSOLVE], rest = 0.35f + e[BOUNCE] * 0.6f;
@@ -171,11 +172,11 @@ struct Tombola : Module {
     for (int i = 0; i < n; i++) { disp[3 + i * 4].store(b[i].x); disp[4 + i * 4].store(b[i].y); disp[5 + i * 4].store(life > 0 ? clampf(1 - (b[i].age / life - 0.7f) / 0.3f, 0, 1) : 1); disp[6 + i * 4].store(b[i].flash); }
   }
 };
-static Reg rTombola(new ModuleDef{"tombola", "TOMBOLA", Cat::Trig, {{"ADD", PType::Trig}}, {{"TRIG", PType::Trig}},
+static Reg rTombola(new ModuleDef{"tombola", "TOMBOLA", Cat::Trig, {{"ADD", PType::Trig}, {"SHAKE", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    fmt(pr("spin", "SPIN", -0.5f, 0.5f, 0.08f), [](float v) { if (std::fabs(v) < 0.005f) return std::string("STOPPED"); char t[16]; std::snprintf(t, 16, "%s%.2f REV/S", v < 0 ? "<" : "", std::fabs(v)); return std::string(t); }),
    pct("bounce", "BOUNCE", 0.6f), OP("add", "ADD", {"OFF", "ON"}, 1), T("every", "EVERY", 0.5f, 60, 6),
    fmt(pr("dissolve", "DISSOLVE", 0, 240, 60), [](float v) { return v < 1 ? std::string("OFF") : fmtSecs(v); }), ST("maxb", "BALLS", 1, 12, 6), ST("sides", "SIDES", 3, 8, 6),
-   ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 5), ACT("shake", "SHAKE")}, 40, 58, false, [] { return new Tombola(); }});
+   ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 5), ACT("shake", "SHAKE")}, 40, 68, false, [] { return new Tombola(); }});
 
 }  // namespace tb

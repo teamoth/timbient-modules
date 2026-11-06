@@ -97,7 +97,7 @@ static Reg rSample(new ModuleDef{"sample", "SAMPLE", Cat::Voice, {{"TRIG", PType
    ST("pitch", "PITCH", -24, 24, 0), OP("rev", "PLAY", {"FWD", "BACK", "BOUNCE", "RANDOM"}, 0),
    only(T("atk", "ATTACK", 0.002f, 4, 0.01f), "once"), only(T("rel", "RELEASE", 0.005f, 8, 0.3f), "once"), only(T("fade", "FADE", 0.005f, 4, 0.4f), "loop"),
    only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 80, 20000, 20000), pct("res", "RES", 0), pct("vsens", "VEL SENS", 1), pct("width", "WIDTH", 0), LEVEL()},
-  12, 58, false, [] { return new Sample(); }});
+  12, 68, false, [] { return new Sample(); }});
 
 // ---------------- GRAIN LOOPER: catches the last seconds of its input (or a file) and plays it as a cloud of grains ----------------
 struct Looper : Module {
@@ -146,7 +146,7 @@ struct Looper : Module {
 static Reg rLooper(new ModuleDef{"looper", "GRAIN LOOPER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {ACT("catch", "CATCH"), ACT("load", "LOAD FILE"), ST("len", "LENGTH", 2, 16, 8), pct("pos", "POSITION", 0.5f), pct("crawl", "CRAWL", 0.3f),
    T("size", "SIZE", 0.03f, 2, 0.25f), pctX("dens", "DENSITY", 1.6f, 0.35f), ST("pitch", "PITCH", -24, 24, 0), pctX("scatter", "SCATTER", 2, 0.2f), pct("rev", "REVERSE", 0.2f), pctX("tex", "TEXTURE", 2, 0.4f), pct("mix", "MIX", 1), LEVEL()},
-  12, 58, false, [] { return new Looper(); }});
+  12, 68, false, [] { return new Looper(); }});
 
 // ---------------- STRETCH: paulstretch, a random-phase spectral smear of the last few seconds ----------------
 struct FFT {
@@ -202,6 +202,6 @@ struct Stretch : Module {
   }
 };
 static Reg rStretch(new ModuleDef{"stretch", "STRETCH", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {ST("amt", "STRETCH", 2, 40, 10), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("mix", "MIX", 1)}, 0, 58, false, [] { return new Stretch(); }});
+  {ST("amt", "STRETCH", 2, 40, 10), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("mix", "MIX", 1)}, 0, 68, false, [] { return new Stretch(); }});
 
 }  // namespace tb

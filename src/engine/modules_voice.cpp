@@ -25,7 +25,7 @@ struct Pluck : Poly<PluckV> {
   }
 };
 static std::vector<ParamDef> pluckParams() { std::vector<ParamDef> p = {PITCH(), prExp("tone", "TONE", 0.01f, 0.95f, 0.5f), T("decay", "RING", 0.2f, 5, 1.6f)}; for (auto& q : envP(0.003f, 0.3f, 1, 4, 2)) p.push_back(q); p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.4f)); p.push_back(LEVEL()); return p; }
-static Reg rPluck(new ModuleDef{"pluck", "PLUCK STRING", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, pluckParams(), 0, 58, false, [] { return new Pluck(); }});
+static Reg rPluck(new ModuleDef{"pluck", "PLUCK STRING", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, pluckParams(), 0, 68, false, [] { return new Pluck(); }});
 
 // ---------------- TONE: a clean sine or triangle, with glide, vibrato and an optional detuned twin ----------------
 struct ToneV : VoiceBase { Osc o1, o2; float from = 220, gt = 0, vt = 0, vph = 0; };
@@ -50,7 +50,7 @@ static std::vector<ParamDef> toneParams() { std::vector<ParamDef> p = {PITCH(), 
   fmt(prExp("vrate", "VIB RATE", 0.1f, 9, 4.5f), [](float v) { char b[16]; std::snprintf(b, 16, "%.1fHZ", v); return std::string(b); }),
   fmt(pr("det", "DETUNE", 0, 30, 0), [](float v) { return std::to_string((int)std::round(v)) + "C"; })};
   for (auto& q : envP(0.02f, 0.4f, 0.8f, 1.5f, 2.5f)) p.push_back(q); p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.3f)); p.push_back(LEVEL()); return p; }
-static Reg rTone(new ModuleDef{"tone", "TONE", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, toneParams(), 0, 58, false, [] { return new Tone(); }});
+static Reg rTone(new ModuleDef{"tone", "TONE", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, toneParams(), 0, 68, false, [] { return new Tone(); }});
 
 // ---------------- PAD: detuned saws across the stereo field, a slowly moving filter, a breath of air ----------------
 struct PadV : VoiceBase { Osc o[7]; float pan[7], ratio[7], gl[7], gr[7]; Biquad lp, bp; float lph = 0, lrate = 0.1f, ft = 0; int n = 5; int cnt = 0; };
@@ -73,7 +73,7 @@ struct Pad : Poly<PadV> {
 };
 static std::vector<ParamDef> padParams() { std::vector<ParamDef> p = {PITCH(), ST("voices", "VOICES", 2, 7, 5), pct("detune", "DETUNE", 0.35f), prHz("cut", "CUTOFF", 100, 10000, 1400), pct("res", "RES", 0), pct("fenv", "FILT ENV", 0), T("fdec", "FILT DEC", 0.05f, 10, 1.5f), pct("motion", "MOTION", 0.4f), pct("air", "AIR", 0.2f)};
   for (auto& q : envP(1.6f, 1, 0.8f, 3, 3.5f)) p.push_back(q); p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.8f)); p.push_back(LEVEL()); return p; }
-static Reg rPad(new ModuleDef{"pad", "PAD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, padParams(), 0, 58, false, [] { return new Pad(); }});
+static Reg rPad(new ModuleDef{"pad", "PAD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, padParams(), 0, 68, false, [] { return new Pad(); }});
 
 
 // ---------------- MODAL BELL: four partials, each with its own ring ----------------
@@ -93,6 +93,6 @@ struct Bell : Poly<BellV> {
   }
 };
 static std::vector<ParamDef> bellParams() { std::vector<ParamDef> p = {PITCH(), pct("crack", "CRACK", 0.15f), T("decay", "RING", 0.3f, 4, 1.2f)}; for (auto& q : envP(0.003f, 0.3f, 1, 4, 2)) p.push_back(q); p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.4f)); p.push_back(LEVEL()); return p; }
-static Reg rBell(new ModuleDef{"bell", "MODAL BELL", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, bellParams(), 0, 58, false, [] { return new Bell(); }});
+static Reg rBell(new ModuleDef{"bell", "MODAL BELL", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, bellParams(), 0, 68, false, [] { return new Bell(); }});
 
 }  // namespace tb

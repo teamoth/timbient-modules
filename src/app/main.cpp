@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.8.1";
+static const char* VERSION = "0.9.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -114,7 +114,12 @@ int main(int argc, char** argv) {
   ui.add("out", 300, 30);
 
   bool dirty = false; float saveT = 0;
-  ui.onChange = [&] { dirty = true; saveT = 1.0f; };
+  // UNDO / REDO: the patch as it was after each change (settled for a moment), up to 60 steps back
+  std::vector<std::string> hist; int hpos = -1; bool restoring = false, histDirty = false; float histT = 0;
+  auto snapshot = [&] { std::string sn = serializePatch(ui).dump(); if (hpos >= 0 && hist[hpos] == sn) return;
+    hist.resize(hpos + 1); hist.push_back(sn); if (hist.size() > 60) hist.erase(hist.begin()); hpos = (int)hist.size() - 1; };
+  ui.onChange = [&] { dirty = true; saveT = 1.0f; if (!restoring) { histDirty = true; histT = 0.4f; } };
+  snapshot();   // the empty session is the first step
   // ---- sounds held by Sample and Grain Looper modules: kept as WAV files in the app's folder, named by id ----
   const std::string audioDir = store.dir + "audio/"; SDL_CreateDirectory(audioDir.c_str());
   auto giveSound = [&](UiMod* u, AudioBuf* b, bool keep, int slot = 0, const std::string& name = "") {   // hand a sound to a module (and keep a copy so sessions bring it back)
@@ -141,6 +146,14 @@ int main(int argc, char** argv) {
     const std::string note = loadPatch(ui, data); ui.viewX = 0; ui.viewY = 0; dirty = true; saveT = 0.5f;
     ui.status(note.empty() ? "LOADED " + what : note, note.empty() ? 3 : 8);
     for (auto& up : ui.mods) restoreSound(up.get());
+    histDirty = true; histT = 0.1f;
+  };
+  auto restoreStep = [&](int to) {   // go back (or forward) to a remembered step, keeping the view where it is
+    if (histDirty) { snapshot(); histDirty = false; }
+    if (to < 0 || to >= (int)hist.size() || to == hpos) { ui.status(to < hpos ? "NOTHING TO UNDO" : "NOTHING TO REDO"); return; }
+    const bool back = to < hpos; hpos = to; Json j; if (!Json::parse(hist[hpos], j)) return;
+    const int vx = ui.viewX, vy = ui.viewY; restoring = true; loadPatch(ui, j); for (auto& up : ui.mods) restoreSound(up.get()); restoring = false;
+    ui.viewX = vx; ui.viewY = vy; dirty = true; saveT = 0.5f; ui.status(back ? "UNDONE" : "REDONE", 1.2f);
   };
   // ---- RECORD on the Output: straight to a WAV file in Music / Timbient Modules ----
   std::string recDir; { const char* mu = SDL_GetUserFolder(SDL_FOLDER_MUSIC); recDir = std::string(mu ? mu : store.dir.c_str()) + "Timbient Modules/"; SDL_CreateDirectory(recDir.c_str()); }
@@ -177,7 +190,7 @@ int main(int argc, char** argv) {
     for (auto& s : store.list) d.items.push_back(s.name + "  " + stamp(s.t));
     d.pick = [&, x0](int i) {
       if (i == 0) { Dropdown q; q.x = x0; q.y = 11; q.items = {"CLEAR EVERYTHING?", "YES, START EMPTY", "NO, KEEP IT"}; q.title = 0; q.danger = 1;
-        q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); dirty = true; saveT = 0.3f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
+        q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
       if (i == 1) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) loadData(prev, "YOUR LAST WORK"); else ui.status("NOTHING TO RESTORE"); return; }
       if (i == 2) { ui.askText("NAME THIS SESSION", "SESSION " + std::to_string(store.list.size() + 1), [&](const std::string& n) {
           store.list.push_back({n, (double)std::time(nullptr), serializePatch(ui)}); ui.status(store.save() ? "SAVED " + n : "COULD NOT SAVE"); }); return; }
@@ -263,6 +276,8 @@ int main(int argc, char** argv) {
   };
   ui.bar.push_back({"SESSIONS", openSessions});
   ui.bar.push_back({"SETTINGS", openSettings});
+  ui.bar.push_back({"UNDO", [&](int) { restoreStep(hpos - 1); }});
+  ui.bar.push_back({"REDO", [&](int) { restoreStep(hpos + 1); }});
 
   // ---- the window ----
   win = SDL_CreateWindow("Timbient Modules", 1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
@@ -299,6 +314,8 @@ int main(int argc, char** argv) {
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
           if (ev.key.key == SDLK_F11 || (ev.key.key == SDLK_F && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)))) ui.wantFullscreen = !ui.isFullscreen;
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
+          if (ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) { restoreStep((ev.key.mod & SDL_KMOD_SHIFT) ? hpos + 1 : hpos - 1); break; }   // Cmd/Ctrl+Z, and with Shift to redo
+          if (ev.key.key == SDLK_Y && (ev.key.mod & SDL_KMOD_CTRL)) { restoreStep(hpos + 1); break; }
           if (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS || ev.key.key == SDLK_KP_PLUS) pendingZoom++;
           if (ev.key.key == SDLK_MINUS || ev.key.key == SDLK_KP_MINUS) pendingZoom--;
           if (ev.key.key == SDLK_0 && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) pendingZoom = -zoom;
@@ -361,6 +378,7 @@ int main(int argc, char** argv) {
     { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->snd[0].peaks.empty() && up->snd[0].id.empty()) catchSound(up.get(), true); } }
 
     if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
+    if (histDirty) { histT -= ldt; if (histT <= 0) { snapshot(); histDirty = false; } }
     // draw only when it's time: never while the window can't be seen; at the chosen rate when idle; at full speed while you work
     { const float every = hidden ? 1e9f : (busyT > 0 || held || ui.ask) ? 0.f : 1.f / FPS[fpsIdx], since = (SDL_GetTicksNS() - last) / 1e9f;
       if (since < every) { SDL_WaitEventTimeout(nullptr, (Sint32)std::max(1.f, std::min(100.f, (every - since) * 1000))); continue; } }

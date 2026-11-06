@@ -55,11 +55,11 @@ void Ui::clearPatch() { for (auto& u : mods) eng.remove(u->m->id); mods.clear();
 // a patch in the spirit of your session, so there's something to listen to straight away
 void Ui::demoPatch() {
   auto col = [&](int x, std::vector<std::string> types) { std::vector<UiMod*> v; int y = 16; for (auto& t : types) { UiMod* u = add(t, x, y); v.push_back(u); y += geom(*u).h + 5; } return v; };
-  auto c1 = col(6, {"clump", "orbits", "clock"}), c2 = col(68, {"pluck", "glass"}), c3 = col(130, {"pad", "bell"}), c4 = col(192, {"echo", "filter", "lfo"}), c5 = col(254, {"mixer"}), c6 = col(316, {"reverb", "ducker"}), c7 = col(378, {"out"});
+  auto c1 = col(6, {"clump", "orbits", "clock"}), c2 = col(78, {"pluck", "glass"}), c3 = col(150, {"pad", "bell"}), c4 = col(222, {"echo", "filter", "lfo"}), c5 = col(294, {"mixer"}), c6 = col(366, {"reverb", "ducker"}), c7 = col(438, {"out"});
   UiMod *clump = c1[0], *orb = c1[1], *clk = c1[2], *pl = c2[0], *fm = c2[1], *pad = c3[0], *bell = c3[1], *echo = c4[0], *filt = c4[1], *lfo = c4[2], *mix = c5[0], *verb = c6[0], *duck = c6[1], *out = c7[0];
   set(clump, "oct", 5); set(clump, "mutate", 1); set(clump, "speed", 2.5f); set(pl, "tone", 0.08f); set(pad, "cut", 420); set(verb, "size", 10); set(verb, "mix", 0.5f);
-  set(duck, "depth", 0.9f); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "index", 2.5f); set(fm, "ratio", 3.5f); set(fm, "isus", 0);
-  set(fm, "hold", 0.02f); set(fm, "rel", 0.6f); set(lfo, "rate", 20); set(pad, "air", 0.05f);
+  set(duck, "depth", 0.9f); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "decay", 1.6f);
+  set(lfo, "rate", 20); set(pad, "air", 0.05f);
   connect(clump, "TRIG", pl, "TRIG"); connect(clump, "TRIG", fm, "TRIG"); connect(orb, "TRIG", pad, "TRIG"); connect(orb, "TRIG", bell, "TRIG");
   connect(pl, "OUT", echo, "IN"); connect(fm, "OUT", echo, "IN"); connect(echo, "OUT", mix, "1"); connect(pad, "OUT", filt, "IN"); connect(filt, "OUT", mix, "2"); connect(bell, "OUT", mix, "3");
   connect(mix, "OUT", verb, "IN"); connect(verb, "OUT", duck, "IN"); connect(duck, "OUT", out, "A"); connect(clk, "BAR", duck, "KEY");
@@ -139,11 +139,10 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int i = 0; i < w; i += 2) c.px(x + i, base + 1, 18);
     const int n = (int)D(1); for (int k = 0; k < n && k < 16; k++) { const int sx = x + (int)std::lround(D(2 + k) * (w - 3)), h = 2 + (int)std::lround(D(18 + k) * (vh - 6)); c.rect(sx, base + 1 - h, 3, h, D(34 + k) > 0 ? 4 : 24); }
     const int hx = x + (int)std::lround(D(0) * (w - 1)); for (int j = 0; j < vh - 1; j++) if (j % 2 == 0 || j > vh - 5) c.px(hx, y + j, 17);
-  } else if (ty == "orbits") {   // points of light going round, each with a fading trail behind it
+  } else if (ty == "orbits") {   // points of light going round (the rings themselves aren't drawn)
     const float cx = x + w / 2.f, cy = y + vh / 2.f - 0.5f; const int n = std::max(1, (int)D(0));
-    const float RX = w / 2.f - 2, RY = vh / 2.f - 2; static const int TRAIL[6] = {4, 46, 44, 24, 18, 21};
-    for (int i = 0; i < n && i < 8; i++) { const float f = (i + 1.f) / n, rx = 3 + (RX - 3) * f, ry = 2 + (RY - 2) * f, a0 = D(1 + i), dir = (i & 1) ? -1.f : 1.f;
-      for (int k = 12; k >= 1; k--) { const float a = a0 - dir * k * 0.75f / std::max(rx, 4.f); c.pxf(cx + rx * std::cos(a), cy + ry * std::sin(a), TRAIL[(k - 1) / 2]); }
+    const float RX = w / 2.f - 2, RY = vh / 2.f - 2;
+    for (int i = 0; i < n && i < 8; i++) { const float f = (i + 1.f) / n, rx = 3 + (RX - 3) * f, ry = 2 + (RY - 2) * f, a0 = D(1 + i);
       const bool lit = D(9 + i) > 0; const int px = (int)std::lround(cx + rx * std::cos(a0)), py = (int)std::lround(cy + ry * std::sin(a0));
       c.rect(px - 1, py - 1, lit ? 3 : 2, lit ? 3 : 2, lit ? 4 : 24); }
   } else if (ty == "tombola") {   // the turning drum and its balls
@@ -151,7 +150,7 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int s = 0; s < S; s++) { const float a0 = ang + s * TAU / S, a1 = ang + (s + 1) * TAU / S;
       c.line((int)std::lround(cx + R * std::cos(a0)), (int)std::lround(cy + R * std::sin(a0)), (int)std::lround(cx + R * std::cos(a1)), (int)std::lround(cy + R * std::sin(a1)), 18); }
     for (int i = 0; i < n && i < 12; i++) { const int bx = (int)std::lround(cx + D(3 + i * 4) * R), by = (int)std::lround(cy + D(4 + i * 4) * R); const float lifeK = D(5 + i * 4); const bool hitNow = D(6 + i * 4) > 0;
-      const int col = hitNow ? 4 : lifeK > 0.66f ? 24 : lifeK > 0.33f ? 44 : 18; c.rect(bx - 1, by - 1, 3, 3, col); if (!hitNow) c.px(bx - 1, by - 1, 26); }
+      const int col = hitNow ? 4 : lifeK > 0.66f ? 24 : lifeK > 0.33f ? 44 : 18; c.rect(bx - 1, by - 1, 3, 3, col); }
   } else if (ty == "hops") {   // each hop a stepping stone, placed by pitch, drifting left and fading
     const int fired = (int)D(0); if (fired != u.hopSeen) { u.hopSeen = fired; if (u.dots.size() > 40) u.dots.erase(u.dots.begin()); u.dots.push_back({0.f, D(1)}); }
     for (auto& dt2 : u.dots) dt2.first += dt; u.dots.erase(std::remove_if(u.dots.begin(), u.dots.end(), [](const std::pair<float, float>& q) { return q.first > 4; }), u.dots.end());
@@ -209,7 +208,7 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
     const int n = (int)scales()[eng.key.scale.load()].steps.size(), root = eng.key.root.load(), sc = eng.key.scale.load();
-    const int oct = (int)m->p[1].load(), rowStep = m->p[2].load() > 0.5f ? 8 : (n >= 6 ? 3 : 2);
+    const int oct = (int)m->p[1].load(), rowStep = 8;   // each row carries on up the scale from the row below
     for (int i = 0; i < 32; i++) { const int deg = (i / 8) * rowStep + (i % 8), note = (int)midiOf(degOf(oct, deg, sc), root, sc), cx = (i % 8) * 13, cy = (3 - i / 8) * 9;
       u.lit[i] = std::max(0.f, u.lit[i] - dt);
       const bool lit = u.lit[i] > 0, isRoot = deg % n == 0;
@@ -301,11 +300,11 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     std::string lab = q.label;
     if (d->type == "mi") { const int w3 = q.key == "harm" ? 0 : q.key == "timb" ? 1 : q.key == "morph" ? 2 : -1;   // MI VOICES: each voice names its three main controls
       if (w3 >= 0) lab = miEngines()[std::max(0, std::min(MI_ENGINES - 1, (int)u.m->p[0].load()))].k[w3]; }
-    c.text(lab.substr(0, 8), x + 3, ry + 1, active ? 4 : idle ? 21 : 18);
+    c.text(lab.substr(0, 9), x + 3, ry + 1, active ? 4 : idle ? 21 : 18);
     bool modded = false; for (auto& cb : cables) if (cb.type == PType::Mod && cb.to == u.m->id && cb.toParam == (int)j) modded = true;
     if (modulatable(q)) drawJack(c, x - 2, ry + 3, PType::Mod, modded, false);   // its mod socket: filled when something moves it
-    if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, 6); c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
-    const int bx = x + 35, bw = w - 38; const float nb = clampf(q.toNorm(v), 0, 1), n = modded ? clampf(q.toNorm(u.m->eff[j].load(std::memory_order_relaxed)), 0, 1) : nb;
+    if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, (size_t)std::max(6, (w - Canvas::tw(lab.substr(0, 9)) - 10) / 4)); /* as much of the choice as fits beside its name */ c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
+    const int bx = x + 40, bw = w - 43; const float nb = clampf(q.toNorm(v), 0, 1), n = modded ? clampf(q.toNorm(u.m->eff[j].load(std::memory_order_relaxed)), 0, 1) : nb;
     for (int i = 0; i < bw; i += 2) c.px(bx + i, ry + 4, 18);
     const int fw = (int)std::lround(n * bw); for (int i = 0; i < fw; i++) { c.px(bx + i, ry + 4, active ? 4 : idle ? 21 : modded ? 11 : 7); if (active) c.px(bx + i, ry + 3, 4); }   // modulated: green, and moving with it
     if (modded) { const int bxm = bx + (int)std::lround(nb * (bw - 1)); c.px(bxm, ry + 2, 9); c.px(bxm, ry + 3, 9); c.px(bxm, ry + 5, 9); }   // where you set it
@@ -418,7 +417,7 @@ void Ui::keyEnter() { if (!ask) return; auto a = std::move(ask); std::string t =
 // ---------------- input ----------------
 void Ui::keysPress(UiMod& u, int x, int y) {
   const int col = x / 13, row = 3 - y / 9; if (col < 0 || col > 7 || row < 0 || row > 3) return;
-  const int i = row * 8 + col, sc = eng.key.scale.load(), n = (int)scales()[sc].steps.size(), rowStep = u.m->p[2].load() > 0.5f ? 8 : (n >= 6 ? 3 : 2);
+  const int i = row * 8 + col, sc = eng.key.scale.load(), n = (int)scales()[sc].steps.size(), rowStep = 8;
   Event ev; ev.note = midiOf(degOf((int)u.m->p[1].load(), row * rowStep + col, sc), eng.key.root.load(), sc); ev.vel = u.m->p[0].load();
   eng.trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;
 }
