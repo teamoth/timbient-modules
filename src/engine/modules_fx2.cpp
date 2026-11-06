@@ -117,7 +117,7 @@ struct Crush : Module {
   }
 };
 static Reg rCrush(new ModuleDef{"crush", "BITCRUSH", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {ST("bits", "BITS", 1, 16, 8), prHz("rate", "RATE", 400, 44100, 11025), pct("mix", "MIX", 1)}, 0, 58, false, [] { return new Crush(); }});
+  {ST("bits", "BITS", 1, 16, 8), prHz("rate", "RESAMPLE", 400, 44100, 11025), pct("mix", "MIX", 1)}, 0, 58, false, [] { return new Crush(); }});
 
 // ---------------- TRIG ENV: each trigger draws a rise and a fall ----------------
 struct TrigEnv : Module {
@@ -149,7 +149,7 @@ struct RandomMod : Module {
   }
 };
 static Reg rRand(new ModuleDef{"rand", "RANDOM", Cat::Mod, {{"TRIG", PType::Trig}}, {{"MOD", PType::Mod}},
-  {fmt(prExp("rate", "EVERY", 0.05f, 60, 2), [](float v) { return fmtSecs(v); }), T("glide", "GLIDE", 0.001f, 8, 0.05f), pct("chance", "CHANGE", 1), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 0)},
+  {fmt(prExp("rate", "EVERY", 0.05f, 60, 2), [](float v) { return fmtSecs(v); }), T("glide", "GLIDE", 0.001f, 8, 0.05f), pct("chance", "CHANCE", 1), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 0)},
   7, 58, false, [] { return new RandomMod(); }});
 
 // ---------------- FOLLOWER: how loud the incoming sound is, as a modulation ----------------

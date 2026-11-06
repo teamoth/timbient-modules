@@ -9,11 +9,11 @@ struct VoiceBase { NoteEnv env; float pl = 0.7f, pr = 0.7f, vel = 1, f = 220; lo
 template <class V> struct Poly : Module {
   static constexpr int MAXV = 12;
   V v[MAXV]; long stamp = 0; float gainScale = 1; bool selfPan = false;
-  int iPitch = -1, iLevel = -1, iWidth = -1, iAtk = -1;
+  int iPitch = -1, iLevel = -1, iWidth = -1, iAtk = -1, iVs = -1;
   virtual void start(V& x) = 0;                          // set up a new note (x.f, x.vel are filled in)
   virtual void voice(V& x, float& l, float& r) = 0;      // one sample of a note, before its envelope
   virtual void voicePrep() {}                            // once per block, before the notes render
-  void prepare() override { iPitch = pi("pitch"); iLevel = pi("level"); iWidth = pi("width"); iAtk = pi("atk"); for (auto& x : v) x.env.sr = sr; }
+  void prepare() override { iPitch = pi("pitch"); iLevel = pi("level"); iWidth = pi("width"); iAtk = pi("atk"); iVs = pi("vsens"); for (auto& x : v) x.env.sr = sr; }
   void trig(int, const Event& ev) override {
     V* best = nullptr; for (auto& x : v) if (!x.env.active()) { best = &x; break; }
     if (!best) { best = &v[0]; for (auto& x : v) if (x.age < best->age) best = &x; }
@@ -21,7 +21,7 @@ template <class V> struct Poly : Module {
     if (iAtk >= 0) { x.env.atk = e[iAtk]; x.env.dec = e[iAtk + 1]; x.env.sus = e[iAtk + 2]; x.env.hold = e[iAtk + 3]; x.env.rel = e[iAtk + 4]; }
     x.env.sr = sr; x.env.v = 0; x.env.start();
     if (!selfPan) panGains(rng.bi() * (iWidth >= 0 ? e[iWidth] : 0), x.pl, x.pr); else x.pl = x.pr = 1;
-    x.vel = ev.vel; x.f = mtof(ev.note + (iPitch >= 0 ? e[iPitch] : 0));
+    x.vel = iVs >= 0 ? 1 - e[iVs] + e[iVs] * ev.vel : ev.vel;   // VEL SENS: how much harder notes are louder x.f = mtof(ev.note + (iPitch >= 0 ? e[iPitch] : 0));
     start(x);
   }
   void render(int a, int b) override {

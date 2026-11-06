@@ -22,12 +22,13 @@ static Reg rFilter(new ModuleDef{"filter", "FILTER", Cat::Proc, {{"IN", PType::A
 // ---------------- ECHO: a ping-pong pair with a darkening feedback loop ----------------
 struct Echo : Module {
   DelayLine dl, dr; Biquad lp; Smooth tl, trr, fb, dry, wet; float lastR = 0;
-  enum { TIME, SPREAD, FB, TONE, MIX };
+  enum { SYNC, TIME, SPREAD, FB, TONE, MIX };
+  float secs() const { static const float B[9] = {0, 0.25f, 1 / 3.f, 0.5f, 0.75f, 1, 1.5f, 2, 4}; const int s = (int)e[SYNC]; return s > 0 ? std::min(7.5f, B[s] * 60.f / eng->tempo.bpm.load(std::memory_order_relaxed)) : e[TIME]; }   // in beats of the shared tempo, or free
   void prepare() override { dl.init(8, sr); dr.init(8, sr); for (Smooth* s : {&tl, &trr}) s->setTime(0.3f, sr); for (Smooth* s : {&fb, &dry, &wet}) s->setTime(0.012f, sr);
-    tl.snap(e[TIME] * sr); trr.snap(e[TIME] * (1 + e[SPREAD] * 0.6f) * sr); fb.snap(e[FB]); dry.snap(1 - e[MIX]); wet.snap(e[MIX]); }
+    tl.snap(secs() * sr); trr.snap(std::min(7.9f, secs() * (1 + e[SPREAD] * 0.6f)) * sr); fb.snap(e[FB]); dry.snap(1 - e[MIX]); wet.snap(e[MIX]); }
   void render(int a, int b) override {
     const bool frz = eng->freeze.load(std::memory_order_relaxed);
-    tl.t = e[TIME] * sr; trr.t = e[TIME] * (1 + e[SPREAD] * 0.6f) * sr; fb.t = frz ? 0.995f : e[FB]; dry.t = 1 - e[MIX]; wet.t = e[MIX];
+    const float tm = secs(); tl.t = tm * sr; trr.t = std::min(7.9f, tm * (1 + e[SPREAD] * 0.6f)) * sr; fb.t = frz ? 0.995f : e[FB]; dry.t = 1 - e[MIX]; wet.t = e[MIX];
     lp.set(Biquad::LP, e[TONE], 0.707f, sr);
     for (int i = a; i < b; i++) {
       const float x = 0.5f * (in[0][0][i] + in[0][1][i]), f = fb.tick();
@@ -40,30 +41,31 @@ struct Echo : Module {
   }
 };
 static Reg rEcho(new ModuleDef{"echo", "ECHO", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {T("time", "TIME", 0.05f, 4, 0.71f), pct("spread", "SPREAD", 0.6f), pr("fb", "FEEDBACK", 0, 0.95f, 0.5f), prHz("tone", "TONE", 300, 8000, 1600), pct("mix", "MIX", 0.4f)}, 0, 58, false, [] { return new Echo(); }});
+  {OP("sync", "TEMPO", {"FREE", "1/16", "1/8T", "1/8", "1/8 DOT", "1/4", "1/4 DOT", "1/2", "1 BAR"}, 0), only(T("time", "TIME", 0.05f, 4, 0.71f), "esync"), pct("spread", "WIDTH", 0.6f), pr("fb", "FEEDBACK", 0, 0.95f, 0.5f), prHz("tone", "TONE", 300, 8000, 1600), pct("mix", "MIX", 0.4f)}, 0, 58, false, [] { return new Echo(); }});
 
 // ---------------- REVERB: eight damped feedback combs per side and four diffusers, any length for the same cost ----------------
 struct Reverb : Module {
   static constexpr int NC = 8, NA = 4;
   struct Comb { DelayLine d; float len = 1000, lp = 0, g = 0.8f; };
   struct AP { DelayLine d; float len = 300; };
-  Comb c[2][NC]; AP ap[2][NA]; Biquad pre[2]; Smooth dry, wet; float damp = 0.4f, size = 5;
-  enum { SIZE, DAMP, MIX };
+  Comb c[2][NC]; AP ap[2][NA]; Biquad pre[2]; Smooth dry, wet, pd; DelayLine pdl[2]; float damp = 0.4f, size = 5;
+  enum { SIZE, PRE, DAMP, MIX };
   void prepare() override {
     const int cl[NC] = {1557, 1617, 1491, 1422, 1277, 1356, 1188, 1116}, al[NA] = {225, 556, 441, 341}; const float sc = sr / 44100.f;
     for (int s = 0; s < 2; s++) { for (int k = 0; k < NC; k++) { c[s][k].len = (cl[k] + s * 23) * sc * 1.6f; c[s][k].d.init(c[s][k].len / sr + 0.01f, sr); }
       for (int k = 0; k < NA; k++) { ap[s][k].len = (al[k] + s * 23) * sc; ap[s][k].d.init(ap[s][k].len / sr + 0.01f, sr); } pre[s].set(Biquad::HP, 120, 0.7f, sr); }
     dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX] * 0.6f); wet.snap(e[MIX] * 1.2f);
+    for (auto& d : pdl) d.init(0.26f, sr); pd.setTime(0.2f, sr); pd.snap(e[PRE] * sr);
   }
   void render(int a, int b) override {
     size = e[SIZE]; damp = e[DAMP];
     const float dk = 0.05f + damp * 0.6f;   // how much each pass darkens
     for (int s = 0; s < 2; s++) for (int k = 0; k < NC; k++) c[s][k].g = std::min(0.985f, std::pow(10.f, -3.f * (c[s][k].len / sr) / std::max(0.2f, size)));
-    dry.t = 1 - e[MIX] * 0.6f; wet.t = e[MIX] * 1.2f;
+    dry.t = 1 - e[MIX] * 0.6f; wet.t = e[MIX] * 1.2f; pd.t = e[PRE] * sr;
     for (int i = a; i < b; i++) {
-      const float d = dry.tick(), w = wet.tick();
+      const float d = dry.tick(), w = wet.tick(), pdt = pd.tick();
       for (int s = 0; s < 2; s++) {
-        const float x = pre[s].run(in[0][s][i], 0) * 0.15f; float acc = 0;
+        pdl[s].write(in[0][s][i]); const float x = pre[s].run(pdt >= 1 ? pdl[s].read(pdt) : in[0][s][i], 0) * 0.15f; float acc = 0;   // PRE-DELAY: a gap before the room answers
         for (int k = 0; k < NC; k++) { Comb& cb = c[s][k]; const float y = cb.d.read(cb.len); cb.lp = y + (cb.lp - y) * dk; cb.d.write(sane(x + cb.lp * cb.g)); acc += y; }
         for (int k = 0; k < NA; k++) { AP& q = ap[s][k]; const float bd = q.d.read(q.len), v = acc + bd * 0.5f; q.d.write(sane(v)); acc = bd - v * 0.5f; }
         out[0][s][i] = in[0][s][i] * d + acc * w;
@@ -72,7 +74,8 @@ struct Reverb : Module {
   }
 };
 static Reg rReverb(new ModuleDef{"reverb", "REVERB", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {fmt(prExp("size", "SIZE", 1, 30, 5), [](float v) { char b[16]; std::snprintf(b, 16, "%.1fS", v); return std::string(b); }), pct("damp", "DAMP", 0.4f), pct("mix", "MIX", 0.5f)}, 0, 58, false, [] { return new Reverb(); }});
+  {fmt(prExp("size", "SIZE", 1, 30, 5), [](float v) { char b[16]; std::snprintf(b, 16, "%.1fS", v); return std::string(b); }),
+   fmt(pr("pre", "PRE-DELAY", 0, 0.25f, 0), [](float v) { return std::to_string((int)std::lround(v * 1000)) + "MS"; }), pct("damp", "DAMP", 0.4f), pct("mix", "MIX", 0.5f)}, 0, 58, false, [] { return new Reverb(); }});
 
 // ---------------- DUCKER: dips on each KEY trigger, then breathes back (CURVE), optionally timed in beats ----------------
 struct Ducker : Module {

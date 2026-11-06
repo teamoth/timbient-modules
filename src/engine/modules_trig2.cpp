@@ -51,7 +51,7 @@ struct Walker : Module {
   }
 };
 static Reg rWalker(new ModuleDef{"walker", "WALKER", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), pct("push", "PUSH", 0.4f), pct("glide", "GLIDE", 0.5f), ST("range", "RANGE", 1, 16, 10), OCTP("oct", 1, 8, 6)},
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), pct("push", "PUSH", 0.4f), pct("glide", "SLIDE", 0.5f), ST("range", "RANGE", 1, 16, 10), OCTP("oct", 1, 8, 6)},
   6, 58, false, [] { return new Walker(); }});
 
 // ---------------- TRIG TOOLS: thin, repeat and transpose whatever passes through ----------------
@@ -76,7 +76,7 @@ struct Tools : Module {
 };
 static Reg rTools(new ModuleDef{"tools", "TRIG TOOLS", Cat::Trig, {{"IN", PType::Trig}}, {{"OUT", PType::Trig}},
   {pct("chance", "CHANCE", 1), ST("div", "DIVIDE", 1, 16, 1), ST("rep", "REPEATS", 0, 8, 0), T("gap", "REP GAP", 0.03f, 1, 0.12f), pct("fall", "REP FALL", 0.3f),
-   ST("steps", "STEPS", -7, 7, 0), ST("oct", "OCTAVE", -3, 3, 0), OP("quant", "QUANTISE", {"OFF", "ON"}, 0)}, 4, 58, false, [] { return new Tools(); }});
+   ST("steps", "SHIFT", -7, 7, 0), ST("oct", "OCTAVE", -3, 3, 0), OP("quant", "QUANTISE", {"OFF", "ON"}, 0)}, 4, 58, false, [] { return new Tools(); }});
 
 // ---------------- TRACKER: notes typed in step by step ----------------
 static const int TRK_DIV[3] = {1, 2, 4};

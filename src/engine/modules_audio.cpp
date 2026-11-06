@@ -13,7 +13,7 @@ static inline float readBuf(const std::vector<float>& d, double pos) {   // line
 // MULTI: up to eight recordings of one instrument, each with the note it was recorded at (ROOT); a note uses the nearest and is shifted the rest of the way.
 // It loops (crossfading each pass) or plays once per trigger; the PLAY style runs forwards, backwards, back and forth, or from a random place.
 struct Sample : Module {
-  enum { LOAD, KIND, SLICES, MODE, NOTES, START, LEN, PITCH, STYLE, ATK, REL, FADE, DRIFT, CUT, RES, WIDTH, LEVEL_ };
+  enum { LOAD, KIND, SLICES, MODE, NOTES, START, LEN, PITCH, STYLE, ATK, REL, FADE, DRIFT, CUT, RES, VSENS, WIDTH, LEVEL_ };
   static constexpr int NS = 8;
   AudioBuf* buf[NS] = {nullptr};
   struct Seg { bool on = false, rev = false; const AudioBuf* b = nullptr; double pos = 0, inc = 1; long t = 0, d = 0, fi = 1, fo = 1; float gain = 1, gl = 1, gr = 1, fadeV = 1, fadeK = 0; };
@@ -60,9 +60,9 @@ struct Sample : Module {
   }
   void trig(int, const Event& ev) override {
     if (!count()) return;
-    const double now = t + eng->pos / sr; noteIn = ev.note;
-    if (e[MODE] < 0.5f) { fadeAll(0.03f); looping = true; loopVel = ev.vel; wob = 0; nextAt = now; return; }
-    double d, f; seg(ev.note, ev.vel, d, f);
+    const double now = t + eng->pos / sr; noteIn = ev.note; const float vel = 1 - e[VSENS] + e[VSENS] * ev.vel;
+    if (e[MODE] < 0.5f) { fadeAll(0.03f); looping = true; loopVel = vel; wob = 0; nextAt = now; return; }
+    double d, f; seg(ev.note, vel, d, f);
   }
   void render(int a, int b) override {
     for (int i = a; i < b; i++) { out[0][0][i] = 0; out[0][1][i] = 0; }
@@ -96,7 +96,7 @@ static Reg rSample(new ModuleDef{"sample", "SAMPLE", Cat::Voice, {{"TRIG", PType
    OP("mode", "TRIG", {"LOOP", "ONCE"}, 0), only(OP("notes", "NOTES", {"OFF", "ON"}, 0), "one"), only(pct("start", "START", 0), "region"), pct("len", "LENGTH", 1),
    ST("pitch", "PITCH", -24, 24, 0), OP("rev", "PLAY", {"FWD", "BACK", "BOUNCE", "RANDOM"}, 0),
    only(T("atk", "ATTACK", 0.002f, 4, 0.01f), "once"), only(T("rel", "RELEASE", 0.005f, 8, 0.3f), "once"), only(T("fade", "FADE", 0.005f, 4, 0.4f), "loop"),
-   only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 80, 20000, 20000), pct("res", "RES", 0), pct("width", "WIDTH", 0), LEVEL()},
+   only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 80, 20000, 20000), pct("res", "RES", 0), pct("vsens", "VEL SENS", 1), pct("width", "WIDTH", 0), LEVEL()},
   12, 58, false, [] { return new Sample(); }});
 
 // ---------------- GRAIN LOOPER: catches the last seconds of its input (or a file) and plays it as a cloud of grains ----------------

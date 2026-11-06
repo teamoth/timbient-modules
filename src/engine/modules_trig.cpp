@@ -127,7 +127,7 @@ struct Keys : Module {
   void trig(int port, const Event& ev) override { if (port == -1) emit(0, ev); }
 };
 static Reg rKeys(new ModuleDef{"keys", "NOTE GRID", Cat::Trig, {}, {{"NOTE", PType::Trig}},
-  {OCTP("oct", 1, 7, 3), OP("layout", "ROWS", {"4THS", "RUN ON"}, 0), pct("vel", "VELOCITY", 0.8f)}, 36, 110, false, [] { return new Keys(); }});
+  {pct("vel", "VELOCITY", 0.8f), OCTP("oct", 1, 7, 3), OP("layout", "ROWS", {"4THS", "RUN ON"}, 0)}, 36, 110, false, [] { return new Keys(); }});
 
 // ---------------- LFO ----------------
 struct Lfo : Module {

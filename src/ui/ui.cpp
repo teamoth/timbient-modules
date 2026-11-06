@@ -15,7 +15,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "midi", "midiout"}},
-  {"VOICES", {"tone", "pluck", "bell", "grains", "fm2", "glass", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
+  {"VOICES", {"tone", "pluck", "bell", "grains", "glass", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
   {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "crush", "mixer"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
@@ -54,7 +54,7 @@ void Ui::clearPatch() { for (auto& u : mods) eng.remove(u->m->id); mods.clear();
 // a patch in the spirit of your session, so there's something to listen to straight away
 void Ui::demoPatch() {
   auto col = [&](int x, std::vector<std::string> types) { std::vector<UiMod*> v; int y = 16; for (auto& t : types) { UiMod* u = add(t, x, y); v.push_back(u); y += geom(*u).h + 5; } return v; };
-  auto c1 = col(6, {"clump", "orbits", "clock"}), c2 = col(68, {"pluck", "fm2"}), c3 = col(130, {"pad", "bell"}), c4 = col(192, {"echo", "filter", "lfo"}), c5 = col(254, {"mixer"}), c6 = col(316, {"reverb", "ducker"}), c7 = col(378, {"out"});
+  auto c1 = col(6, {"clump", "orbits", "clock"}), c2 = col(68, {"pluck", "glass"}), c3 = col(130, {"pad", "bell"}), c4 = col(192, {"echo", "filter", "lfo"}), c5 = col(254, {"mixer"}), c6 = col(316, {"reverb", "ducker"}), c7 = col(378, {"out"});
   UiMod *clump = c1[0], *orb = c1[1], *clk = c1[2], *pl = c2[0], *fm = c2[1], *pad = c3[0], *bell = c3[1], *echo = c4[0], *filt = c4[1], *lfo = c4[2], *mix = c5[0], *verb = c6[0], *duck = c6[1], *out = c7[0];
   set(clump, "oct", 5); set(clump, "mutate", 1); set(clump, "speed", 2.5f); set(pl, "tone", 0.08f); set(pad, "cut", 420); set(verb, "size", 10); set(verb, "mix", 0.5f);
   set(duck, "depth", 0.9f); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "index", 2.5f); set(fm, "ratio", 3.5f); set(fm, "isus", 0);
@@ -208,7 +208,7 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
     const int n = (int)scales()[eng.key.scale.load()].steps.size(), root = eng.key.root.load(), sc = eng.key.scale.load();
-    const int oct = (int)m->p[0].load(), rowStep = m->p[1].load() > 0.5f ? 8 : (n >= 6 ? 3 : 2);
+    const int oct = (int)m->p[1].load(), rowStep = m->p[2].load() > 0.5f ? 8 : (n >= 6 ? 3 : 2);
     for (int i = 0; i < 32; i++) { const int deg = (i / 8) * rowStep + (i % 8), note = (int)midiOf(degOf(oct, deg, sc), root, sc), cx = (i % 8) * 13, cy = (3 - i / 8) * 9;
       u.lit[i] = std::max(0.f, u.lit[i] - dt);
       const bool lit = u.lit[i] > 0, isRoot = deg % n == 0;
@@ -293,6 +293,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
       c.text(on ? "PLAYING" : "PLAY", x + 13, ry + 1, on ? 15 : 9); continue; }
     int syncI = d->paramIndex("sync"); const bool syncOn = syncI >= 0 && d->params[syncI].tog && u.m->p[syncI].load() > 0.5f;
     bool idle = (q.only == "free" && clocked) || (q.only == "clock" && !clocked) || (q.only == "own" && (syncOn || clocked));
+    if (q.only == "esync" && u.m->p[0].load() > 0.5f) idle = true;   // ECHO: TIME is set by the tempo instead
     if (d->type == "sample") { const int kind = (int)u.m->p[1].load(); const bool once = u.m->p[3].load() > 0.5f;   // settings that don't apply to this kind of sound or way of playing
       idle = idle || (q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once); }
     c.text(q.label.substr(0, 8), x + 3, ry + 1, active ? 4 : idle ? 21 : 18);
@@ -412,8 +413,8 @@ void Ui::keyEnter() { if (!ask) return; auto a = std::move(ask); std::string t =
 // ---------------- input ----------------
 void Ui::keysPress(UiMod& u, int x, int y) {
   const int col = x / 13, row = 3 - y / 9; if (col < 0 || col > 7 || row < 0 || row > 3) return;
-  const int i = row * 8 + col, sc = eng.key.scale.load(), n = (int)scales()[sc].steps.size(), rowStep = u.m->p[1].load() > 0.5f ? 8 : (n >= 6 ? 3 : 2);
-  Event ev; ev.note = midiOf(degOf((int)u.m->p[0].load(), row * rowStep + col, sc), eng.key.root.load(), sc); ev.vel = u.m->p[2].load();
+  const int i = row * 8 + col, sc = eng.key.scale.load(), n = (int)scales()[sc].steps.size(), rowStep = u.m->p[2].load() > 0.5f ? 8 : (n >= 6 ? 3 : 2);
+  Event ev; ev.note = midiOf(degOf((int)u.m->p[1].load(), row * rowStep + col, sc), eng.key.root.load(), sc); ev.vel = u.m->p[0].load();
   eng.trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;
 }
 

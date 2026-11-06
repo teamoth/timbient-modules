@@ -1,5 +1,6 @@
 // Timbient native: sessions (see session.h)
 #include "session.h"
+#include <algorithm>
 #include "../engine/params.h"
 #include <ctime>
 #include <fstream>
@@ -111,7 +112,9 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     else if (!ui.connect(a, a->m->def->outIndex(fp), b, b->m->def->inIndex(tp))) lost++;
   }
   std::string note;
-  if (!skipped.empty()) { note = "NOT IN THE NATIVE VERSION YET: "; bool first = true; for (auto& s : skipped) { const ModuleDef* d = findDef(s); note += (first ? "" : ", ") + (d ? d->name : s); first = false; } }
+  const bool fm = skipped.erase("fm2") > 0;
+  if (!skipped.empty()) { note = "NOT IN THE NATIVE VERSION YET: "; bool first = true; for (auto& s : skipped) { const ModuleDef* d = findDef(s); std::string nm = d ? d->name : s; for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); note += (first ? "" : ", ") + nm; first = false; } }
+  if (fm) note += std::string(note.empty() ? "" : ". ") + "FM 2-OP HAS BEEN REMOVED, SO IT WAS LEFT OUT";
   return note;
 }
 

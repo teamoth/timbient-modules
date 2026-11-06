@@ -5,7 +5,7 @@
 namespace tb {
 
 static std::vector<ParamDef> vp(std::vector<ParamDef> p, std::vector<ParamDef> env, float width) {
-  for (auto& q : env) p.push_back(q); p.push_back(pct("width", "WIDTH", width)); p.push_back(LEVEL()); return p;
+  for (auto& q : env) p.push_back(q); p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", width)); p.push_back(LEVEL()); return p;
 }
 static std::vector<ParamDef> ENVD() { return envP(0.003f, 0.3f, 1, 4, 2); }
 
@@ -40,7 +40,7 @@ struct Click : Poly<ClickV> {
   }
 };
 static Reg rClick(new ModuleDef{"click", "NOISE CLICK", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), pr("q", "Q", 1, 30, 12), T("decay", "RING", 0.01f, 0.5f, 0.08f), pr("tune", "TUNE", 0.5f, 4, 2)}, ENVD(), 0.4f), 0, 58, false, [] { return new Click(); }});
+  vp({PITCH(), pr("q", "FOCUS", 1, 30, 12), T("decay", "RING", 0.01f, 0.5f, 0.08f), pr("tune", "BAND", 0.5f, 4, 2)}, ENVD(), 0.4f), 0, 58, false, [] { return new Click(); }});
 
 // ---------------- GRAIN CLOUD: a scatter of tiny sine grains around the note ----------------
 struct GrainsV : VoiceBase { static constexpr int G = 12; float at[G], dur[G], fr[G], ph[G], gl[G], gr[G]; int n = 0; float t = 0; };
@@ -60,7 +60,7 @@ struct Grains : Poly<GrainsV> {
   }
 };
 static Reg rGrains(new ModuleDef{"grains", "GRAIN CLOUD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), ST("dens", "DENSITY", 1, 12, 7), T("spread", "SPREAD", 0.02f, 1, 0.18f), T("grain", "GRAIN", 0.005f, 0.12f, 0.03f)}, ENVD(), 0.5f), 0, 58, false, [] { return new Grains(); }});
+  vp({PITCH(), ST("dens", "DENSITY", 1, 12, 7), T("spread", "SCATTER", 0.02f, 1, 0.18f), T("grain", "GRAIN", 0.005f, 0.12f, 0.03f)}, ENVD(), 0.5f), 0, 58, false, [] { return new Grains(); }});
 
 // ---------------- ANALOG: an oscillator and a sub through a resonant lowpass that snaps open on each note ----------------
 struct AnalogV : VoiceBase { Osc o, sub; Biquad lp; float t = 0, top = 1000; int cnt = 0; };
@@ -104,8 +104,8 @@ struct Formant : Poly<FormantV> {
 };
 static Reg rFormant(new ModuleDef{"formant", "FORMANT", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   vp({PITCH(), fmt(pct("vowel", "VOWEL", 0.2f), [](float v) { return std::string(1, "AEIOU"[std::min(4, (int)std::lround(v * 4))]) + " " + std::to_string((int)std::lround(v * 100)); }),
-      fmt(pr("glide", "VOWEL GO", -1, 1, 0), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::lround(v * 100)); }),
-      T("gtime", "GO TIME", 0.05f, 8, 1.5f), pct("vib", "VIBRATO", 0.3f), pct("breath", "BREATH", 0.15f)}, envP(0.08f, 0.5f, 0.8f, 1.5f, 1.5f), 0.3f), 0, 58, false, [] { return new Formant(); }});
+      fmt(pr("glide", "MOVE TO", -1, 1, 0), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::lround(v * 100)); }),
+      T("gtime", "MOVE TIME", 0.05f, 8, 1.5f), pct("vib", "VIBRATO", 0.3f), pct("breath", "BREATH", 0.15f)}, envP(0.08f, 0.5f, 0.8f, 1.5f, 1.5f), 0.3f), 0, 58, false, [] { return new Formant(); }});
 
 // ---------------- BREATH: noise breathing through a narrow resonance at the note, a little pure tone under it ----------------
 struct BreathV : VoiceBase { Biquad b1, b2; float fph = 0, fr = 5, sph = 0, g1 = 0, g2 = 0; bool two = false; };
@@ -127,13 +127,13 @@ struct Breath : Poly<BreathV> {
   }
 };
 static Reg rBreath(new ModuleDef{"breath", "BREATH", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), pct("noise", "NOISE", 0.6f), fmt(prExp("q", "FOCUS", 5, 200, 40), [](float v) { return std::to_string((int)std::lround(v)); }), pct("tone", "TONE", 0.3f), OP("hm", "OVERTONE", {"OFF", "2ND", "3RD"}, 1), pct("flutter", "FLUTTER", 0.2f)},
+  vp({PITCH(), pct("noise", "NOISE", 0.6f), fmt(prExp("q", "FOCUS", 5, 200, 40), [](float v) { return std::to_string((int)std::lround(v)); }), pct("tone", "SINE", 0.3f), OP("hm", "OVERTONE", {"OFF", "2ND", "3RD"}, 1), pct("flutter", "FLUTTER", 0.2f)},
      envP(0.25f, 0.6f, 0.7f, 1.2f, 1.8f), 0.4f), 0, 58, false, [] { return new Breath(); }});
 
 // ---------------- ADDITIVE: a stack of sine partials; the upper ones fade sooner (TILT DEC) ----------------
 struct AddV : VoiceBase { static constexpr int P = 16; float c[P], s[P], cw[P], sw[P], a[P], lv[P], kd[P], gl[P], gr[P]; int n = 0, cnt = 0; float t = 0; };
 struct Additive : Poly<AddV> {
-  enum { PITCHK, PARTS, BRIGHT, EVEN, STRETCH, DECAY, SHIMMER, ATK, DEC, SUS, HOLD, REL, WIDTH };
+  enum { PITCHK, PARTS, BRIGHT, EVEN, STRETCH, DECAY, SHIMMER };
   Additive() { gainScale = 0.22f; selfPan = true; }
   void start(AddV& x) override {
     const int parts = (int)e[PARTS]; float amps[AddV::P], tot = 0;
@@ -143,7 +143,7 @@ struct Additive : Poly<AddV> {
       const float fr = x.f * k * (1 + e[STRETCH] * 0.015f * (k - 1)) * std::pow(2.f, rng.bi() * e[SHIMMER] * 12 / 1200.f); if (fr > 16000 || fr > sr * 0.45f) break;
       const int i = x.n++; const float w = TAU * fr / sr; x.cw[i] = std::cos(w); x.sw[i] = std::sin(w); x.c[i] = 1; x.s[i] = 0;
       x.a[i] = amps[k - 1] / tot; x.lv[i] = 1; const float dk = std::max(0.05f, len / (1 + e[DECAY] * (k - 1) * 1.5f)); x.kd[i] = std::exp(-3.f / (dk * sr));
-      panGains(rng.bi() * e[WIDTH] * std::min(1.f, k / 4.f), x.gl[i], x.gr[i]);
+      panGains(rng.bi() * e[iWidth] * std::min(1.f, k / 4.f), x.gl[i], x.gr[i]);
     }
   }
   void voice(AddV& x, float& l, float& r) override {
