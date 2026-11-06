@@ -4,6 +4,7 @@
 #include "../src/ui/session.h"
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 using namespace tb;
 
 struct Result { float peak = 0, rms = 0; int bad = 0; double cost = 0; };
@@ -37,6 +38,22 @@ int main(int argc, char** argv) {
     const Result r = run(eng, 4);
     const bool silent = r.peak < 0.005f; if (r.bad || silent) fails++;
     std::printf("%-10s peak %.3f  rms %.4f  cost %5.2f%%%s%s\n", d->type.c_str(), r.peak, r.rms, r.cost, r.bad ? "  NOT FINITE" : "", silent ? "  SILENT" : "");
+  }
+  // every voice must follow the note it's given: its sound should repeat at the note's period (or a whole multiple of it)
+  for (const ModuleDef* d : allDefs()) {
+    if (d->cat != Cat::Voice || d->type == "sample" || d->type == "click" || d->type == "grains") continue;   // noise bursts and grain clouds don't repeat cleanly
+    bool ok = true; char msg[160] = ""; int lags[2] = {0, 0}, li = 0;
+    for (float nt : {57.f, 69.f}) { Engine e2; e2.setSampleRate(48000); Ui u2(e2); UiMod* o = u2.add("out", 0, 0); UiMod* v = u2.add(d->type, 0, 0); u2.connect(v, "OUT", o, "A");
+      if (d->paramIndex("env") >= 0) u2.set(v, "env", 1);
+      std::vector<float> L(256), R(256), buf; for (int i = 0; i < 20; i++) e2.render(L.data(), R.data(), 256);
+      Event ev; ev.note = nt; ev.vel = 1; e2.trigger(v->m->id, 0, ev);
+      for (int i = 0; i < 60; i++) { e2.render(L.data(), R.data(), 256); if (i > 20) buf.insert(buf.end(), L.begin(), L.end()); }
+      int best = 0; double bv = -1e18; for (int lag = 40; lag < 1400; lag++) { double sum = 0; for (size_t i = 0; i + lag < buf.size(); i++) sum += buf[i] * buf[i + lag]; sum /= (buf.size() - lag); if (sum > bv) { bv = sum; best = lag; } }
+      const double per = 48000.0 / mtof(nt), k = std::round(best / per), err = std::fabs(best / per - k);
+      lags[li++] = best; if (k < 1 || err > 0.06) ok = false; std::snprintf(msg + std::strlen(msg), 80, "  note %.0f repeats every %d (expect %.0f)", nt, best, per); e2.collectGarbage(); }
+    if (std::fabs((double)lags[0] / std::max(1, lags[1]) - 1) < 0.1) ok = false;   // the two notes must not come out the same
+    if (!ok) fails++;
+    std::printf("%-10s pitch%s%s\n", d->type.c_str(), msg, ok ? "" : "  DOES NOT FOLLOW THE NOTE");
   }
   // every voice at once, all twelve notes each, to see the worst case
   { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* h = ui.add("hops", 0, 0); ui.set(h, "rate", 20);
