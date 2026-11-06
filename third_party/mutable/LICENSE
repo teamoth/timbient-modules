@@ -1,7 +1,8 @@
 The code in this folder is from Mutable Instruments' open-source Eurorack firmware
 (https://github.com/pichenettes/eurorack, commit f4cfa7697095a28d292bff758beb51deb49b5a86)
 and stmlib (https://github.com/pichenettes/stmlib), by Emilie Gillet.
-One change: plaits/user_data.h includes <cstdio>, so it builds outside the original project.
+Two small changes, so it builds outside the original project: plaits/user_data.h includes <cstdio>, and
+plaits/dsp/fm/algorithms.h hides four declarations from Microsoft's compiler (marked in the file).
 
 Copyright 2012-2021 Emilie Gillet.
 

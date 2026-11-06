@@ -195,6 +195,7 @@ class Algorithms {
   DISALLOW_COPY_AND_ASSIGN(Algorithms);
 };
 
+#ifndef _MSC_VER   // Timbient Modules: Microsoft's compiler reads these declarations as empty definitions; it links to the ones in algorithms.cc without them
 /* static */
 template<> const uint8_t Algorithms<4>::opcodes_[][4];  // From DX100
 
@@ -206,6 +207,7 @@ template<> const uint8_t Algorithms<6>::opcodes_[][6];  // From DX7
 
 /* static */
 template<> const Algorithms<6>::RendererSpecs Algorithms<6>::renderers_[];
+#endif  // _MSC_VER
 
 }  // namespace fm
 
