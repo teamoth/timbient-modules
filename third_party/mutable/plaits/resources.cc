@@ -4030,6 +4030,7 @@ const int16_t* const lookup_table_i16_table[] = {
 
 
 const int32_t* const lookup_table_i32_table[] = {
+  nullptr,   // Timbient Modules: an empty list is not allowed by Microsoft's compiler (this one is never used)
 };
 
 const int8_t lut_lpc_excitation_pulse[] = {
