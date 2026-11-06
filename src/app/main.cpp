@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.9.0";
+static const char* VERSION = "0.10.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -43,6 +43,8 @@ static void audioCallback(ma_device*, void* output, const void*, ma_uint32 frame
   }
 }
 static const int BUFFERS[5] = {128, 256, 512, 1024, 2048};
+// QUALITY: samples per second (0: the sound output's own rate). Lower rates cost less and lose the very highest treble
+static const unsigned RATES[5] = {0, 48000, 44100, 32000, 24000};
 struct Sound {
   ma_device dev; bool open = false; int bufIdx = 2;
   bool start(Engine& e, unsigned rate) {
@@ -51,7 +53,7 @@ struct Sound {
     cfg.dataCallback = audioCallback; cfg.periodSizeInFrames = (ma_uint32)BUFFERS[bufIdx]; cfg.periods = 3;
     cfg.performanceProfile = bufIdx <= 1 ? ma_performance_profile_low_latency : ma_performance_profile_conservative;
     if (ma_device_init(nullptr, &cfg, &dev) != MA_SUCCESS) return false;
-    open = true; if (e.sr != (float)dev.sampleRate && rate == 0) e.setSampleRate((float)dev.sampleRate);
+    open = true; if (e.sr != (float)dev.sampleRate) e.setSampleRate((float)dev.sampleRate);   // the engine runs at whatever rate the sound runs at
     e.outLatency = (float)(BUFFERS[bufIdx] * 3) / (float)dev.sampleRate;
     return ma_device_start(&dev) == MA_SUCCESS;
   }
@@ -103,7 +105,8 @@ int main(int argc, char** argv) {
   // ---- sound first, so the engine knows the sample rate before any module is built ----
   static Engine engine; gEngine = &engine;
   static Sound sound; sound.bufIdx = std::max(0, std::min(4, (int)settings.num("buffer", 2)));
-  if (!sound.start(engine, 0)) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
+  int rateIdx = std::max(0, std::min(4, (int)settings.num("rate", 0)));
+  if (!sound.start(engine, RATES[rateIdx]) && !(rateIdx != 0 && sound.start(engine, 0))) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
 
   Ui ui(engine);
   static Midi midi(engine); midi.start();
@@ -252,7 +255,7 @@ int main(int argc, char** argv) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", "THEME", "ABOUT AND CREDITS"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -264,10 +267,18 @@ int main(int argc, char** argv) {
       else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / engine.sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
         q.pick = [&](int j) { if (j == sound.bufIdx) return; sound.stop(); sound.bufIdx = j; settings.set("buffer", Json::number(j)); saveSettings();
           if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j])); }; }
-      else if (i == 4) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
+      else if (i == 4) { q.items = {"AUTO  (YOUR SOUND OUTPUT'S OWN RATE)", "48K", "44.1K", "32K  LIGHTER", "24K  LIGHTEST, LESS TREBLE"}; q.cur = rateIdx;
+        q.pick = [&](int j) { if (j == rateIdx) return;
+          if (rec.on()) { rec.stop(engine); if (Module* o = outMod()) o->disp[1].store(0); }   // a recording can't change rate halfway
+          const std::string snap = serializePatch(ui).dump(); const int vx = ui.viewX, vy = ui.viewY;
+          sound.stop(); rateIdx = j; settings.set("rate", Json::number(j)); saveSettings();
+          if (!sound.start(engine, RATES[j])) { rateIdx = 0; sound.start(engine, 0); ui.status("THAT RATE ISN'T AVAILABLE: BACK TO AUTO", 5); }
+          Json js; if (Json::parse(snap, js)) { restoring = true; loadPatch(ui, js); for (auto& up : ui.mods) restoreSound(up.get()); restoring = false; }   // rebuilt at the new rate
+          ui.viewX = vx; ui.viewY = vy; char b[64]; std::snprintf(b, 64, "QUALITY %.1fK SAMPLES A SECOND", engine.sr / 1000); ui.status(b, 4); }; }
+      else if (i == 5) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
-      else if (i == 5) { openTheme(x0); return; }
-      else if (i == 6) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+      else if (i == 6) { openTheme(x0); return; }
+      else if (i == 7) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);

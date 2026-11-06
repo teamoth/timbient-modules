@@ -68,7 +68,7 @@ const Json* patchIn(const Json& f) {
 std::string loadPatch(Ui& ui, const Json& data0) {
   Json data = data0;   // a copy we can adjust for older sessions
   ui.clearPatch();
-  if (const Json* k = data.get("key")) { if (k->get("root")) ui.eng.key.root.store((int)k->num("root")); if (k->get("scale")) ui.eng.key.scale.store((int)k->num("scale")); }
+  if (const Json* k = data.get("key")) { if (k->get("root")) ui.eng.key.root.store((int)k->num("root")); if (k->get("scale")) ui.eng.key.scale.store(std::max(0, std::min((int)scales().size() - 1, (int)k->num("scale")))); }
   if (data.num("bpm", 0) > 0) ui.eng.tempo.bpm.store((float)data.num("bpm"));
   Json* mods = data.getm("mods"); Json* cables = data.getm("cables"); if (!mods || mods->t != Json::ARR) return "THAT FILE HAS NO MODULES";
   // older web sessions: modules that were merged or replaced

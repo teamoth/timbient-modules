@@ -48,7 +48,8 @@ int main(int argc, char** argv) {
       std::vector<float> L(256), R(256), buf; for (int i = 0; i < 20; i++) e2.render(L.data(), R.data(), 256);
       Event ev; ev.note = nt; ev.vel = 1; e2.trigger(v->m->id, 0, ev);
       for (int i = 0; i < 60; i++) { e2.render(L.data(), R.data(), 256); if (i > 20) buf.insert(buf.end(), L.begin(), L.end()); }
-      int best = 0; double bv = -1e18; for (int lag = 40; lag < 1400; lag++) { double sum = 0; for (size_t i = 0; i + lag < buf.size(); i++) sum += buf[i] * buf[i + lag]; sum /= (buf.size() - lag); if (sum > bv) { bv = sum; best = lag; } }
+      std::vector<double> ac(1400, 0.0); double bv = -1e18; for (int lag = 20; lag < 1400; lag++) { double sum = 0; for (size_t i = 0; i + lag < buf.size(); i++) sum += buf[i] * buf[i + lag]; ac[lag] = sum / (buf.size() - lag); bv = std::max(bv, ac[lag]); }
+      int best = 0; for (int lag = 21; lag < 1399 && !best; lag++) if (ac[lag] >= 0.9 * bv && ac[lag] >= ac[lag - 1] && ac[lag] >= ac[lag + 1]) best = lag;   // the shortest repeat that matches nearly as well as any
       const double per = 48000.0 / mtof(nt), k = std::round(best / per), err = std::fabs(best / per - k);
       lags[li++] = best; if (k < 1 || err > 0.06) ok = false; std::snprintf(msg + std::strlen(msg), 80, "  note %.0f repeats every %d (expect %.0f)", nt, best, per); e2.collectGarbage(); }
     if (std::fabs((double)lags[0] / std::max(1, lags[1]) - 1) < 0.1) ok = false;   // the two notes must not come out the same

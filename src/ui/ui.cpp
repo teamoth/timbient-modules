@@ -17,7 +17,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "midi", "midiout"}},
   {"VOICES", {"tone", "pluck", "bell", "mi", "grains", "glass", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "crush", "mixer"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "crush", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -204,6 +204,16 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     }
     if (!smp) { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, 12);
       const int n = (int)D(1); for (int k = 0; k < n && k < 30; k++) c.px(x + (int)std::lround(clampf(D(2 + k), 0, 1) * (w - 1)), y + 6 + (int)(std::rand() % 9) - 4, 4); }
+  } else if (ty == "listen") {   // what key and scale it hears, how sure it is, the runner-up, and the 12 notes it's hearing
+    const int r = (int)D(0), sc = std::max(0, std::min((int)scales().size() - 1, (int)D(1))), r2 = (int)D(3), sc2 = std::max(0, std::min((int)scales().size() - 1, (int)D(4)));
+    if (D(2) <= 0 && D(18) < 1e-6f) c.text("LISTENING...", x + 1, y + 1, 18);
+    else { const std::string b1 = std::string(NOTE_NAMES[r % 12]) + " " + scales()[sc].name, p1 = std::to_string((int)std::lround(D(2) * 100)) + "%";
+      c.text(b1.substr(0, 12), x + 1, y + 1, 4); c.text(p1, x + w - 1 - Canvas::tw(p1), y + 1, 9);
+      const std::string b2 = std::string("OR ") + NOTE_NAMES[r2 % 12] + " " + scales()[sc2].name; c.text(b2.substr(0, 15), x + 1, y + 8, 18); }
+    bool inSc[12] = {false}; for (int st : scales()[sc].steps) inSc[(r + st) % 12] = true;
+    const int bw = std::max(2, (w - 2) / 12);
+    for (int i = 0; i < 12; i++) { const int h = (int)std::lround(clampf(D(6 + i), 0, 1) * 9), bx = x + 1 + i * bw; c.px(bx, y + 25, 21);
+      if (h > 0) c.rect(bx, y + 25 - h, bw - 1, h, inSc[i] ? (i == r ? 4 : 11) : 21); }
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
@@ -527,6 +537,10 @@ void Ui::pointerDown(float sx, float sy) {
       if (d->type == "tracker" && q.key == "clear") {   // ask first: this wipes every step
         Dropdown z; z.items = {"CLEAR EVERY STEP?", "YES, CLEAR ALL", "NO, KEEP THEM"}; z.title = 0; z.danger = 1; z.x = u->x - viewX + 8; z.y = u->y - viewY + g.py + pj * ROW + 4;
         z.pick = [this, u](int i) { if (i == 1) { eng.action(u->m->id, "clear"); u->scroll = 0; status("TRACKER CLEARED"); } }; openDropdown(z); return; }
+      if (d->type == "listen" && q.key == "use") {   // set the app's key and scale to what it hears
+        if (u->m->disp[2].load() <= 0) { status("NOTHING HEARD YET"); return; }
+        const int r = (int)u->m->disp[0].load(), sc = (int)u->m->disp[1].load(); eng.key.root.store(r); eng.key.scale.store(sc);
+        status(std::string("KEY ") + NOTE_NAMES[r % 12] + " " + scales()[sc].name + ": THE SEQUENCERS FOLLOW IT NOW", 4); changed(); return; }
       if (onAction && onAction(u, q.key)) return;
       eng.action(u->m->id, q.key); return; }
     if (!q.opts.empty()) {
@@ -571,6 +585,18 @@ void Ui::pointerUp(float sx, float sy) {
       const int mi = m->m->def->paramIndex("mix"); if (mi >= 0) m->m->p[mi].store(0);   // fully dry, as the web version does, so nothing jumps out
       status("INSERTED " + m->m->def->name + (mi >= 0 ? " (FULLY DRY: RAISE ITS MIX)" : ""), 4); }
     changed(); return; }
+  if (d.kind == D_PARAM && !d.moved && !d.held && (d.m->m->def->params[d.k].key == "pitch" || (d.m->m->def->type == "midiout" && d.m->m->def->params[d.k].key == "trans"))) {
+    // a tap on PITCH: jump by octaves (on Sample, pitch is speed, so the speeds are named too)
+    const ModuleDef* df = d.m->m->def; const int k = d.k, id = d.m->m->id; const bool smp = df->type == "sample", grains = df->type == "looper";
+    static const int V[5] = {-24, -12, 0, 12, 24};
+    static const char* SMP[5] = {"QUARTER SPEED  -24", "HALF SPEED  -12", "NORMAL SPEED  0", "DOUBLE SPEED  +12", "4X SPEED  +24"};
+    static const char* GRN[5] = {"-24  GRAINS 2 OCT DOWN", "-12  GRAINS 1 OCT DOWN", "0  AS RECORDED", "+12  GRAINS 1 OCT UP", "+24  GRAINS 2 OCT UP"};
+    static const char* NRM[5] = {"-24  2 OCTAVES DOWN", "-12  1 OCTAVE DOWN", "0", "+12  1 OCTAVE UP", "+24  2 OCTAVES UP"};
+    Dropdown z; z.x = d.m->x - viewX + 30; z.y = d.m->y - viewY + geom(*d.m).py + k * ROW + 4;
+    for (int i = 0; i < 5; i++) { z.items.push_back(smp ? SMP[i] : grains ? GRN[i] : NRM[i]); if ((int)std::lround(d.m->m->p[k].load()) == V[i]) z.cur = i; }
+    z.pick = [this, id, k, smp](int i) { UiMod* t = byId(id); if (!t) return; t->m->p[k].store((float)V[i]);
+      status(t->m->def->name + " " + t->m->def->params[k].label + " " + (smp ? std::string(SMP[i]) : std::to_string(V[i])), 2); changed(); };
+    openDropdown(z); return; }
   if (d.kind == D_PARAM && !d.moved && !d.held) { const ParamDef& q = d.m->m->def->params[d.k]; status(d.m->m->def->name + "  " + q.label + "  " + fmtParam(q, d.m->m->p[d.k].load(), eng.key.root.load()) + "  (DRAG SIDEWAYS)", 2.5f); return; }
   if (d.kind == D_MOVE || d.kind == D_PARAM || d.kind == D_XFADE) { changed(); return; }
   if (d.kind != D_CABLE) return;

@@ -204,4 +204,44 @@ struct Stretch : Module {
 static Reg rStretch(new ModuleDef{"stretch", "STRETCH", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {ST("amt", "STRETCH", 2, 40, 10), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("mix", "MIX", 1)}, 0, 68, false, [] { return new Stretch(); }});
 
+// ---------------- LISTEN: hears which key and scale a sound is in ----------------
+// Every 1/10 s or so it takes the last 8192 samples, measures how strongly each of the 12 note names sounds
+// (its "chroma"), lets that build up over TIME seconds, then compares it with every key and scale: a scale scores
+// well when its notes are the ones heard and its other notes aren't, with the key's root and fifth counting a little extra.
+struct Listen : Module {
+  enum { TIME, USE };
+  static constexpr int N = 8192, HOP = 4096;
+  FFT fft{N}; std::vector<float> rg, win, re, im; long w = 0; int sinceFrame = 0; float chroma[12] = {0}, level = 0;
+  void prepare() override { rg.assign(N, 0.f); win.resize(N); for (int i = 0; i < N; i++) win[i] = 0.5f - 0.5f * std::cos(TAU * i / N); re.assign(N, 0); im.assign(N, 0); }
+  void frame() {
+    for (int i = 0; i < N; i++) { re[i] = rg[(size_t)((w + i) % N)] * win[i]; im[i] = 0; }
+    fft.run(re.data(), im.data(), false);
+    float now[12] = {0}, tot = 0;
+    for (int k = 1; k < N / 2; k++) { const float f = k * sr / N; if (f < 55 || f > 4000) continue;
+      const float mag = std::hypot(re[k], im[k]); const float midi = 69 + 12 * std::log2(f / 440); const int pc = (((int)std::lround(midi)) % 12 + 12) % 12;
+      now[pc] += mag; tot += mag; }
+    const float rms = tot / N; level += (rms - level) * 0.3f;
+    if (tot < 1e-3f) return;   // silence: keep what it heard before
+    const float k = 1 - std::exp(-(HOP / sr) / std::max(0.5f, e[TIME]));
+    for (int i = 0; i < 12; i++) chroma[i] += (now[i] / tot - chroma[i]) * k;
+    // match against every key and scale
+    float mean = 0; for (float c : chroma) mean += c; mean /= 12; float cv = 0; for (float c : chroma) cv += (c - mean) * (c - mean);
+    float best = -2, second = -2; int br = 0, bs = 0, sr2 = 0, ss = 0;
+    if (cv > 1e-9f) for (int sc = 0; sc < (int)scales().size(); sc++) { const auto& st = scales()[sc].steps; if (st.size() >= 12) continue;
+      for (int r = 0; r < 12; r++) { float t[12] = {0}; for (int d : st) t[(r + d) % 12] = 1; t[r] = 1.6f; t[(r + 7) % 12] *= (t[(r + 7) % 12] > 0 ? 1.15f : 1);
+        float tm = 0; for (float x : t) tm += x; tm /= 12; float num = 0, tv = 0; for (int i = 0; i < 12; i++) { num += (chroma[i] - mean) * (t[i] - tm); tv += (t[i] - tm) * (t[i] - tm); }
+        const float corr = num / std::sqrt(cv * tv) - 0.004f * st.size();   // a nudge towards the smaller scale when two explain it equally
+        if (corr > best) { if (!(r == br && sc == bs)) { second = best; sr2 = br; ss = bs; } best = corr; br = r; bs = sc; }
+        else if (corr > second && !(r == br && sc == bs)) { second = corr; sr2 = r; ss = sc; } } }
+    disp[0].store((float)br); disp[1].store((float)bs); disp[2].store(clampf(best, 0, 1)); disp[3].store((float)sr2); disp[4].store((float)ss); disp[5].store(clampf(second, 0, 1));
+  }
+  void render(int a, int b) override {
+    for (int i = a; i < b; i++) { const float x = 0.5f * (in[0][0][i] + in[0][1][i]); rg[(size_t)(w % N)] = x; w++; out[0][0][i] = in[0][0][i]; out[0][1][i] = in[0][1][i];   // it passes the sound straight through
+      if (++sinceFrame >= HOP) { sinceFrame = 0; frame(); } }
+    float mx = 1e-6f; for (float c : chroma) mx = std::max(mx, c); for (int i = 0; i < 12; i++) disp[6 + i].store(chroma[i] / mx); disp[18].store(level);
+  }
+};
+static Reg rListen(new ModuleDef{"listen", "LISTEN", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
+  {T("time", "LISTEN", 1, 60, 8), ACT("use", "USE THIS KEY")}, 26, 68, false, [] { return new Listen(); }});
+
 }  // namespace tb

@@ -9,7 +9,14 @@ const char* NOTE_NAMES[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "
 const std::vector<ScaleDef>& scales() {
   static const std::vector<ScaleDef> s = {
     {"YO", {0, 2, 5, 7, 9}}, {"IN", {0, 1, 5, 7, 8}}, {"MIN PENTA", {0, 3, 5, 7, 10}}, {"MAJ PENTA", {0, 2, 4, 7, 9}},
-    {"DORIAN", {0, 2, 3, 5, 7, 9, 10}}, {"LYDIAN", {0, 2, 4, 6, 7, 9, 11}}, {"HIRAJOSHI", {0, 2, 3, 7, 8}}, {"WHOLE TONE", {0, 2, 4, 6, 8, 10}}};
+    {"DORIAN", {0, 2, 3, 5, 7, 9, 10}}, {"LYDIAN", {0, 2, 4, 6, 7, 9, 11}}, {"HIRAJOSHI", {0, 2, 3, 7, 8}}, {"WHOLE TONE", {0, 2, 4, 6, 8, 10}},
+    // added later: the first eight keep their places, so saved sessions open in the same scale
+    {"MAJOR", {0, 2, 4, 5, 7, 9, 11}}, {"NAT MINOR", {0, 2, 3, 5, 7, 8, 10}}, {"PHRYGIAN", {0, 1, 3, 5, 7, 8, 10}}, {"MIXOLYDIAN", {0, 2, 4, 5, 7, 9, 10}},
+    {"LOCRIAN", {0, 1, 3, 5, 6, 8, 10}}, {"HARM MINOR", {0, 2, 3, 5, 7, 8, 11}}, {"MEL MINOR", {0, 2, 3, 5, 7, 9, 11}},
+    {"IWATO", {0, 1, 5, 6, 10}}, {"KUMOI", {0, 2, 3, 7, 9}}, {"INSEN", {0, 1, 5, 7, 10}}, {"EGYPTIAN", {0, 2, 5, 7, 10}}, {"BLUES", {0, 3, 5, 6, 7, 10}},
+    {"PELOG", {0, 1, 3, 7, 8}}, {"DOUBLE HARM", {0, 1, 4, 5, 7, 8, 11}}, {"HUNGARIAN", {0, 2, 3, 6, 7, 8, 11}}, {"PROMETHEUS", {0, 2, 4, 6, 9, 10}},
+    {"PERSIAN", {0, 1, 4, 5, 6, 8, 11}}, {"ENIGMATIC", {0, 1, 4, 6, 8, 10, 11}}, {"AUGMENTED", {0, 3, 4, 7, 8, 11}}, {"DIMINISHED", {0, 2, 3, 5, 6, 8, 9, 11}},
+    {"CHROMATIC", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}}};
   return s;
 }
 float midiOf(int i, int root, int scale) {
