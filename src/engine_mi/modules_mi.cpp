@@ -1,6 +1,11 @@
 // Timbient native: MI VOICES, the synthesis voices of Mutable Instruments' Plaits (by Emilie Gillet, MIT licence; see
 // third_party/mutable/LICENSE). Each note gets its own Plaits voice; six can sound at once, and the oldest gives way.
 // ENVELOPE NATURAL lets Plaits' own low-pass gate shape each note (LPG DEC, COLOUR); ADSR drives the gate from the usual envelope.
+#define _USE_MATH_DEFINES   // M_PI on Windows
+#include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #define TEST   // build Plaits for a computer rather than its own chip
 #include "plaits/dsp/voice.h"
 #undef TEST
