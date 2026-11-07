@@ -73,7 +73,8 @@ public:
   std::function<void(const std::string&)> onPreview;                     // play a file to the speakers (empty: stop)
   std::function<void(int, int, const std::string&)> onBrowseLoad;        // put a file in a module's place
   std::function<void()> onBrowseFolder;                                  // ask the system for a folder
-  std::function<void(int, int)> onBrowseFile;                            // the system's own file picker instead
+  std::function<void(int, int)> onBrowseFile;
+  std::function<bool(const std::string&, std::vector<Browser::Entry>&)> onList;   // a folder's contents (the app does this with SDL)                            // the system's own file picker instead
   // a small box for typing a name
   struct Ask { std::string title, text; std::function<void(const std::string&)> done; };
   std::unique_ptr<Ask> ask;

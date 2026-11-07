@@ -173,6 +173,11 @@ int main(int argc, char** argv) {
   ui.onBrowseLoad = [&](int id, int slot, const std::string& path) {
     settings.set("browseDir", Json::string(ui.br.dir)); saveSettings();
     std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, path, id, slot}); };
+  ui.onList = [](const std::string& dir, std::vector<Ui::Browser::Entry>& out) {
+    struct Ctx { std::string dir; std::vector<Ui::Browser::Entry>* out; } ctx{dir, &out};
+    return SDL_EnumerateDirectory(dir.c_str(), [](void* ud, const char* d, const char* name) -> SDL_EnumerationResult {
+      Ctx* c = (Ctx*)ud; SDL_PathInfo info; std::string full = d; if (!full.empty() && full.back() != '/' && full.back() != '\\') full += "/"; full += name;
+      const bool folder = SDL_GetPathInfo(full.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY; c->out->push_back({name, folder}); return SDL_ENUM_CONTINUE; }, &ctx); };
   ui.onBrowseFolder = [&]() { const std::string d = ui.br.dir; SDL_ShowOpenFolderDialog(onFolderDialog, nullptr, win, d.empty() ? nullptr : d.c_str(), false); };
   ui.onBrowseFile = [&](int id, int slot) { const UiMod* u = ui.byId(id); const bool many = slot < 0 && u && u->m->def->type == "sample";
     SDL_ShowOpenFileDialog(onAudioDialog, (void*)(((intptr_t)id << 8) | (intptr_t)(slot + 1)), win, AUDIO_FILTER, 1, nullptr, many); };

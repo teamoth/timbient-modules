@@ -2,10 +2,8 @@
 #include "ui.h"
 #include <algorithm>
 #include <cctype>
-#include <filesystem>
 
 namespace tb {
-namespace fs = std::filesystem;
 static const int TOP = 10;   // the top bar, as in ui.cpp
 
 static std::string upper(std::string s) { for (auto& ch : s) ch = (char)std::toupper((unsigned char)ch); return s; }
@@ -22,21 +20,23 @@ void Ui::openBrowser(int targetId, int slot, const std::string& dir) {
 }
 void Ui::closeBrowser() { if (br.playing >= 0 && onPreview) onPreview(""); br.open = false; br.playing = -1; }
 
+static std::string parentOf(std::string d) {   // the folder above ("/a/b/" -> "/a", "C:\\x" -> "C:\\"), or "" at the top
+  while (d.size() > 1 && (d.back() == '/' || d.back() == '\\') && !(d.size() == 3 && d[1] == ':')) d.pop_back();
+  const size_t s = d.find_last_of("/\\"); if (s == std::string::npos) return "";
+  if (s + 1 == d.size()) return "";   // already at the top: "/" or "C:\\"
+  if (s == 0) return d.substr(0, 1); if (s == 2 && d[1] == ':') return d.substr(0, 3); return d.substr(0, s);
+}
+
 void Ui::browseTo(const std::string& dir) {
   br.items.clear(); br.sel = -1; br.scroll = 0; br.err.clear();
   if (br.playing >= 0 && onPreview) onPreview(""); br.playing = -1;
-  std::error_code ec; fs::path p = fs::u8path(dir); fs::path abs = fs::absolute(p, ec); if (!ec) p = abs;
-  br.dir = p.u8string();
-  std::vector<Browser::Entry> folders, files;
-  fs::directory_iterator it(p, fs::directory_options::skip_permission_denied, ec), end;
-  if (ec) { br.err = "THIS FOLDER CAN'T BE READ"; return; }
-  for (; it != end; it.increment(ec)) {
-    if (ec) break; const std::string n = it->path().filename().u8string(); if (n.empty() || n[0] == '.') continue;
-    std::error_code e2; if (it->is_directory(e2)) folders.push_back({n, true}); else if (isSound(n)) files.push_back({n, false});
-  }
+  br.dir = dir;
+  std::vector<Browser::Entry> all, folders, files;
+  if (!onList || !onList(dir, all)) { br.err = "THIS FOLDER CAN'T BE READ"; if (!parentOf(dir).empty()) br.items.push_back({"..", true}); return; }
+  for (auto& e : all) { if (e.name.empty() || e.name[0] == '.') continue; if (e.folder) folders.push_back(e); else if (isSound(e.name)) files.push_back(e); }
   auto byName = [](const Browser::Entry& a, const Browser::Entry& b) { return upper(a.name) < upper(b.name); };
   std::sort(folders.begin(), folders.end(), byName); std::sort(files.begin(), files.end(), byName);
-  if (p.has_parent_path() && p.parent_path() != p) br.items.push_back({"..", true});
+  if (!parentOf(dir).empty()) br.items.push_back({"..", true});
   br.items.insert(br.items.end(), folders.begin(), folders.end()); br.items.insert(br.items.end(), files.begin(), files.end());
   if (files.empty() && folders.empty()) br.err = "NO SOUND FILES HERE";
 }
@@ -47,7 +47,7 @@ void Ui::browserScroll(float rows) {
 
 void Ui::browserPick(int i) {   // a tap on a row: open a folder, or hear a sound (a second tap stops it)
   if (i < 0 || i >= (int)br.items.size()) return; const auto& e = br.items[i];
-  if (e.folder) { if (e.name == "..") browseTo(std::filesystem::u8path(br.dir).parent_path().u8string()); else browseTo(joinPath(br.dir, e.name)); return; }
+  if (e.folder) { if (e.name == "..") browseTo(parentOf(br.dir)); else browseTo(joinPath(br.dir, e.name)); return; }
   br.sel = i;
   if (br.playing == i) { if (onPreview) onPreview(""); br.playing = -1; return; }
   if (onPreview) onPreview(joinPath(br.dir, e.name)); br.playing = i;
