@@ -22,8 +22,15 @@ static Reg rFilter(new ModuleDef{"filter", "FILTER", Cat::Proc, {{"IN", PType::A
 // ---------------- ECHO: a ping-pong pair with a darkening feedback loop ----------------
 struct Echo : Module {
   DelayLine dl, dr; Biquad lp; Smooth tl, trr, fb, dry, wet; float lastR = 0;
-  enum { SYNC, TIME, SPREAD, FB, TONE, MIX };
-  float secs() const { static const float B[9] = {0, 0.25f, 1 / 3.f, 0.5f, 0.75f, 1, 1.5f, 2, 4}; const int s = (int)e[SYNC]; return s > 0 ? std::min(7.5f, B[s] * 60.f / eng->tempo.bpm.load(std::memory_order_relaxed)) : e[TIME]; }   // in beats of the shared tempo, or free
+  double last = -1; float cp = 0, ppb = 1;   // the clock patched into CLOCK: how far apart its pulses are
+  enum { TIME, DIV, SPREAD, FB, TONE, MIX };
+  // free: TIME. With a clock patched in: a note length of that clock's beat
+  float secs() const { static const float B[8] = {0.25f, 1 / 3.f, 0.5f, 0.75f, 1, 1.5f, 2, 4};
+    return clockedIn.load(std::memory_order_relaxed) && cp > 0 ? std::min(7.5f, B[(int)e[DIV]] * cp * ppb) : e[TIME]; }
+  void blockStart(int) override { clockedIn.store(patched(1)); }
+  void trig(int port, const Event& ev) override { if (port != 1) return; const double now = t + eng->pos / sr;
+    if (ev.period > 0) cp = ev.period; else if (last >= 0) { const float p = (float)(now - last); if (p > 0.01f && p < 8) cp = cp > 0 ? cp * 0.6f + p * 0.4f : p; }
+    last = now; ppb = ev.ppb > 0 ? ev.ppb : (ppb > 0 ? ppb : 1); }
   void prepare() override { dl.init(8, sr); dr.init(8, sr); for (Smooth* s : {&tl, &trr}) s->setTime(0.3f, sr); for (Smooth* s : {&fb, &dry, &wet}) s->setTime(0.012f, sr);
     tl.snap(secs() * sr); trr.snap(std::min(7.9f, secs() * (1 + e[SPREAD] * 0.6f)) * sr); fb.snap(e[FB]); dry.snap(1 - e[MIX]); wet.snap(e[MIX]); }
   void render(int a, int b) override {
@@ -40,8 +47,9 @@ struct Echo : Module {
     }
   }
 };
-static Reg rEcho(new ModuleDef{"echo", "ECHO", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {OP("sync", "TEMPO", {"FREE", "1/16", "1/8T", "1/8", "1/8 DOT", "1/4", "1/4 DOT", "1/2", "1 BAR"}, 0), only(T("time", "TIME", 0.05f, 4, 0.71f), "esync"), pct("spread", "WIDTH", 0.6f), pr("fb", "FEEDBACK", 0, 0.95f, 0.5f), prHz("tone", "TONE", 300, 8000, 1600), pct("mix", "MIX", 0.4f)}, 0, 68, false, [] { return new Echo(); }});
+static Reg rEcho(new ModuleDef{"echo", "ECHO", Cat::Proc, {{"IN", PType::Audio}, {"CLOCK", PType::Trig}}, {{"OUT", PType::Audio}},
+  {only(T("time", "TIME", 0.05f, 4, 0.71f), "free"), only(OP("div", "NOTE", {"1/16", "1/8T", "1/8", "1/8 DOT", "1/4", "1/4 DOT", "1/2", "1 BAR"}, 4), "clock"),
+   pct("spread", "WIDTH", 0.6f), pr("fb", "FEEDBACK", 0, 0.95f, 0.5f), prHz("tone", "TONE", 300, 8000, 1600), pct("mix", "MIX", 0.4f)}, 0, 68, false, [] { return new Echo(); }});
 
 // ---------------- REVERB: eight damped feedback combs per side and four diffusers, any length for the same cost ----------------
 struct Reverb : Module {

@@ -40,7 +40,7 @@ public:
   std::function<bool(UiMod*, const std::string&)> onAction;   // the app's own handling of some buttons (LOAD FILE, RECORD...); true if it took it
 
   // building a patch
-  UiMod* add(const std::string& type, int x, int y);
+  UiMod* add(const std::string& type, int x, int y, int id = 0);   // id: put back with the number it had (undo)
   void remove(UiMod* u);
   bool connect(UiMod* a, int outPort, UiMod* b, int inPort);
   bool connect(UiMod* a, const std::string& outPort, UiMod* b, const std::string& inPort);
@@ -82,7 +82,7 @@ public:
   void typed(const std::string& t);      // text typed while the box is open
   void keyEnter(); void keyBackspace(); void keyEscape();
 
-  struct Geom { int jr, vy, py, h, w; };
+  struct Geom { int jr, vy, py, h, w, vh; };   // vh: the display's height (the Tracker's grows with its rows)
   Geom geom(const UiMod& u) const;
   // the top bar: extra buttons the app adds (sessions, settings...)
   struct BarBtn { std::string label; std::function<void(int x)> fn; int col = 9; };
@@ -99,18 +99,28 @@ private:
   void drawCable(Canvas& c, int ax, int ay, int bx, int by, int col);
   void drawJack(Canvas& c, int x, int y, PType t, bool filled, bool lit);
   int jackY(int k) const { return 8 + k * 7 + 3; }
+public:
+  bool unplugSelected();   // Delete / Backspace, or the UNPLUG button
+  bool jacksIn = false;   // SCREEN setting: jacks drawn inside the module's edge instead of on it
+  int inJackX(const UiMod& u) const { return u.x + (jacksIn ? 4 : 0); }
+  int outJackX(const UiMod& u) const { return u.x + u.m->def->width - 1 - (jacksIn ? 4 : 0); }
+  int sockX(const UiMod& u) const { return u.x + (jacksIn ? 4 : -2); }
+  int minusX(const UiMod& u, int j) const;   // where a slider row's "-" sits, from the module's left
+private:
   void keysPress(UiMod& u, int x, int y);
   void drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt);
   void trackerWatch(UiMod& u);
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
-    JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; int dir = 0; UiCable grab{}; int splice = -1; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE };
+    JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL };
   // cables as curves you can touch
   bool cableEnds(const UiCable& c, float& ax, float& ay, float& bx, float& by);
   int cableAt(int wx, int wy, float maxD, bool audioOnly = false);
   std::string cableName(const UiCable& c);
   UiCable sel{}; float selT = 0;      // a cable tapped: shown brighter for a moment
+  bool selOn = false; int ubx = 0, uby = 0;   // ...with an UNPLUG button beside it: the only way to take a cable out
+  void selectCable(const UiCable& c, float sx, float sy);
   struct TempoPanel { bool open = false; int x = 0, y = 0; } tp; std::vector<float> taps;
   static constexpr int TPW = 126, TPH = 31;
   void setBpm(float v);

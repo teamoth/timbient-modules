@@ -11,6 +11,9 @@ namespace tb {
 Json serializePatch(Ui& ui);
 // rebuild the patch from a session; returns a note about anything that couldn't come across (or "")
 std::string loadPatch(Ui& ui, const Json& data);
+// undo / redo: change the patch on screen into a remembered one, touching only what differs, so sequencers keep
+// their place and sounds stay loaded. Sound places that changed are listed (module, place) for the app to reload
+void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& soundsChanged);
 // accepts a plain patch, {timbient:'patch', data}, or {timbient:'sessions', sessions:[...]} (the first is loaded)
 const Json* patchIn(const Json& file);
 

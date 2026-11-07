@@ -60,6 +60,13 @@ int main(int argc, char** argv) {
   { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* h = ui.add("hops", 0, 0); ui.set(h, "rate", 20);
     for (const ModuleDef* d : allDefs()) if (d->cat == Cat::Voice) { UiMod* v = ui.add(d->type, 0, 0); ui.connect(h, "TRIG", v, "TRIG"); ui.connect(v, "OUT", out, "A"); }
     const Result r = run(eng, 6); std::printf("ALL VOICES, 20 NOTES/S: peak %.3f cost %.1f%%%s\n", r.peak, r.cost, r.bad ? " NOT FINITE" : ""); }
+  // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
+  { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
+    ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);
+    const std::string B = serializePatch(ui).dump(); std::vector<std::pair<UiMod*, int>> sc;
+    Json ja; Json::parse(A, ja); applyPatch(ui, ja, sc); run(eng, 0.1f); const bool u1 = serializePatch(ui).dump() == A && ui.mods[0]->m == first;
+    Json jb; Json::parse(B, jb); applyPatch(ui, jb, sc); run(eng, 0.1f); const bool u2 = serializePatch(ui).dump() == B;
+    std::printf("undo %s, redo %s\n", u1 ? "ok" : "WRONG", u2 ? "ok" : "WRONG"); if (!u1 || !u2) fails++; }
   if (argc > 1) {
     Json f; if (!Json::parse(readFile(argv[1]), f)) { std::printf("could not read %s\n", argv[1]); return 1; }
     const Json* data = patchIn(f); const std::string note = loadPatch(ui, *data); std::printf("loaded: %s\n", note.empty() ? "everything" : note.c_str());

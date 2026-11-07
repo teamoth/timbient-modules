@@ -59,6 +59,56 @@ Json serializePatch(Ui& ui) {
   return d;
 }
 
+void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& changed) {
+  if (const Json* k = data.get("key")) { ui.eng.key.root.store((int)k->num("root")); ui.eng.key.scale.store(std::max(0, std::min((int)scales().size() - 1, (int)k->num("scale")))); }
+  if (data.num("bpm", 0) > 0) ui.eng.tempo.bpm.store((float)data.num("bpm"));
+  const Json* mods = data.get("mods"); if (!mods || mods->t != Json::ARR) return;
+  // modules that aren't in the remembered patch go
+  std::vector<UiMod*> gone;
+  for (auto& up : ui.mods) { bool keep = false; for (auto& m : mods->a) if ((int)m.num("id") == up->m->id && m.str("type") == up->m->def->type) keep = true; if (!keep && !up->m->def->fixed) gone.push_back(up.get()); }
+  for (UiMod* u : gone) ui.remove(u);
+  std::vector<UiMod*> order;
+  for (auto& m : mods->a) {
+    const std::string ty = m.str("type"); const ModuleDef* def = findDef(ty); if (!def) continue; const int id = (int)m.num("id");
+    UiMod* u = ui.byId(id); if (u && u->m->def != def) u = nullptr;
+    if (!u && def->fixed) for (auto& up : ui.mods) if (up->m->def == def) u = up.get();
+    bool fresh = false; if (!u) { u = ui.add(ty, (int)m.num("x"), (int)m.num("y"), id); fresh = true; } if (!u) continue;
+    order.push_back(u); u->x = (int)m.num("x"); u->y = (int)m.num("y");
+    const Json* p = m.get("p");
+    for (size_t k = 0; k < def->params.size(); k++) { if (def->params[k].act) continue; const Json* v = p ? p->get(def->params[k].key) : nullptr; if (v && v->t == Json::NUM && u->m->p[k].load() != (float)v->n) u->m->p[k].store((float)v->n); }
+    if (u->m->seq) { const Json* sq = p ? p->get("seq") : nullptr;   // the Tracker's steps (the playhead carries on)
+      for (int i = 0; i < Module::SEQ_MAX; i++) { float nt = -1, vel = 0.8f;
+        if (sq && sq->t == Json::ARR && i < (int)sq->a.size()) { const Json& st = sq->a[i]; if (st.t == Json::ARR && !st.a.empty() && st.a[0].t == Json::NUM) { nt = (float)st.a[0].n; if (st.a.size() > 1 && st.a[1].t == Json::NUM) vel = (float)st.a[1].n; } }
+        if (u->m->seq[i * 2].load() != nt) u->m->seq[i * 2].store(nt); if (nt >= 0 && u->m->seq[i * 2 + 1].load() != vel) u->m->seq[i * 2 + 1].store(vel); } }
+    UiMod::Snd want[UiMod::SLOTS]; if (p) { const std::string aid = p->str("audio"); if (!aid.empty()) want[0].id = aid;
+      if (const Json* a = p->get("sounds")) if (a->t == Json::ARR) for (size_t k = 0; k < a->a.size() && k < (size_t)UiMod::SLOTS; k++) { const Json& e = a->a[k];
+        if (e.t == Json::ARR && !e.a.empty() && e.a[0].t == Json::STR) { want[k].id = e.a[0].s; if (e.a.size() > 1 && e.a[1].t == Json::NUM) want[k].root = (float)e.a[1].n; if (e.a.size() > 2 && e.a[2].t == Json::STR) want[k].name = e.a[2].s; } } }
+    for (int k = 0; k < UiMod::SLOTS; k++) {
+      if (u->snd[k].id != want[k].id || (fresh && !want[k].id.empty())) { u->snd[k] = want[k]; changed.push_back({u, k}); }
+      else if (u->snd[k].root != want[k].root || u->snd[k].name != want[k].name) { u->snd[k].root = want[k].root; u->snd[k].name = want[k].name; } 
+      u->m->roots[k].store(u->snd[k].root); }
+    if (p) u->dev = p->str("dev");
+    u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold");
+  }
+  // the same stacking order as then
+  std::stable_sort(ui.mods.begin(), ui.mods.end(), [&](const std::unique_ptr<UiMod>& a, const std::unique_ptr<UiMod>& b) {
+    auto at = [&](const UiMod* x) { for (size_t i = 0; i < order.size(); i++) if (order[i] == x) return (int)i; return (int)order.size(); }; return at(a.get()) < at(b.get()); });
+  // cables: take out the ones that weren't there, put back the ones that were
+  struct Want { int f, fp, t, tp, tq; PType ty; }; std::vector<Want> want;
+  if (const Json* cs = data.get("cables")) if (cs->t == Json::ARR) for (auto& c : cs->a) {
+    UiMod *a = ui.byId((int)c.num("f")), *b = ui.byId((int)c.num("t")); if (!a || !b) continue; const std::string ty = c.str("ty");
+    const int fp = a->m->def->outIndex(c.str("fp")); if (fp < 0) continue;
+    if (ty == "mod") { const int pk = b->m->def->paramIndex(c.str("tq")); if (pk >= 0) want.push_back({a->m->id, fp, b->m->id, -1, pk, PType::Mod}); }
+    else { const int tp = b->m->def->inIndex(c.str("tp")); if (tp >= 0) want.push_back({a->m->id, fp, b->m->id, tp, -1, a->m->def->outs[fp].type}); } }
+  auto same = [](const UiCable& c, const Want& w) { return c.from == w.f && c.fromPort == w.fp && c.to == w.t && (w.ty == PType::Mod ? c.type == PType::Mod && c.toParam == w.tq : c.type != PType::Mod && c.toPort == w.tp); };
+  const std::vector<UiCable> now = ui.cables;
+  for (auto& c : now) { bool keep = false; for (auto& w : want) if (same(c, w)) keep = true; if (!keep) ui.unplug(c); }
+  for (auto& w : want) { bool have = false; for (auto& c : ui.cables) if (same(c, w)) have = true; if (have) continue;
+    UiMod *a = ui.byId(w.f), *b = ui.byId(w.t); if (w.ty == PType::Mod) ui.modulate(a, b, w.tq); else ui.connect(a, w.fp, b, w.tp); }
+  std::stable_sort(ui.cables.begin(), ui.cables.end(), [&](const UiCable& x, const UiCable& y) {   // in the remembered order too
+    auto at = [&](const UiCable& c) { for (size_t i = 0; i < want.size(); i++) if (same(c, want[i])) return (int)i; return (int)want.size(); }; return at(x) < at(y); });
+}
+
 const Json* patchIn(const Json& f) {
   if (f.str("timbient") == "patch") return f.get("data");
   if (f.str("timbient") == "sessions") { const Json* s = f.get("sessions"); if (s && s->t == Json::ARR && !s->a.empty()) return s->a[0].get("data"); return nullptr; }
@@ -77,6 +127,9 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (ty == "ping") { const double r = p->num("ratio", 3.5), dc = p->num("decay", 0.35), ix = p->num("index", 0.5); m.set("type", Json::string("fm2"));
       p->set("ratio", Json::number(std::round(r * 2) / 2)); p->set("index", Json::number(std::min(10.0, (0.2 + ix * 4) / r * 3))); p->set("idec", Json::number(dc * 0.4)); p->set("isus", Json::number(0)); p->set("hold", Json::number(0.02)); p->set("rel", Json::number(dc * 1.5)); }
     if (ty == "drone") { m.set("type", Json::string("pad")); }
+    if (ty == "echo" && p->get("sync") && !p->get("div")) {   // ECHO's TEMPO setting became a CLOCK input: keep the same echo length, free
+      static const double B[9] = {0, 0.25, 1 / 3.0, 0.5, 0.75, 1, 1.5, 2, 4}; const int sy = std::max(0, std::min(8, (int)p->num("sync")));
+      if (sy > 0) { const double bpm = data.num("bpm", 72) > 0 ? data.num("bpm", 72) : 72; p->set("time", Json::number(std::max(0.05, std::min(4.0, B[sy] * 60 / bpm)))); p->set("div", Json::number(sy - 1)); } }
     if ((ty == "clock" || ty == "tracker") && !p->get("sync")) p->set("sync", Json::number(0));   // older sessions keep their own tempos
   }
   // sessions from before the modules grew 8 wider for their - and + buttons: spread them out so they don't overlap

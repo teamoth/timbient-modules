@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.11.0";
+static const char* VERSION = "0.12.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -156,7 +156,11 @@ int main(int argc, char** argv) {
     if (histDirty) { snapshot(); histDirty = false; }
     if (to < 0 || to >= (int)hist.size() || to == hpos) { ui.status(to < hpos ? "NOTHING TO UNDO" : "NOTHING TO REDO"); return; }
     const bool back = to < hpos; hpos = to; Json j; if (!Json::parse(hist[hpos], j)) return;
-    const int vx = ui.viewX, vy = ui.viewY; restoring = true; loadPatch(ui, j); for (auto& up : ui.mods) restoreSound(up.get()); restoring = false;
+    const int vx = ui.viewX, vy = ui.viewY; restoring = true; std::vector<std::pair<UiMod*, int>> sc; applyPatch(ui, j, sc);   // only what changed: sequencers keep going
+    for (auto& [u, k] : sc) { UiMod::Snd& sd = u->snd[k];
+      if (sd.id.empty()) { engine.setBuffer(u->m->id, nullptr, k); sd.peaks.clear(); continue; }
+      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (b) giveSound(u, b, false, k); else sd.missing = true; }
+    restoring = false;
     ui.viewX = vx; ui.viewY = vy; dirty = true; saveT = 0.5f; ui.status(back ? "UNDONE" : "REDONE", 1.2f);
   };
   // ---- RECORD on the Output: straight to a WAV file in Music / Timbient Modules ----
@@ -167,7 +171,7 @@ int main(int argc, char** argv) {
   auto browseDir = [&]() -> std::string { const std::string d = settings.str("browseDir"); if (!d.empty()) return d; const char* mu = SDL_GetUserFolder(SDL_FOLDER_MUSIC); return mu ? mu : store.dir; };
   ui.onPreview = [&](const std::string& path) {
     if (path.empty()) { engine.preview(nullptr); return; }
-    std::string err; AudioBuf* b = decodeAudio(path, 45, err); if (!b) { engine.preview(nullptr); ui.status(err, 4); return; }
+    std::string err; AudioBuf* b = decodeAudio(path, 1200, err); if (!b) { engine.preview(nullptr); ui.status(err, 4); return; }
     float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f && mx < 0.5f) for (auto& v : b->d) v *= 0.5f / mx;   // quiet files a little louder, so you can hear them
     engine.preview(b); };
   ui.onBrowseLoad = [&](int id, int slot, const std::string& path) {
@@ -269,12 +273,13 @@ int main(int argc, char** argv) {
   // ---- SCREEN: how often the picture is redrawn when nothing is being touched (it always runs at full speed while you work) ----
   static const int FPS[3] = {60, 30, 20};
   int fpsIdx = std::max(0, std::min(2, (int)settings.num("fps", 1)));
+  ui.jacksIn = settings.num("jacksIn", 0) > 0.5;
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("JACKS  ") + (ui.jacksIn ? "INSIDE" : "ON THE EDGE"), "THEME", "ABOUT AND CREDITS"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -296,8 +301,10 @@ int main(int argc, char** argv) {
           ui.viewX = vx; ui.viewY = vy; char b[64]; std::snprintf(b, 64, "QUALITY %.1fK SAMPLES A SECOND", engine.sr / 1000); ui.status(b, 4); }; }
       else if (i == 5) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
-      else if (i == 6) { openTheme(x0); return; }
-      else if (i == 7) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+      else if (i == 6) { q.items = {"ON THE EDGE", "INSIDE THE MODULE"}; q.cur = ui.jacksIn ? 1 : 0;
+        q.pick = [&](int j) { ui.jacksIn = j == 1; settings.set("jacksIn", Json::number(j)); saveSettings(); ui.status(j ? "JACKS INSIDE THE MODULES" : "JACKS ON THE MODULES' EDGES", 3); }; }
+      else if (i == 7) { openTheme(x0); return; }
+      else if (i == 8) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);
@@ -342,6 +349,7 @@ int main(int argc, char** argv) {
         case SDL_EVENT_TEXT_INPUT: ui.typed(ev.text.text); break;
         case SDL_EVENT_KEY_DOWN:
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
+          if ((ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) && !ui.ask && ui.unplugSelected()) break;   // a picked cable
           if (ui.br.open) {   // the sound browser: arrows step through, Enter loads, Escape closes
             if (ev.key.key == SDLK_DOWN) { ui.browserKey(1); break; } if (ev.key.key == SDLK_UP) { ui.browserKey(-1); break; }
             if (ev.key.key == SDLK_ESCAPE) { ui.closeBrowser(); break; }
@@ -381,7 +389,7 @@ int main(int argc, char** argv) {
         if (r.folder) { if (ui.br.open) ui.browseTo(r.path); settings.set("browseDir", Json::string(r.path)); saveSettings(); continue; }
         if (r.target) { UiMod* u = ui.byId(r.target); if (!u) continue; std::string err;   // a sound for a Sample or Grain Looper
           int slot = r.slot; if (slot < 0) { for (int k = 0; k < UiMod::SLOTS; k++) if (u->snd[k].id.empty()) { slot = k; break; } if (slot < 0) { ui.status("ALL 8 PLACES ARE FULL: TAP A NUMBER TO REPLACE ONE", 5); continue; } }
-          AudioBuf* b = decodeAudio(r.path, u->m->def->type == "sample" ? 240 : 60, err); if (!b) { ui.status(err, 5); continue; }
+          AudioBuf* b = decodeAudio(r.path, u->m->def->type == "sample" ? 600 : 60, err); if (!b) { ui.status(err, 5); continue; }
           if (u->m->def->type == "sample") { float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f) for (auto& v : b->d) v *= 0.9f / mx; }   // quiet recordings come in at full level
           std::string nm = r.path.substr(r.path.find_last_of("/\\") + 1); for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch);
           const int rn = noteInName(r.path); u->snd[slot].root = rn >= 0 ? (float)rn : 60.f; u->shown = slot;   // MULTI: the ROOT note from the file name, if it names one

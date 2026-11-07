@@ -58,8 +58,9 @@ struct MiVoices : Module {
 };
 static Reg rMi(new ModuleDef{"mi", "MI VOICES", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   [] { std::vector<std::string> names; for (int i = 0; i < MI_ENGINES; i++) names.push_back(miEngines()[i].name);
-    std::vector<ParamDef> p = {OP("voice", "VOICE", names, 0), pct("harm", "HARMONIC", 0.4f), pct("timb", "TIMBRE", 0.5f), pct("morph", "MORPH", 0.5f),
-      pct("decay", "LPG DEC", 0.5f), pct("colour", "COLOUR", 0.5f), OP("env", "ENVELOPE", {"NATURAL", "ADSR"}, 0), PITCH()};
+    std::vector<ParamDef> p = {OP("voice", "MODEL", names, 0), pct("harm", "HARMONICS", 0.4f), pct("timb", "TIMBRE", 0.5f), pct("morph", "MORPH", 0.5f),
+      pct("decay", "DECAY", 0.5f), pct("colour", "LPG COLOUR", 0.5f), OP("env", "ENVELOPE", {"NATURAL", "ADSR"}, 0), PITCH()};   // named as on Plaits
+    p.back().label = "FREQUENCY";
     for (auto& q : envP(0.01f, 0.3f, 0.6f, 1, 1.5f)) { q.only = "adsr"; p.push_back(q); }
     p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.4f)); p.push_back(LEVEL()); return p; }(),
   0, 86, false, [] { return new MiVoices(); }});
