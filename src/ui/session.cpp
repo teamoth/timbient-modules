@@ -29,7 +29,7 @@ std::string stamp(double t) {
 static const char* tyName(PType t) { return t == PType::Audio ? "audio" : t == PType::Trig ? "trig" : "mod"; }
 
 Json serializePatch(Ui& ui) {
-  Json d = Json::object(); d.set("v", Json::number(2));
+  Json d = Json::object(); d.set("v", Json::number(2)); d.set("w", Json::number(2));   // w 2: modules are 8 wider (room for - and +)
   Json key = Json::object(); key.set("root", Json::number(ui.eng.key.root.load())); key.set("scale", Json::number(ui.eng.key.scale.load())); d.set("key", key);
   d.set("bpm", Json::number(ui.eng.tempo.bpm.load()));
   Json mods = Json::array();
@@ -79,13 +79,15 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (ty == "drone") { m.set("type", Json::string("pad")); }
     if ((ty == "clock" || ty == "tracker") && !p->get("sync")) p->set("sync", Json::number(0));   // older sessions keep their own tempos
   }
+  // sessions from before the modules grew 8 wider for their - and + buttons: spread them out so they don't overlap
+  const bool narrow = data.num("w", 0) < 2; auto mx = [narrow](const Json& m) { const double x = m.num("x"); return (int)std::lround(narrow ? x * 80.0 / 72.0 : x); };
   std::map<int, UiMod*> idmap; std::set<std::string> skipped; int maxId = 0;
   for (auto& m : mods->a) {
     const std::string ty = m.str("type"); const ModuleDef* def = findDef(ty);
     if (!def) { skipped.insert(ty); continue; }
     UiMod* u = nullptr;
-    if (def->fixed) { for (auto& up : ui.mods) if (up->m->def == def) u = up.get(); if (u) { u->x = (int)m.num("x"); u->y = (int)m.num("y"); } }
-    if (!u) u = ui.add(ty, (int)m.num("x"), (int)m.num("y"));
+    if (def->fixed) { for (auto& up : ui.mods) if (up->m->def == def) u = up.get(); if (u) { u->x = mx(m); u->y = (int)m.num("y"); } }
+    if (!u) u = ui.add(ty, mx(m), (int)m.num("y"));
     if (!u) { skipped.insert(ty); continue; }
     if (const Json* p = m.get("p")) for (size_t k = 0; k < def->params.size(); k++) { const Json* v = p->get(def->params[k].key); if (v && v->t == Json::NUM) u->m->p[k].store((float)v->n); }
     if (const Json* p = m.get("p")) if (const Json* sq = p->get("seq")) if (sq->t == Json::ARR && u->m->seq)

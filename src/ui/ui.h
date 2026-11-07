@@ -61,6 +61,19 @@ public:
   void openDropdown(Dropdown d) { dd = std::make_unique<Dropdown>(std::move(d)); menuOpen = false; tp.open = false; }
   // the shared tempo: a small panel with a slider, - and + buttons and tap tempo; it stays open until you tap somewhere else
   void openTempo(int x, int y) { tp.open = true; tp.x = x; tp.y = y; dd.reset(); menuOpen = false; }
+  // the sound browser: a folder's sound files; tap one to hear it, LOAD puts it in the module. Stays open until you tap away
+  struct Browser { bool open = false; std::string dir; struct Entry { std::string name; bool folder; }; std::vector<Entry> items;
+    int target = 0, slot = 0, sel = -1, playing = -1; float scroll = 0; std::string err; } br;
+  void openBrowser(int targetId, int slot, const std::string& dir);   // slot -1: the next empty place (KIT / MULTI)
+  void browseTo(const std::string& dir);
+  void browserScroll(float rows);
+  void browserKey(int dir);               // up / down arrows: the next sound, heard straight away
+  void closeBrowser();
+  void browserPick(int i);             // a tap on a row: open a folder, or hear a sound (a second tap stops it)
+  std::function<void(const std::string&)> onPreview;                     // play a file to the speakers (empty: stop)
+  std::function<void(int, int, const std::string&)> onBrowseLoad;        // put a file in a module's place
+  std::function<void()> onBrowseFolder;                                  // ask the system for a folder
+  std::function<void(int, int)> onBrowseFile;                            // the system's own file picker instead
   // a small box for typing a name
   struct Ask { std::string title, text; std::function<void(const std::string&)> done; };
   std::unique_ptr<Ask> ask;
@@ -79,6 +92,7 @@ private:
   struct JackHit { UiMod* u = nullptr; bool out = false; int port = -1; PType type = PType::Audio; int x = 0, y = 0; int param = -1; };   // param: a setting's mod socket
   JackHit jackAt(int wx, int wy, int tol = 3);
   int paramAt(UiMod* u, int ly);
+  void nudge(UiMod* u, int k, int dir);
   void drawModule(Canvas& c, UiMod& u, float dt);
   void drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt);
   void drawCable(Canvas& c, int ax, int ay, int bx, int by, int col);
@@ -89,8 +103,8 @@ private:
   void trackerWatch(UiMod& u);
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
-    JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; UiCable grab{}; int splice = -1; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO };
+    JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; int dir = 0; UiCable grab{}; int splice = -1; } drag;
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE };
   // cables as curves you can touch
   bool cableEnds(const UiCable& c, float& ax, float& ay, float& bx, float& by);
   int cableAt(int wx, int wy, float maxD, bool audioOnly = false);
@@ -100,6 +114,9 @@ private:
   static constexpr int TPW = 126, TPH = 31;
   void setBpm(float v);
   bool tempoDown(float sx, float sy);
+  bool browserDown(float sx, float sy);
+  void drawBrowser(Canvas& c);
+  int brX = 0, brY = 0, brW = 0, brH = 0, brRows = 0;
   std::unique_ptr<Dropdown> dd; bool menuOpen = false; int lastW = 400; float blink = 0;
   struct MenuItem { std::string type; int x, y, w; };
   std::vector<MenuItem> menuItems;

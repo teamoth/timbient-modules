@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.10.0";
+static const char* VERSION = "0.11.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -61,11 +61,12 @@ struct Sound {
 };
 
 // ---------------- results from the system file dialogs (they may arrive on another thread) ----------------
-struct DialogResult { bool open; std::string path; int target = 0, slot = 0; };   // target: the module a sound file is for
+struct DialogResult { bool open; std::string path; int target = 0, slot = 0; bool folder = false; };   // target: the module a sound file is for
 static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
 static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "json;txt"}};
 static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
 static void onSaveDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({false, files[0]}); } }
+static void onFolderDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.folder = true; dlgResults.push_back(r); } }
 static const SDL_DialogFileFilter AUDIO_FILTER[] = {{"Sound files", "wav;wave;aif;aiff;flac;mp3"}};
 // a sound file chosen for a Sample or Grain Looper: ud carries the module id and the place (-1: fill the empty places, one per file)
 static void onAudioDialog(void* ud, const char* const* files, int) {
@@ -162,11 +163,24 @@ int main(int argc, char** argv) {
   std::string recDir; { const char* mu = SDL_GetUserFolder(SDL_FOLDER_MUSIC); recDir = std::string(mu ? mu : store.dir.c_str()) + "Timbient Modules/"; SDL_CreateDirectory(recDir.c_str()); }
   Recorder rec;
   auto outMod = [&]() -> Module* { for (auto& up : ui.mods) if (up->m->def->type == "out") return up->m; return nullptr; };
+  // ---- the sound browser: hear a file before it goes in ----
+  auto browseDir = [&]() -> std::string { const std::string d = settings.str("browseDir"); if (!d.empty()) return d; const char* mu = SDL_GetUserFolder(SDL_FOLDER_MUSIC); return mu ? mu : store.dir; };
+  ui.onPreview = [&](const std::string& path) {
+    if (path.empty()) { engine.preview(nullptr); return; }
+    std::string err; AudioBuf* b = decodeAudio(path, 45, err); if (!b) { engine.preview(nullptr); ui.status(err, 4); return; }
+    float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f && mx < 0.5f) for (auto& v : b->d) v *= 0.5f / mx;   // quiet files a little louder, so you can hear them
+    engine.preview(b); };
+  ui.onBrowseLoad = [&](int id, int slot, const std::string& path) {
+    settings.set("browseDir", Json::string(ui.br.dir)); saveSettings();
+    std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, path, id, slot}); };
+  ui.onBrowseFolder = [&]() { const std::string d = ui.br.dir; SDL_ShowOpenFolderDialog(onFolderDialog, nullptr, win, d.empty() ? nullptr : d.c_str(), false); };
+  ui.onBrowseFile = [&](int id, int slot) { const UiMod* u = ui.byId(id); const bool many = slot < 0 && u && u->m->def->type == "sample";
+    SDL_ShowOpenFileDialog(onAudioDialog, (void*)(((intptr_t)id << 8) | (intptr_t)(slot + 1)), win, AUDIO_FILTER, 1, nullptr, many); };
   ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
     const std::string& ty = u->m->def->type;
     if ((ty == "sample" || ty == "looper") && (k == "load" || k.rfind("load:", 0) == 0)) {   // LOAD FILE: KIT and MULTI take several at once, into the empty places
       const bool many = ty == "sample" && u->m->p[1].load() >= 2 && k == "load"; const int slot = k == "load" ? (many ? -1 : 0) : std::atoi(k.c_str() + 5);
-      SDL_ShowOpenFileDialog(onAudioDialog, (void*)(((intptr_t)u->m->id << 8) | (intptr_t)(slot + 1)), win, AUDIO_FILTER, 1, nullptr, many); return true; }
+      ui.openBrowser(u->m->id, slot, browseDir()); return true; }
     if (ty == "looper" && k == "catch") { catchSound(u, false); return true; }
     if (ty == "out" && k == "rec") {
       if (!rec.on()) { std::time_t tt = std::time(nullptr); char nm[64]; std::strftime(nm, 64, "timbient-%Y%m%d-%H%M%S.wav", std::localtime(&tt));
@@ -323,6 +337,10 @@ int main(int argc, char** argv) {
         case SDL_EVENT_TEXT_INPUT: ui.typed(ev.text.text); break;
         case SDL_EVENT_KEY_DOWN:
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
+          if (ui.br.open) {   // the sound browser: arrows step through, Enter loads, Escape closes
+            if (ev.key.key == SDLK_DOWN) { ui.browserKey(1); break; } if (ev.key.key == SDLK_UP) { ui.browserKey(-1); break; }
+            if (ev.key.key == SDLK_ESCAPE) { ui.closeBrowser(); break; }
+            if ((ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) && ui.br.sel >= 0 && !ui.br.items[ui.br.sel].folder && ui.onBrowseLoad) { ui.onBrowseLoad(ui.br.target, ui.br.slot, ui.br.dir + "/" + ui.br.items[ui.br.sel].name); break; } }
           if (ev.key.key == SDLK_F11 || (ev.key.key == SDLK_F && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)))) ui.wantFullscreen = !ui.isFullscreen;
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
           if (ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) { restoreStep((ev.key.mod & SDL_KMOD_SHIFT) ? hpos + 1 : hpos - 1); break; }   // Cmd/Ctrl+Z, and with Shift to redo
@@ -337,6 +355,7 @@ int main(int argc, char** argv) {
         case SDL_EVENT_MOUSE_BUTTON_UP: if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerUp(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
         case SDL_EVENT_MOUSE_WHEEL:   // with Ctrl or Cmd held: zoom. Otherwise: move around the patch
           if (SDL_GetModState() & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) { wheelAcc += ev.wheel.y; if (std::fabs(wheelAcc) >= 1) { pendingZoom += wheelAcc > 0 ? 1 : -1; wheelAcc = 0; } }
+          else if (ui.br.open) ui.browserScroll(-ev.wheel.y * 2);   // over the sound browser: scroll its list
           else { ui.viewX -= (int)std::lround(ev.wheel.x * 12); ui.viewY -= (int)std::lround(ev.wheel.y * 12); }
           break;
         case SDL_EVENT_PINCH_UPDATE:   // a trackpad pinch
@@ -354,6 +373,7 @@ int main(int argc, char** argv) {
     // files chosen in the system dialogs
     { std::vector<DialogResult> rs; { std::lock_guard<std::mutex> l(dlgMx); rs.swap(dlgResults); }
       for (auto& r : rs) {
+        if (r.folder) { if (ui.br.open) ui.browseTo(r.path); settings.set("browseDir", Json::string(r.path)); saveSettings(); continue; }
         if (r.target) { UiMod* u = ui.byId(r.target); if (!u) continue; std::string err;   // a sound for a Sample or Grain Looper
           int slot = r.slot; if (slot < 0) { for (int k = 0; k < UiMod::SLOTS; k++) if (u->snd[k].id.empty()) { slot = k; break; } if (slot < 0) { ui.status("ALL 8 PLACES ARE FULL: TAP A NUMBER TO REPLACE ONE", 5); continue; } }
           AudioBuf* b = decodeAudio(r.path, u->m->def->type == "sample" ? 240 : 60, err); if (!b) { ui.status(err, 5); continue; }

@@ -23,18 +23,18 @@ struct PortDef { std::string name; PType type; };
 struct ParamDef {
   std::string key, label;
   float min = 0, max = 1, def = 0;
-  bool exp = false, time = false, hz = false, pctFmt = false, play = false, tog = false;
+  bool exp = false, rev = false, time = false, hz = false, pctFmt = false, play = false, tog = false;
   float step = 0;
   std::vector<std::string> opts;   // a list of named choices (stored as an index)
   std::string only;                // 'free', 'clock', 'own': greyed out depending on the module's state
   bool act = false;                // an action button rather than a value
   std::function<std::string(float)> fmt;
-  float toNorm(float v) const {
-    if (exp) return std::log(std::max(v, min) / min) / std::log(max / min);
-    return (v - min) / (max - min);
+  float toNorm(float v) const {   // rev: the slider runs the other way (a time shown as a rate: longer times sit at the left)
+    const float n = exp ? std::log(std::max(v, min) / min) / std::log(max / min) : (v - min) / (max - min);
+    return rev ? 1 - n : n;
   }
   float fromNorm(float n) const {
-    n = clampf(n, 0, 1);
+    n = clampf(n, 0, 1); if (rev) n = 1 - n;
     float v = exp ? min * std::pow(max / min, n) : min + n * (max - min);
     if (step > 0) v = std::round(v / step) * step;
     return v;
@@ -120,7 +120,7 @@ struct Cable { int from = 0, fromPort = 0, to = 0, toPort = -1, toParam = -1; PT
 
 // commands from the screen thread to the audio thread
 struct Command {
-  enum Kind { ADD, REMOVE, CONNECT, DISCONNECT, ACTION, CLEAR, TRIGGER, SETBUF } kind;
+  enum Kind { ADD, REMOVE, CONNECT, DISCONNECT, ACTION, CLEAR, TRIGGER, SETBUF, PREVIEW } kind;
   Module* mod = nullptr; int id = 0; Cable cable; char key[24] = {0}; Event ev; int port = 0; AudioBuf* buf = nullptr;
 };
 
@@ -158,6 +158,9 @@ public:
   void trigger(int id, int port, Event ev) { Command k{Command::TRIGGER}; k.id = id; k.port = port; k.ev = ev; send(k); }
   void clear() { send({Command::CLEAR}); }
   void setBuffer(int id, AudioBuf* b, int slot = 0) { Command k{Command::SETBUF}; k.id = id; k.buf = b; k.port = slot; send(k); }
+  // the sound browser: play a file straight to the speakers, outside the patch (nullptr stops it). Not recorded
+  void preview(AudioBuf* b) { Command k{Command::PREVIEW}; k.buf = b; send(k); }
+  std::atomic<float> previewAt{-1};   // how far through the preview is (0..1), or -1 when nothing is playing
   // recording the master output: the audio thread writes here, the screen thread drains it to a file
   static constexpr int MIDI_INS = 8;
   SpscQueue<MidiMsg, 1024> midiInQ[MIDI_INS];
@@ -192,6 +195,7 @@ private:
   SpscQueue<AudioBuf*, 256> bufGarbage;
   std::vector<Module*> order;
   bool dirty = true;
+  AudioBuf* prevBuf = nullptr; double prevPos = 0;
 };
 
 // scales and keys, shared with the screen

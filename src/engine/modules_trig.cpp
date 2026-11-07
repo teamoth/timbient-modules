@@ -148,7 +148,7 @@ struct Lfo : Module {
 };
 static Reg rLfo(new ModuleDef{"lfo", "LFO", Cat::Mod, {{"CLOCK", PType::Trig}}, {{"MOD", PType::Mod}},
   {OP("shape", "SHAPE", {"SINE", "TRI", "SQUARE", "RANDOM", "DRIFT"}, 4),
-   only(fmt(prExp("rate", "RATE", 0.05f, 300, 20), [](float v) { char b[16]; if (v < 1) std::snprintf(b, 16, "%.1fHZ", 1 / v); else if (v < 10) std::snprintf(b, 16, "%.1fS", v); else std::snprintf(b, 16, "%dS", (int)v); return std::string(b); }), "free"),
+   only(rev(fmt(prExp("rate", "RATE", 0.05f, 300, 20), [](float v) { char b[16]; if (v < 1) std::snprintf(b, 16, "%.1fHZ", 1 / v); else if (v < 10) std::snprintf(b, 16, "1 PER %.1fS", v); else if (v < 120) std::snprintf(b, 16, "1 PER %dS", (int)v); else std::snprintf(b, 16, "1 PER %.1fM", v / 60); return std::string(b); })), "free"),
    OP("sync", "SYNC", {"1/4 BEAT", "1/2 BEAT", "1 BEAT", "2 BEATS", "4 BEATS", "8 BEATS", "16 BEATS", "32 BEATS"}, 4),   // drawn like the other settings (it is used once a clock is patched in)
    pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 0)}, 7, 68, false, [] { return new Lfo(); }});
 
@@ -174,6 +174,6 @@ struct Out : Module {
 };
 static ParamDef eqP(const char* k, const char* l) { auto p = pr(k, l, -12, 12, 0); p.fmt = [](float v) { char b[16]; std::snprintf(b, 16, "%+.1fDB", v); return std::string(std::fabs(v) < 0.05f ? "0DB" : b); }; return p; }
 static Reg rOut(new ModuleDef{"out", "OUTPUT", Cat::Out, {{"A", PType::Audio}, {"B", PType::Audio}}, {},
-  {ACT("rec", "RECORD"), ACT("again", "SAVE AGAIN"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), eqP("low", "LOW"), eqP("mid", "MID"), eqP("high", "HIGH")}, 21, 68, true, [] { return new Out(); }});
+  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), eqP("low", "LOW"), eqP("mid", "MID"), eqP("high", "HIGH")}, 21, 68, true, [] { return new Out(); }});
 
 }  // namespace tb

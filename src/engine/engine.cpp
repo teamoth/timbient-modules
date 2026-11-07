@@ -26,7 +26,7 @@ float midiOf(int i, int root, int scale) {
 }
 
 std::vector<const ModuleDef*>& allDefs() { static std::vector<const ModuleDef*> v; return v; }
-void registerDef(ModuleDef* d) { allDefs().push_back(d); }
+void registerDef(ModuleDef* d) { d->width += 8; allDefs().push_back(d); }   // +8: room for the - and + beside every slider
 const ModuleDef* findDef(const std::string& type) { for (auto* d : allDefs()) if (d->type == type) return d; return nullptr; }
 
 Module* Engine::create(const std::string& type, int id) {
@@ -78,6 +78,7 @@ void Engine::applyCommands() {
         cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const Cable& k) { return k.from == c.cable.from && k.fromPort == c.cable.fromPort && k.to == c.cable.to && k.toPort == c.cable.toPort && k.toParam == c.cable.toParam && k.type == c.cable.type; }), cables.end());
         dirty = true; break;
       case Command::ACTION: if (Module* m = byId(c.id)) m->action(c.key); break;
+      case Command::PREVIEW: if (prevBuf) bufGarbage.push(prevBuf); prevBuf = c.buf; prevPos = 0; previewAt.store(c.buf ? 0.f : -1.f, std::memory_order_relaxed); break;
       case Command::SETBUF: if (Module* m = byId(c.id)) { AudioBuf* old = m->swapBuf(c.buf, c.port); if (old && !bufGarbage.push(old)) {} } else if (c.buf) bufGarbage.push(c.buf); break;
       case Command::TRIGGER: if (Module* m = byId(c.id)) { Event e = c.ev; e.offset = 0; m->events.push(c.port, e); } break;
       case Command::CLEAR: for (auto* m : mods) garbage.push(m); mods.clear(); cables.clear(); dirty = true; break;
@@ -174,6 +175,13 @@ void Engine::block(float* L, float* R, int n) {
     const long N = (long)recBuf.size() / 2; long w = recW.load(std::memory_order_relaxed);
     for (int i = 0; i < n; i++, w++) { recBuf[(w % N) * 2] = L[i]; recBuf[(w % N) * 2 + 1] = R[i]; }
     recW.store(w, std::memory_order_release); }
+  if (prevBuf) {   // the sound browser's preview, added after the recorder so it never ends up in a recording
+    const AudioBuf& b = *prevBuf; const double step = b.sr / sr; const long len = (long)b.d.size();
+    for (int i = 0; i < n; i++) { const long k = (long)prevPos; if (k + 1 >= len) break; const float fr = (float)(prevPos - k), x = (b.d[k] + (b.d[k + 1] - b.d[k]) * fr) * 0.7f;
+      const float fade = std::min(1.f, std::min((float)k, (float)(len - k)) / 64.f);
+      L[i] = clampf(L[i] + x * fade, -1, 1); R[i] = clampf(R[i] + x * fade, -1, 1); prevPos += step; }
+    if ((long)prevPos + 1 >= len) { bufGarbage.push(prevBuf); prevBuf = nullptr; previewAt.store(-1, std::memory_order_relaxed); }
+    else previewAt.store((float)(prevPos / len), std::memory_order_relaxed); }
   outPeak.store(std::max(pk, outPeak.load(std::memory_order_relaxed) * 0.995f), std::memory_order_relaxed);
 }
 
