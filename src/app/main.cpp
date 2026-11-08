@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.12.0";
+static const char* VERSION = "0.13.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -63,10 +63,10 @@ struct Sound {
 // ---------------- results from the system file dialogs (they may arrive on another thread) ----------------
 struct DialogResult { bool open; std::string path; int target = 0, slot = 0; bool folder = false; };   // target: the module a sound file is for
 static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
-static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "json;txt"}};
+static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "tmbnt;json;txt"}};
 static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
 static void onSaveDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({false, files[0]}); } }
-static void onFolderDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.folder = true; dlgResults.push_back(r); } }
+static void onFolderDialog(void* ud, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.folder = true; r.target = ud ? -1 : 0; dlgResults.push_back(r); } }
 static const SDL_DialogFileFilter AUDIO_FILTER[] = {{"Sound files", "wav;wave;aif;aiff;flac;mp3"}};
 // a sound file chosen for a Sample or Grain Looper: ud carries the module id and the place (-1: fill the empty places, one per file)
 static void onAudioDialog(void* ud, const char* const* files, int) {
@@ -111,8 +111,6 @@ int main(int argc, char** argv) {
 
   Ui ui(engine);
   static Midi midi(engine); midi.start();
-  // the first time ever, a demo session is put in the list so there's something to play
-  if (store.list.empty() && !settings.truthy("demoAdded")) { ui.demoPatch(); store.list.push_back({"DEMO", (double)std::time(nullptr), serializePatch(ui)}); store.save(); ui.clearPatch(); settings.set("demoAdded", Json::boolean(true)); saveSettings(); }
   // the app opens to an empty session; RESTORE LAST WORK brings back what was there
   { Json prev; if (store.readAutosave(prev) && prev.get("mods") && prev.get("mods")->a.size() > 1) writeFile(store.path("previous.json"), prev.dump()); }
   ui.add("out", 300, 30);
@@ -187,7 +185,7 @@ int main(int argc, char** argv) {
     SDL_ShowOpenFileDialog(onAudioDialog, (void*)(((intptr_t)id << 8) | (intptr_t)(slot + 1)), win, AUDIO_FILTER, 1, nullptr, many); };
   ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
     const std::string& ty = u->m->def->type;
-    if ((ty == "sample" || ty == "looper") && (k == "load" || k.rfind("load:", 0) == 0)) {   // LOAD FILE: KIT and MULTI take several at once, into the empty places
+    if ((ty == "sample" || ty == "looper" || ty == "stretch") && (k == "load" || k.rfind("load:", 0) == 0)) {   // LOAD FILE: KIT and MULTI take several at once, into the empty places
       const bool many = ty == "sample" && u->m->p[1].load() >= 2 && k == "load"; const int slot = k == "load" ? (many ? -1 : 0) : std::atoi(k.c_str() + 5);
       ui.openBrowser(u->m->id, slot, browseDir()); return true; }
     if (ty == "looper" && k == "catch") { catchSound(u, false); return true; }
@@ -209,31 +207,39 @@ int main(int argc, char** argv) {
     return false;
   };
 
-  // ---- SESSIONS menu ----
+  // ---- sessions are files: a .tmbnt holds the patch and every sound it uses (inside it's the web version's
+  // session format, so a .json session renamed to .tmbnt opens too, and the web version can open a .tmbnt) ----
+  std::string curFile;   // the file this session was opened from or last saved to: SAVE writes there
+  auto sessionFile = [&](const Json& data) {
+    Json f = Json::object(); f.set("timbient", Json::string("patch")); f.set("data", data);
+    std::vector<std::string> ids; auto want = [&](const std::string& id) { if (!id.empty() && std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id); };
+    if (const Json* ms = data.get("mods")) if (ms->t == Json::ARR) for (auto& m : ms->a) if (const Json* p = m.get("p")) { want(p->str("audio"));
+      if (const Json* sn = p->get("sounds")) if (sn->t == Json::ARR) for (auto& e : sn->a) if (e.t == Json::ARR && !e.a.empty() && e.a[0].t == Json::STR) want(e.a[0].s); }
+    Json pack = Json::object(); for (auto& id : ids) {   // the sounds go inside it
+      std::string err; AudioBuf* b = decodeAudio(audioDir + id + ".wav", 3600, err); if (!b) continue;
+      std::vector<unsigned char> raw(b->d.size() * 2); for (size_t i = 0; i < b->d.size(); i++) { const int16_t v = (int16_t)std::lround(clampf(b->d[i], -1, 1) * 32767); raw[i * 2] = (unsigned char)v; raw[i * 2 + 1] = (unsigned char)(v >> 8); }
+      Json a = Json::object(); a.set("sr", Json::number(b->sr)); a.set("b64", Json::string(b64(raw.data(), raw.size()))); pack.set(id, a); delete b; }
+    if (!pack.o.empty()) f.set("audio", pack);
+    return f.dump();
+  };
+  auto fileName = [](std::string p) { const size_t sl = p.find_last_of("/\\"); if (sl != std::string::npos) p = p.substr(sl + 1); const size_t dt = p.rfind('.'); if (dt != std::string::npos && dt > 0) p = p.substr(0, dt);
+    for (auto& ch : p) ch = (char)std::toupper((unsigned char)ch); return p; };
+  auto saveAs = [&] { SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, curFile.empty() ? "session.tmbnt" : curFile.c_str()); };
   std::function<void(int)> openSessions = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
-    d.items = {"NEW EMPTY SESSION", "RESTORE LAST WORK", "SAVE AS NEW SESSION", "OPEN FILE...", "SAVE TO FILE..."};
-    for (auto& s : store.list) d.items.push_back(s.name + "  " + stamp(s.t));
+    d.items = {"NEW EMPTY SESSION", "THE DEMO SESSION", "RESTORE LAST WORK", "OPEN...", curFile.empty() ? "SAVE..." : "SAVE  " + fileName(curFile), "SAVE AS..."};
+    if (!store.list.empty()) { d.items.push_back("SAVE THE " + std::to_string(store.list.size()) + " OLD IN-APP SESSIONS AS FILES..."); d.items.push_back("REMOVE THE OLD IN-APP SESSIONS"); }
     d.pick = [&, x0](int i) {
       if (i == 0) { Dropdown q; q.x = x0; q.y = 11; q.items = {"CLEAR EVERYTHING?", "YES, START EMPTY", "NO, KEEP IT"}; q.title = 0; q.danger = 1;
-        q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
-      if (i == 1) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) loadData(prev, "YOUR LAST WORK"); else ui.status("NOTHING TO RESTORE"); return; }
-      if (i == 2) { ui.askText("NAME THIS SESSION", "SESSION " + std::to_string(store.list.size() + 1), [&](const std::string& n) {
-          store.list.push_back({n, (double)std::time(nullptr), serializePatch(ui)}); ui.status(store.save() ? "SAVED " + n : "COULD NOT SAVE"); }); return; }
+        q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); curFile.clear(); dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
+      if (i == 1) { ui.clearPatch(); ui.demoPatch(); curFile.clear(); dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.viewX = ui.viewY = 0; ui.status("THE DEMO SESSION"); return; }
+      if (i == 2) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) loadData(prev, "YOUR LAST WORK"); else ui.status("NOTHING TO RESTORE"); return; }
       if (i == 3) { SDL_ShowOpenFileDialog(onOpenDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
-      if (i == 4) { SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, "timbient-session.json"); return; }
-      const int k = i - 5; if (k < 0 || k >= (int)store.list.size()) return;
-      const std::string nm = store.list[k].name;
-      Dropdown q; q.x = x0; q.y = 11 + i * 8; q.items = {"LOAD " + nm, "SAVE OVER " + nm, "RENAME " + nm, "DELETE " + nm};
-      q.pick = [&, k, nm, x0, i](int j) {
-        if (k >= (int)store.list.size()) return;
-        if (j == 0) loadData(store.list[k].data, nm);
-        else if (j == 1) { store.list[k].data = serializePatch(ui); store.list[k].t = (double)std::time(nullptr); ui.status(store.save() ? "SAVED OVER " + nm : "COULD NOT SAVE"); }
-        else if (j == 2) ui.askText("RENAME SESSION", nm, [&, k](const std::string& n) { if (k < (int)store.list.size()) { store.list[k].name = n; store.save(); ui.status("RENAMED TO " + n); } });
-        else { Dropdown z; z.x = x0; z.y = 11 + i * 8; z.items = {"DELETE " + nm + "?", "YES, DELETE", "NO, KEEP IT"}; z.title = 0; z.danger = 1;
-          z.pick = [&, k, nm](int q2) { if (q2 == 1 && k < (int)store.list.size()) { store.list.erase(store.list.begin() + k); store.save(); ui.status("DELETED " + nm); } }; ui.openDropdown(z); }
-      };
-      ui.openDropdown(q);
+      if (i == 4) { if (curFile.empty()) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); return; }
+      if (i == 5) { saveAs(); return; }
+      if (i == 6) { SDL_ShowOpenFolderDialog(onFolderDialog, (void*)1, win, nullptr, false); ui.status("PICK A FOLDER FOR THEM", 4); return; }
+      if (i == 7) { Dropdown z; z.x = x0; z.y = 11 + i * 8; z.items = {"REMOVE THEM FROM THE APP?", "YES (I SAVED THEM AS FILES)", "NO, KEEP THEM"}; z.title = 0; z.danger = 1;
+        z.pick = [&](int q2) { if (q2 == 1) { store.list.clear(); store.save(); ui.status("THE OLD IN-APP SESSIONS ARE GONE"); } }; ui.openDropdown(z); }
     };
     ui.openDropdown(d);
   };
@@ -273,13 +279,12 @@ int main(int argc, char** argv) {
   // ---- SCREEN: how often the picture is redrawn when nothing is being touched (it always runs at full speed while you work) ----
   static const int FPS[3] = {60, 30, 20};
   int fpsIdx = std::max(0, std::min(2, (int)settings.num("fps", 1)));
-  ui.jacksIn = settings.num("jacksIn", 0) > 0.5;
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("JACKS  ") + (ui.jacksIn ? "INSIDE" : "ON THE EDGE"), "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", "THEME", "ABOUT AND CREDITS"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -301,10 +306,8 @@ int main(int argc, char** argv) {
           ui.viewX = vx; ui.viewY = vy; char b[64]; std::snprintf(b, 64, "QUALITY %.1fK SAMPLES A SECOND", engine.sr / 1000); ui.status(b, 4); }; }
       else if (i == 5) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
-      else if (i == 6) { q.items = {"ON THE EDGE", "INSIDE THE MODULE"}; q.cur = ui.jacksIn ? 1 : 0;
-        q.pick = [&](int j) { ui.jacksIn = j == 1; settings.set("jacksIn", Json::number(j)); saveSettings(); ui.status(j ? "JACKS INSIDE THE MODULES" : "JACKS ON THE MODULES' EDGES", 3); }; }
-      else if (i == 7) { openTheme(x0); return; }
-      else if (i == 8) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+      else if (i == 6) { openTheme(x0); return; }
+      else if (i == 7) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);
@@ -356,6 +359,8 @@ int main(int argc, char** argv) {
             if ((ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) && ui.br.sel >= 0 && !ui.br.items[ui.br.sel].folder && ui.onBrowseLoad) { ui.onBrowseLoad(ui.br.target, ui.br.slot, ui.br.dir + "/" + ui.br.items[ui.br.sel].name); break; } }
           if (ev.key.key == SDLK_F11 || (ev.key.key == SDLK_F && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)))) ui.wantFullscreen = !ui.isFullscreen;
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
+          if (ev.key.key == SDLK_S && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) {   // Cmd/Ctrl+S saves to the session's file (Shift: SAVE AS)
+            if (curFile.empty() || (ev.key.mod & SDL_KMOD_SHIFT)) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); break; }
           if (ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) { restoreStep((ev.key.mod & SDL_KMOD_SHIFT) ? hpos + 1 : hpos - 1); break; }   // Cmd/Ctrl+Z, and with Shift to redo
           if (ev.key.key == SDLK_Y && (ev.key.mod & SDL_KMOD_CTRL)) { restoreStep(hpos + 1); break; }
           if (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS || ev.key.key == SDLK_KP_PLUS) pendingZoom++;
@@ -386,11 +391,16 @@ int main(int argc, char** argv) {
     // files chosen in the system dialogs
     { std::vector<DialogResult> rs; { std::lock_guard<std::mutex> l(dlgMx); rs.swap(dlgResults); }
       for (auto& r : rs) {
+        if (r.folder && r.target == -1) {   // the old in-app sessions, each as its own .tmbnt in this folder
+          int n = 0; for (auto& ss : store.list) { std::string nm; for (char ch : ss.name) nm += (std::isalnum((unsigned char)ch) || ch == ' ' || ch == '-' || ch == '_') ? ch : '_';
+            if (nm.empty()) nm = "SESSION"; std::string path = r.path + "/" + nm + ".tmbnt"; for (int k = 2; !readFile(path).empty(); k++) path = r.path + "/" + nm + " " + std::to_string(k) + ".tmbnt";
+            if (writeFile(path, sessionFile(ss.data))) n++; }
+          ui.status(n == (int)store.list.size() ? "SAVED " + std::to_string(n) + " SESSIONS. YOU CAN NOW REMOVE THEM FROM THE APP" : "SAVED " + std::to_string(n) + " OF " + std::to_string(store.list.size()), 6); continue; }
         if (r.folder) { if (ui.br.open) ui.browseTo(r.path); settings.set("browseDir", Json::string(r.path)); saveSettings(); continue; }
         if (r.target) { UiMod* u = ui.byId(r.target); if (!u) continue; std::string err;   // a sound for a Sample or Grain Looper
           int slot = r.slot; if (slot < 0) { for (int k = 0; k < UiMod::SLOTS; k++) if (u->snd[k].id.empty()) { slot = k; break; } if (slot < 0) { ui.status("ALL 8 PLACES ARE FULL: TAP A NUMBER TO REPLACE ONE", 5); continue; } }
-          AudioBuf* b = decodeAudio(r.path, u->m->def->type == "sample" ? 600 : 60, err); if (!b) { ui.status(err, 5); continue; }
-          if (u->m->def->type == "sample") { float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f) for (auto& v : b->d) v *= 0.9f / mx; }   // quiet recordings come in at full level
+          AudioBuf* b = decodeAudio(r.path, u->m->def->type == "looper" ? 60 : 600, err); if (!b) { ui.status(err, 5); continue; }
+          if (u->m->def->type == "sample" || u->m->def->type == "stretch") { float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f) for (auto& v : b->d) v *= 0.9f / mx; }   // quiet recordings come in at full level
           std::string nm = r.path.substr(r.path.find_last_of("/\\") + 1); for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch);
           const int rn = noteInName(r.path); u->snd[slot].root = rn >= 0 ? (float)rn : 60.f; u->shown = slot;   // MULTI: the ROOT note from the file name, if it names one
           const int secs = (int)std::lround(b->dur()); giveSound(u, b, true, slot, nm);
@@ -399,17 +409,11 @@ int main(int argc, char** argv) {
           if (const Json* pack = f.get("audio")) if (pack->t == Json::OBJ) for (auto& kv : pack->o) {   // a web export with its sounds packed in
             const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
             AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000)); if (b) { writeWavMono16(fn, *b); delete b; } }
-          if (f.str("timbient") == "sessions" && f.get("sessions")) { int n = 0; for (auto& e : f.get("sessions")->a) if (const Json* dd = e.get("data")) { store.list.push_back({e.str("name", "SESSION"), e.num("t", 0) / 1000.0, *dd}); n++; }
-            store.save(); ui.status("ADDED " + std::to_string(n) + " SESSIONS TO THE LIST", 4); continue; }
           const Json* data = patchIn(f); if (!data) { ui.status("THAT IS NOT A TIMBIENT SESSION", 5); continue; }
-          std::string nm = r.path; const size_t sl = nm.find_last_of("/\\"); if (sl != std::string::npos) nm = nm.substr(sl + 1); loadData(*data, nm); }
-        else { Json f = Json::object(); f.set("timbient", Json::string("patch")); f.set("data", serializePatch(ui)); std::string p = r.path; if (p.find('.') == std::string::npos) p += ".json";
-          Json pack = Json::object(); for (auto& up : ui.mods) for (auto& sd : up->snd) if (!sd.id.empty() && !pack.get(sd.id)) {   // the sounds go with it, as the web version packs them
-            std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (!b) continue;
-            std::vector<unsigned char> raw(b->d.size() * 2); for (size_t i = 0; i < b->d.size(); i++) { const int16_t v = (int16_t)std::lround(clampf(b->d[i], -1, 1) * 32767); raw[i * 2] = (unsigned char)v; raw[i * 2 + 1] = (unsigned char)(v >> 8); }
-            Json a = Json::object(); a.set("sr", Json::number(b->sr)); a.set("b64", Json::string(b64(raw.data(), raw.size()))); pack.set(sd.id, a); delete b; }
-          if (!pack.o.empty()) f.set("audio", pack);
-          ui.status(writeFile(p, f.dump()) ? "SAVED TO FILE" : "COULD NOT SAVE THE FILE", 4); }
+          loadData(*data, fileName(r.path)); curFile = r.path;
+          if (f.str("timbient") == "sessions") ui.status("THAT FILE HOLDS " + std::to_string(f.get("sessions")->a.size()) + " SESSIONS: THIS IS THE FIRST", 6); }
+        else { std::string p = r.path; const size_t sl = p.find_last_of("/\\"); if (p.find('.', sl == std::string::npos ? 0 : sl) == std::string::npos) p += ".tmbnt";
+          if (writeFile(p, sessionFile(serializePatch(ui)))) { curFile = p; ui.status("SAVED " + fileName(p), 4); } else ui.status("COULD NOT SAVE THE FILE", 5); }
       } }
     engine.collectGarbage();
     if (rec.on()) { rec.pump(engine); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }

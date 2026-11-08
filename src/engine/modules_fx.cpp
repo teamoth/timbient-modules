@@ -85,6 +85,64 @@ static Reg rReverb(new ModuleDef{"reverb", "REVERB", Cat::Proc, {{"IN", PType::A
   {fmt(prExp("size", "SIZE", 1, 30, 5), [](float v) { char b[16]; std::snprintf(b, 16, "%.1fS", v); return std::string(b); }),
    fmt(pr("pre", "PRE-DELAY", 0, 0.25f, 0), [](float v) { return std::to_string((int)std::lround(v * 1000)) + "MS"; }), pct("damp", "DAMP", 0.4f), pct("mix", "MIX", 0.5f)}, 0, 68, false, [] { return new Reverb(); }});
 
+// ---------------- INFINITE HALL: a figure-of-eight reverb tank (after Jon Dattorro's 1997 plate) whose delays
+// wander slowly (MOTION), so the tail drifts and detunes as it hangs. DECAY runs all the way to INFINITE; FREEZE holds it.
+struct Hall : Module {
+  enum { SIZE, DECAY, MOTION, DAMP, PRE, FREEZE, MIX };
+  struct AP { DelayLine d; float n = 1, g = 0.5f; float run(float x, float extra = 0) { const float z = d.read(std::max(1.f, n + extra) - 1); const float w = x + g * z; d.write(w); return z - g * w; } };
+  DelayLine pre; AP inAp[4]; AP mAp[2], ap2[2]; DelayLine dl1[2], dl2[2]; float n1[2] = {}, n2[2] = {}, lp[2] = {}, bw = 0, fbk[2] = {};
+  double ph[4] = {0, 0.3, 0.55, 0.8}; Smooth size, dry, wet; float drift[4] = {}, driftT[4] = {};
+  float sc() const { return (float)sr / 29761.f; }
+  void prepare() override {
+    pre.init(0.6f, sr); const float k = sc() * 2.2f;
+    const float inN[4] = {142, 107, 379, 277}, inG[4] = {0.75f, 0.75f, 0.625f, 0.625f};
+    for (int i = 0; i < 4; i++) { inAp[i].d.init(inN[i] * sc() / sr + 0.01f, sr); inAp[i].n = inN[i] * sc(); inAp[i].g = inG[i]; }
+    for (int h = 0; h < 2; h++) { mAp[h].d.init((h ? 908 : 672) * k / sr + 0.01f, sr); mAp[h].g = -0.7f; ap2[h].d.init((h ? 2656 : 1800) * k / sr + 0.01f, sr); ap2[h].g = 0.5f;
+      dl1[h].init((h ? 4217 : 4453) * k / sr + 0.01f, sr); dl2[h].init((h ? 3163 : 3720) * k / sr + 0.01f, sr); }
+    size.setTime(1.5f, sr); size.snap(e[SIZE]); dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX]);
+  }
+  bool frozen() const { return e[FREEZE] > 0.5f || eng->freeze.load(std::memory_order_relaxed); }
+  void trig(int port, const Event&) override { if (port == 1) p[FREEZE].store(p[FREEZE].load() > 0.5f ? 0.f : 1.f); }   // FREEZE in: each trigger flips it
+  void render(int a, int b) override {
+    const bool fz = frozen(); size.t = e[SIZE]; dry.t = 1 - e[MIX]; wet.t = e[MIX];
+    const float s0 = sc();
+    // how much each trip round the tank keeps, from DECAY (the time to fall by 60 dB); the top of the range never falls
+    const float loopT = (4453 + 3720) * s0 * e[SIZE] / sr; const bool inf = e[DECAY] >= 99.f || fz;
+    const float g = inf ? 1.f : std::pow(10.f, -3.f * loopT / e[DECAY]);
+    const float damp = fz ? 0.f : e[DAMP] * 0.85f, mot = e[MOTION];
+    for (int k = 0; k < 4; k++) { driftT[k] -= (float)(b - a) / sr; if (driftT[k] <= 0) { driftT[k] = 2 + rng.uni() * 5; } drift[k] += ((rng.uni() * 2 - 1) - drift[k]) * 0.0004f * (b - a); }
+    for (int i = a; i < b; i++) {
+      const float S = size.tick(), k2 = s0 * S;
+      const float x = fz ? 0.f : 0.5f * (in[0][0][i] + in[0][1][i]);
+      pre.write(x); float v = pre.read(std::max(1.f, e[PRE] * sr));
+      bw += 0.7f * (v - bw); v = bw;
+      for (auto& ap : inAp) v = ap.run(v);
+      for (int k = 0; k < 4; k++) { ph[k] += (0.11 + k * 0.067) / sr; if (ph[k] >= 1) ph[k] -= 1; }
+      float outL = 0, outR = 0;
+      for (int h = 0; h < 2; h++) {
+        const float wob = mot * (std::sin((float)(ph[h] * TAU)) * 14.f + drift[h] * 10.f) * s0;   // the slow wander: allpasses and delays drift by a few ms
+        float t = v + fbk[1 - h];
+        mAp[h].n = (h ? 908 : 672) * k2; t = mAp[h].run(t, wob);
+        dl1[h].write(t); n1[h] = (h ? 4217 : 4453) * k2; t = dl1[h].read(std::max(1.f, n1[h] + mot * std::sin((float)(ph[h + 2] * TAU)) * 6 * s0) - 1);
+        lp[h] += (1 - damp) * (t - lp[h]); t = lp[h] * g;
+        ap2[h].n = (h ? 2656 : 1800) * k2; t = ap2[h].run(t);
+        dl2[h].write(t); n2[h] = (h ? 3163 : 3720) * k2; t = dl2[h].read(n2[h] - 1) * g;
+        fbk[h] = inf ? std::tanh(t * 0.9f) / 0.9f : t;   // forever: a soft ceiling stops it growing
+        // listen at a few places in the tank: one side from each half, crossed, for a wide sound
+        const float tap = dl1[h].read(n1[h] * 0.37f) + dl1[h].read(n1[h] * 0.81f) - dl2[h].read(n2[h] * 0.55f);
+        (h ? outL : outR) += tap; (h ? outR : outL) -= 0.4f * dl2[h].read(n2[h] * 0.21f);
+      }
+      const float d = dry.tick(), w = wet.tick() * 0.5f;
+      out[0][0][i] = in[0][0][i] * d + sane(outL) * w; out[0][1][i] = in[0][1][i] * d + sane(outR) * w;
+    }
+  }
+};
+static Reg rHall(new ModuleDef{"hall", "INFINITE HALL", Cat::Proc, {{"IN", PType::Audio}, {"FREEZE", PType::Trig}}, {{"OUT", PType::Audio}},
+  {fmt(pr("size", "SIZE", 0.4f, 2.2f, 1.2f), [](float v) { return std::to_string((int)std::lround(v * 100)) + "%"; }),
+   fmt(prExp("decay", "DECAY", 1, 100, 12), [](float v) { if (v >= 99.f) return std::string("INFINITE"); char b[16]; std::snprintf(b, 16, v < 10 ? "%.1fS" : "%.0fS", v); return std::string(b); }),
+   pct("motion", "MOTION", 0.5f), pct("damp", "DAMP", 0.35f), fmt(pr("pre", "PRE-DELAY", 0, 0.5f, 0.02f), [](float v) { return std::to_string((int)std::lround(v * 1000)) + "MS"; }),
+   OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("mix", "MIX", 0.5f)}, 0, 68, false, [] { return new Hall(); }});
+
 // ---------------- DUCKER: dips on each KEY trigger, then breathes back (CURVE), optionally timed in beats ----------------
 struct Ducker : Module {
   float g = 1, low = 1, relT = 1, tSince = 1e9f, atkT = 0.01f; bool rising = false; Smooth dry, wet;

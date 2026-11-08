@@ -101,7 +101,7 @@ private:
   int jackY(int k) const { return 8 + k * 7 + 3; }
 public:
   bool unplugSelected();   // Delete / Backspace, or the UNPLUG button
-  bool jacksIn = false;   // SCREEN setting: jacks drawn inside the module's edge instead of on it
+  static constexpr bool jacksIn = true;   // the jacks sit inside the module's edge
   int inJackX(const UiMod& u) const { return u.x + (jacksIn ? 4 : 0); }
   int outJackX(const UiMod& u) const { return u.x + u.m->def->width - 1 - (jacksIn ? 4 : 0); }
   int sockX(const UiMod& u) const { return u.x + (jacksIn ? 4 : -2); }
