@@ -3,6 +3,7 @@
 #include "../engine_mi/mi_labels.h"
 #include "../engine/params.h"
 #include <cmath>
+#include <ctime>
 #include <cstdio>
 
 namespace tb {
@@ -17,7 +18,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "midi", "midiout"}},
   {"VOICES", {"tone", "pluck", "bell", "mi", "grains", "glass", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "crush", "mixer", "listen"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "crush", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -102,9 +103,16 @@ static inline void cablePt(float ax, float ay, float bx, float by, float t, floa
   const float sag = std::min(28.f, std::hypot(bx - ax, by - ay) * 0.3f + 4), mx = (ax + bx) / 2, my = (ay + by) / 2 + sag;
   x = (1 - t) * (1 - t) * ax + 2 * (1 - t) * t * mx + t * t * bx; y = (1 - t) * (1 - t) * ay + 2 * (1 - t) * t * my + t * t * by;
 }
-void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col) {
-  int px0 = ax, py0 = ay;
-  for (int i = 1; i <= 20; i++) { float x, y; cablePt((float)ax, (float)ay, (float)bx, (float)by, i / 20.f, x, y); const int xi = (int)std::lround(x), yi = (int)std::lround(y); c.line(px0, py0, xi, yi, col); px0 = xi; py0 = yi; }
+void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol, float flow) {
+  int px0 = ax, py0 = ay; float run = 0;
+  for (int i = 1; i <= 20; i++) { float x, y; cablePt((float)ax, (float)ay, (float)bx, (float)by, i / 20.f, x, y); const int xi = (int)std::lround(x), yi = (int)std::lround(y);
+    if (flowCol < 0) c.line(px0, py0, xi, yi, col);
+    else {   // audio flowing: a lighter dash every 9 pixels, drifting from the output towards the input
+      const int dx = xi - px0, dy = yi - py0, n = std::max(1, std::max(std::abs(dx), std::abs(dy))); const float step = std::hypot((float)dx, (float)dy) / n;
+      for (int s2 = 0; s2 <= n; s2++) { float ph = std::fmod(run + s2 * step - flow, 9.f); if (ph < 0) ph += 9.f;
+        c.px(px0 + (int)std::lround((float)dx * s2 / n), py0 + (int)std::lround((float)dy * s2 / n), ph < 2.f ? flowCol : col); }
+      run += n * step; }
+    px0 = xi; py0 = yi; }
 }
 bool Ui::cableEnds(const UiCable& cb, float& ax, float& ay, float& bx, float& by) {
   UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) return false;
@@ -214,6 +222,11 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     }
     if (!smp && D(0) >= 0) { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, 12);
       const int n = (int)D(1); for (int k = 0; k < n && k < 30; k++) c.px(x + (int)std::lround(clampf(D(2 + k), 0, 1) * (w - 1)), y + 6 + (int)(std::rand() % 9) - 4, 4); }
+  } else if (ty == "comp" || ty == "limit" || ty == "master") {   // how loud it is (top) and how much it's turning down (red, from the right)
+    const float lv = clampf((D(1) + 48) / 48, 0, 1), gr = clampf(-D(0) / 18, 0, 1);
+    c.rect(x, y + 1, w, 2, 21); c.rect(x, y + 1, (int)std::lround(lv * w), 2, D(1) > -1 ? 14 : 48);
+    c.rect(x, y + 4, w, 2, 21); if (gr > 0.003f) c.rect(x + w - (int)std::lround(gr * w), y + 4, (int)std::lround(gr * w), 2, 14);
+    if (ty == "master") { const float gg = clampf(-D(2) / 12, 0, 1); if (gg > 0.003f) c.rect(x + w - (int)std::lround(gg * w), y + 4, (int)std::lround(gg * w), 1, 12); }
   } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
     const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
       const int h = std::max(0, std::min(5, (int)std::lround(std::sqrt(D(4 + k)) * 5))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
@@ -310,24 +323,13 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   static uint8_t inkTbl[128]; static bool init = false; if (!init) { for (int i = 0; i < 128; i++) inkTbl[i] = (uint8_t)i; inkTbl[9] = 28; inkTbl[18] = 29; inkTbl[21] = 30; inkTbl[4] = 47; init = true; }
   c.rect(x + 2, y + 2, w, g.h, 26);
   c.ink = inkTbl; c.rect(x, y, w, g.h, 27); c.frame(x, y, w, g.h, 21);
-  c.ink = nullptr; const bool fl = u.m->flash.load() > 0, mu = u.m->mute.load();
+  c.ink = nullptr; const bool fl = !cableMotion && u.m->flash.load() > 0, mu = u.m->mute.load();
   c.rect(x, y, w, HEAD, fl ? 4 : mu ? 18 : catCol(d->cat)); c.text(d->name, x + 2, y + 2, 15); if (!d->fixed) c.text("x", x + w - 6, y + 2, 15);
   c.ink = inkTbl;
   for (size_t k = 0; k < d->ins.size(); k++) { bool conn = false; for (auto& cb : cables) if (cb.to == u.m->id && cb.toPort == (int)k) conn = true;
     drawJack(c, inJackX(u) - viewX, y + jackY((int)k), d->ins[k].type, conn, false); c.text(d->ins[k].name, x + 4 + (jacksIn ? 5 : 0), y + jackY((int)k) - 2, 9); }
   for (size_t k = 0; k < d->outs.size(); k++) { bool conn = false; for (auto& cb : cables) if (cb.from == u.m->id && cb.fromPort == (int)k) conn = true;
     drawJack(c, outJackX(u) - viewX, y + jackY((int)k), d->outs[k].type, conn, fl && d->outs[k].type == PType::Trig); c.text(d->outs[k].name, x + w - 4 - (jacksIn ? 5 : 0) - Canvas::tw(d->outs[k].name), y + jackY((int)k) - 2, 9); }
-  // each cable's plug: the cable itself, drawn over the panel from its jack to the edge, so it leaves at the cable's own angle
-  for (auto& cb : cables) { if (cb.from != u.m->id && cb.to != u.m->id) continue; float ax, ay, bx, by; if (!cableEnds(cb, ax, ay, bx, by)) continue;
-    const int col = (selT > 0 && sameCable(cb, sel)) ? 4 : typeCol(cb.type);
-    for (int end = 0; end < 2; end++) { if ((end == 0 ? cb.from : cb.to) != u.m->id) continue;
-      const float jx = end == 0 ? ax : bx, jy = end == 0 ? ay : by; float px = jx, py = jy; bool out = false;
-      for (int i = 1; i <= 20 && !out; i++) { float qx, qy; cablePt(ax, ay, bx, by, end == 0 ? i / 20.f : 1 - i / 20.f, qx, qy);
-        const float dx = qx - px, dy = qy - py; const int n = std::max(1, (int)std::ceil(std::max(std::fabs(dx), std::fabs(dy))));
-        for (int s2 = 1; s2 <= n; s2++) { const int wx = (int)std::lround(px + dx * s2 / n), wy = (int)std::lround(py + dy * s2 / n);
-          const float dj = std::hypot(wx - jx, wy - jy); if (wx < u.x || wx >= u.x + w || wy < u.y || wy >= u.y + g.h || dj > 6.5f) { out = true; break; }   // a short plug; then it goes under the panel
-          if (dj >= 2.5f) c.px(wx - viewX, wy - viewY, col); }
-        px = qx; py = qy; } } }
   if (d->vis) drawDisplay(c, u, x + 3, y + g.vy, w - 6, dt);
   const int root = eng.key.root.load(); const bool clocked = u.m->clockedIn.load();
   for (size_t j = 0; j < (u.fold ? 0 : d->params.size()); j++) {
@@ -374,8 +376,18 @@ void Ui::draw(Canvas& c, float dt) {
     const int ax = outJackX(*a) - viewX, ay = a->y + jackY(cb.fromPort) - viewY;
     int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = sockX(*b) - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3) - viewY; } else { bx = inJackX(*b) - viewX; by = b->y + jackY(cb.toPort) - viewY; }
     const bool hi = (selT > 0 && sameCable(cb, sel)) || (drag.kind == D_MOVE && drag.splice >= 0 && drag.splice < (int)cables.size() && sameCable(cb, cables[drag.splice]));
-    drawCable(c, ax, ay, bx, by, hi ? 4 : a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type));
+    if (!cableMotion) { drawCable(c, ax, ay, bx, by, hi ? 4 : a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type)); continue; }
+    drawCable(c, ax, ay, bx, by, hi ? 4 : typeCol(cb.type), cb.type == PType::Audio && !hi ? 15 : -1, flowT);
+    if (cb.type == PType::Trig) {   // each trigger sent: a pulse that runs along the cable to where it's going
+      const unsigned n = cb.fromPort < 8 ? a->m->fires[cb.fromPort].load(std::memory_order_relaxed) : 0;
+      if (n != cb.seen) { if (cb.seen != 0) for (unsigned k = 0; k < std::min(3u, n - cb.seen); k++) cb.pulses.push_back(-0.08f * k); cb.seen = n; }
+      const float len = std::max(20.f, std::hypot((float)(bx - ax), (float)(by - ay)) * 1.2f), sp = 260.f / len * dt;   // about 260 pixels a second
+      for (auto& t : cb.pulses) { t += sp; if (t < 0 || t > 1) continue; float x, y; cablePt((float)ax, (float)ay, (float)bx, (float)by, t, x, y);
+        const int xi = (int)std::lround(x), yi = (int)std::lround(y); c.rect(xi - 1, yi - 1, 3, 3, 46); c.px(xi, yi, 15); }
+      cb.pulses.erase(std::remove_if(cb.pulses.begin(), cb.pulses.end(), [](float t) { return t > 1; }), cb.pulses.end());
+      if (cb.pulses.size() > 24) cb.pulses.erase(cb.pulses.begin(), cb.pulses.end() - 24); }
   }
+  flowT += dt * 7.f;
   for (auto& u : mods) drawModule(c, *u, dt);
   if (selOn) { selT = 1;   // a picked cable: its UNPLUG button, until you tap anywhere else
     bool alive = false; for (auto& cb : cables) if (sameCable(cb, sel)) alive = true; if (!alive) selOn = false; }
@@ -452,12 +464,23 @@ void Ui::draw(Canvas& c, float dt) {
     std::string t = ask->text; const int room = (w - 14) / 4; if ((int)t.size() > room) t = t.substr(t.size() - room);
     c.text(t, x + 6, y + 14, 4); if (std::fmod(blink, 1.f) < 0.5f) c.rect(x + 6 + Canvas::tw(t) + 2, y + 13, 1, 7, 4);
     c.text("OK", x + 6, y + 25, 9); c.text("CANCEL", x + 24, y + 25, 9);
+    if (ask->dice) { const int dx = x + w - 52; c.frame(dx, y + 24, 7, 7, 9); for (int k : {0, 2, 4}) c.px(dx + 1 + k, y + 25 + k, 4);   // a dice: another name
+      c.text("NEW NAME", dx + 10, y + 25, 9); }
   }
   c.toRGBA();
 }
 
 void Ui::typed(const std::string& t) { if (!ask) return; for (char ch : t) { const char u = (char)std::toupper((unsigned char)ch);
     if (((u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') || std::string(" #-/+.").find(u) != std::string::npos) && ask->text.size() < 24) ask->text += u; } }
+// a name for a session, from two lists of quiet words (SAVE AS: the dice gives another)
+std::string Ui::randomName() {
+  static const char* A[] = {"SLOW", "PALE", "QUIET", "AMBER", "MOSS", "SALT", "HOLLOW", "DRIFTING", "SOFT", "DISTANT", "SILVER", "MISTY", "LOW", "WARM", "FADED", "STILL", "VELVET",
+    "COPPER", "GLASS", "WINTER", "EVENING", "NORTHERN", "SLEEPY", "GENTLE", "DUSK", "OCHRE", "INDIGO", "LICHEN", "FERN", "TIDAL", "PAPER", "WOOLLEN", "CEDAR", "HAZY", "LATE"};
+  static const char* B[] = {"HARBOUR", "LANTERN", "MEADOW", "TIDE", "ORCHARD", "RIVER", "MOTH", "CHAPEL", "HILLS", "RAIN", "GARDEN", "FIELD", "LIGHT", "SHORE", "CLOUD", "FOREST",
+    "WIRE", "BELLS", "ROOM", "WINDOW", "STATION", "ISLAND", "COAST", "SIGNAL", "DUNES", "VALLEY", "HEATH", "EMBERS", "ATLAS", "LAKE", "HORIZON", "PATH", "HAZE", "STARS", "PIER"};
+  static unsigned seed = (unsigned)std::time(nullptr); seed = seed * 1664525u + 1013904223u; const unsigned a = (seed >> 8) % (sizeof(A) / sizeof(*A));
+  seed = seed * 1664525u + 1013904223u; const unsigned b = (seed >> 8) % (sizeof(B) / sizeof(*B)); return std::string(A[a]) + " " + B[b];
+}
 void Ui::keyBackspace() { if (ask && !ask->text.empty()) ask->text.pop_back(); }
 void Ui::keyEscape() { ask.reset(); }
 void Ui::keyEnter() { if (!ask) return; auto a = std::move(ask); std::string t = a->text; while (!t.empty() && t.back() == ' ') t.pop_back(); if (!t.empty() && a->done) a->done(t); }
@@ -490,7 +513,7 @@ void Ui::pointerDown(float sx, float sy) {
   drag = Drag(); drag.sx = sx; drag.sy = sy; drag.wx = wx; drag.wy = wy;
   if (ask) {   // OK / CANCEL in the name box
     const int w = std::min(lastW - 10, 150), x = (lastW - w) / 2, y = TOP + 30;
-    if (sy >= y + 22 && sy <= y + 32) { if (sx >= x + 3 && sx <= x + 16) keyEnter(); else if (sx >= x + 21 && sx <= x + 50) keyEscape(); }
+    if (sy >= y + 22 && sy <= y + 32) { if (sx >= x + 3 && sx <= x + 16) keyEnter(); else if (sx >= x + 21 && sx <= x + 50) keyEscape(); else if (ask->dice && sx >= x + w - 54) ask->text = randomName(); }
     return;
   }
   if (selOn) { const int bw = Canvas::tw("UNPLUG") + 6; selOn = false; selT = 0.3f;   // the picked cable's UNPLUG button; any other tap just lets go of it

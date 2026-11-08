@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.13.0";
+static const char* VERSION = "0.14.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -224,21 +224,24 @@ int main(int argc, char** argv) {
   };
   auto fileName = [](std::string p) { const size_t sl = p.find_last_of("/\\"); if (sl != std::string::npos) p = p.substr(sl + 1); const size_t dt = p.rfind('.'); if (dt != std::string::npos && dt > 0) p = p.substr(0, dt);
     for (auto& ch : p) ch = (char)std::toupper((unsigned char)ch); return p; };
-  auto saveAs = [&] { SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, curFile.empty() ? "session.tmbnt" : curFile.c_str()); };
+  static std::string saveName;   // SAVE AS: a name first (the dice suggests some), then where it goes
+  auto saveAs = [&] { ui.askName("NAME THIS SESSION", [&](const std::string& n) { std::string fn; for (char ch : n) fn += (ch == '/' ? '-' : (char)std::tolower((unsigned char)ch));
+      if (fn.empty()) fn = "session"; saveName = fn + ".tmbnt";
+      std::string start = saveName; if (!curFile.empty()) { const size_t sl = curFile.find_last_of("/\\"); if (sl != std::string::npos) start = curFile.substr(0, sl + 1) + saveName; }
+      SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, start.c_str()); }); };
   std::function<void(int)> openSessions = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
-    d.items = {"NEW EMPTY SESSION", "THE DEMO SESSION", "RESTORE LAST WORK", "OPEN...", curFile.empty() ? "SAVE..." : "SAVE  " + fileName(curFile), "SAVE AS..."};
+    d.items = {"NEW EMPTY SESSION", "RESTORE LAST WORK", "OPEN...", curFile.empty() ? "SAVE..." : "SAVE  " + fileName(curFile), "SAVE AS..."};
     if (!store.list.empty()) { d.items.push_back("SAVE THE " + std::to_string(store.list.size()) + " OLD IN-APP SESSIONS AS FILES..."); d.items.push_back("REMOVE THE OLD IN-APP SESSIONS"); }
     d.pick = [&, x0](int i) {
       if (i == 0) { Dropdown q; q.x = x0; q.y = 11; q.items = {"CLEAR EVERYTHING?", "YES, START EMPTY", "NO, KEEP IT"}; q.title = 0; q.danger = 1;
         q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); curFile.clear(); dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
-      if (i == 1) { ui.clearPatch(); ui.demoPatch(); curFile.clear(); dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.viewX = ui.viewY = 0; ui.status("THE DEMO SESSION"); return; }
-      if (i == 2) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) loadData(prev, "YOUR LAST WORK"); else ui.status("NOTHING TO RESTORE"); return; }
-      if (i == 3) { SDL_ShowOpenFileDialog(onOpenDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
-      if (i == 4) { if (curFile.empty()) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); return; }
-      if (i == 5) { saveAs(); return; }
-      if (i == 6) { SDL_ShowOpenFolderDialog(onFolderDialog, (void*)1, win, nullptr, false); ui.status("PICK A FOLDER FOR THEM", 4); return; }
-      if (i == 7) { Dropdown z; z.x = x0; z.y = 11 + i * 8; z.items = {"REMOVE THEM FROM THE APP?", "YES (I SAVED THEM AS FILES)", "NO, KEEP THEM"}; z.title = 0; z.danger = 1;
+      if (i == 1) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) loadData(prev, "YOUR LAST WORK"); else ui.status("NOTHING TO RESTORE"); return; }
+      if (i == 2) { SDL_ShowOpenFileDialog(onOpenDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
+      if (i == 3) { if (curFile.empty()) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); return; }
+      if (i == 4) { saveAs(); return; }
+      if (i == 5) { SDL_ShowOpenFolderDialog(onFolderDialog, (void*)1, win, nullptr, false); ui.status("PICK A FOLDER FOR THEM", 4); return; }
+      if (i == 6) { Dropdown z; z.x = x0; z.y = 11 + i * 8; z.items = {"REMOVE THEM FROM THE APP?", "YES (I SAVED THEM AS FILES)", "NO, KEEP THEM"}; z.title = 0; z.danger = 1;
         z.pick = [&](int q2) { if (q2 == 1) { store.list.clear(); store.save(); ui.status("THE OLD IN-APP SESSIONS ARE GONE"); } }; ui.openDropdown(z); }
     };
     ui.openDropdown(d);
@@ -279,12 +282,13 @@ int main(int argc, char** argv) {
   // ---- SCREEN: how often the picture is redrawn when nothing is being touched (it always runs at full speed while you work) ----
   static const int FPS[3] = {60, 30, 20};
   int fpsIdx = std::max(0, std::min(2, (int)settings.num("fps", 1)));
+  ui.cableMotion = settings.num("cableMotion", 1) > 0.5;
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -306,8 +310,10 @@ int main(int argc, char** argv) {
           ui.viewX = vx; ui.viewY = vy; char b[64]; std::snprintf(b, 64, "QUALITY %.1fK SAMPLES A SECOND", engine.sr / 1000); ui.status(b, 4); }; }
       else if (i == 5) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
-      else if (i == 6) { openTheme(x0); return; }
-      else if (i == 7) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+      else if (i == 6) { ui.cableMotion = !ui.cableMotion; settings.set("cableMotion", Json::number(ui.cableMotion ? 1 : 0)); saveSettings();
+        ui.status(ui.cableMotion ? "CABLE MOTION ON: PULSES AND FLOW ALONG THE CABLES" : "CABLE MOTION OFF: A LITTLE LIGHTER ON OLDER COMPUTERS", 4); return; }
+      else if (i == 7) { openTheme(x0); return; }
+      else if (i == 8) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);

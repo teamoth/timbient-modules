@@ -54,7 +54,7 @@ void Module::emit(int port, Event ev) {
   if (mute.load(std::memory_order_relaxed)) return;
   // CHANCE: each note a sequencer plays has this chance of sounding (clock pulses always pass)
   if (def->cat == Cat::Trig && def->outs[port].name == "TRIG" && def->type != "tools") { const int ci = def->paramIndex("chance"); if (ci >= 0 && rng.uni() >= e[ci]) return; }
-  flash.store(0.12f, std::memory_order_relaxed);
+  flash.store(0.12f, std::memory_order_relaxed); if (port >= 0 && port < 8) fires[port].fetch_add(1, std::memory_order_relaxed);
   ev.offset = eng->pos;
   for (auto& c : eng->cables) {
     if (c.type != PType::Trig || c.from != id || c.fromPort != port) continue;

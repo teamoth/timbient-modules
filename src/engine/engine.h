@@ -79,6 +79,7 @@ public:
   float modv = 0;                  // this module's MOD output (-1..1)
   std::atomic<bool> mute{false}, solo{false};
   std::atomic<float> flash{0};     // lights the header when it fires (shown on screen)
+  std::atomic<unsigned> fires[8] = {};   // how many triggers each output has sent: the screen sends a pulse along its cables
   std::atomic<float> disp[64];     // values the screen draws (playheads, meters, shapes), written by the audio thread
   std::atomic<bool> clockedIn{false};   // something is patched into a CLOCK input
   float sr = 48000; double t = 0;  // sample rate and running time in seconds

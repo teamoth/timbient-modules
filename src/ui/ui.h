@@ -21,7 +21,7 @@ struct UiMod {
   std::string dev;                                                       // MIDI OUT: the device chosen (empty: the first one there)
   std::vector<std::pair<float, float>> dots; int hopSeen = 0;            // Random Hops: recent hops (age, height); Tombola uses dots too
 };
-struct UiCable { int from, fromPort, to, toPort, toParam; PType type; };
+struct UiCable { int from, fromPort, to, toPort, toParam; PType type; unsigned seen = 0; std::vector<float> pulses; };   // pulses: triggers on their way along it (0 at the output, 1 at the input)
 
 // a list that drops down from a button: pick one item (an optional title row can't be picked)
 struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; int rows = 1, colW = 60; };   // sw: a palette colour shown beside each item
@@ -76,9 +76,11 @@ public:
   std::function<void(int, int)> onBrowseFile;
   std::function<bool(const std::string&, std::vector<Browser::Entry>&)> onList;   // a folder's contents (the app does this with SDL)                            // the system's own file picker instead
   // a small box for typing a name
-  struct Ask { std::string title, text; std::function<void(const std::string&)> done; };
+  struct Ask { std::string title, text; std::function<void(const std::string&)> done; bool dice = false; };
   std::unique_ptr<Ask> ask;
   void askText(const std::string& title, const std::string& init, std::function<void(const std::string&)> done) { ask = std::make_unique<Ask>(Ask{title, init, std::move(done)}); dd.reset(); menuOpen = false; }
+  void askName(const std::string& title, std::function<void(const std::string&)> done) { askText(title, randomName(), std::move(done)); ask->dice = true; }   // with a dice for another name
+  static std::string randomName();
   void typed(const std::string& t);      // text typed while the box is open
   void keyEnter(); void keyBackspace(); void keyEscape();
 
@@ -96,12 +98,13 @@ private:
   void nudge(UiMod* u, int k, int dir);
   void drawModule(Canvas& c, UiMod& u, float dt);
   void drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt);
-  void drawCable(Canvas& c, int ax, int ay, int bx, int by, int col);
+  void drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol = -1, float flow = 0);
   void drawJack(Canvas& c, int x, int y, PType t, bool filled, bool lit);
   int jackY(int k) const { return 8 + k * 7 + 3; }
 public:
   bool unplugSelected();   // Delete / Backspace, or the UNPLUG button
-  static constexpr bool jacksIn = true;   // the jacks sit inside the module's edge
+  static constexpr bool jacksIn = true;
+  bool cableMotion = true; float flowT = 0;   // SETTINGS: pulses travel along trigger cables, audio cables flow (off: the old header flash)
   int inJackX(const UiMod& u) const { return u.x + (jacksIn ? 4 : 0); }
   int outJackX(const UiMod& u) const { return u.x + u.m->def->width - 1 - (jacksIn ? 4 : 0); }
   int sockX(const UiMod& u) const { return u.x + (jacksIn ? 4 : -2); }
