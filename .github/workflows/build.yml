@@ -17,6 +17,8 @@ jobs:
             name: mac
           - os: windows-latest
             name: windows
+          - os: windows-latest
+            name: windows32
           - os: ubuntu-22.04
             name: linux
     runs-on: ${{ matrix.os }}
@@ -30,8 +32,11 @@ jobs:
       - name: "Configure (Mac, one app for both Intel and Apple Silicon)"
         if: matrix.name == 'mac'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64"
+      - name: "Configure (Windows 32-bit, for older computers)"
+        if: matrix.name == 'windows32'
+        run: cmake -B build -A Win32 -DCMAKE_BUILD_TYPE=Release
       - name: Configure
-        if: matrix.name != 'mac'
+        if: matrix.name != 'mac' && matrix.name != 'windows32'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -49,13 +54,14 @@ jobs:
           mkdir -p pkg && cp -R "build/Timbient Modules.app" pkg/ && cp CREDITS.md pkg/
           ditto -c -k pkg Timbient-Modules-Mac.zip
       - name: Package (Windows)
-        if: matrix.name == 'windows'
+        if: matrix.name == 'windows' || matrix.name == 'windows32'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "pkg/Timbient Modules" | Out-Null
           Copy-Item "build/Release/Timbient Modules.exe" "pkg/Timbient Modules/"
           Copy-Item "CREDITS.md" "pkg/Timbient Modules/"
-          Compress-Archive -Path "pkg/Timbient Modules" -DestinationPath Timbient-Modules-Windows.zip
+          $zip = if ("${{ matrix.name }}" -eq "windows32") { "Timbient-Modules-Windows-32bit.zip" } else { "Timbient-Modules-Windows.zip" }
+          Compress-Archive -Path "pkg/Timbient Modules" -DestinationPath $zip
       - name: Package (Linux)
         if: matrix.name == 'linux'
         run: |
