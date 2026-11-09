@@ -41,6 +41,12 @@ KeyMatch matchKey(const float chroma[12]) {
 std::vector<const ModuleDef*>& allDefs() { static std::vector<const ModuleDef*> v; return v; }
 void registerDef(ModuleDef* d) {
   d->width += 8;   // room for the - and + beside every slider
+  static const char* KEYED[] = {"clump", "orbits", "hops", "keys", "bursts", "walker", "tools"};   // sequencers that pick notes from a key
+  for (const char* k : KEYED) if (d->type == k) {
+    std::vector<std::string> keys = {"GLOBAL"}; for (int i = 0; i < 12; i++) keys.push_back(NOTE_NAMES[i]);
+    std::vector<std::string> sc = {"GLOBAL"}; for (auto& x : scales()) sc.push_back(x.name);
+    ParamDef a = OP("skey", "KEY", keys, 0); ParamDef b = OP("sscale", "SCALE", sc, 0);
+    d->keyIdx = (int)d->params.size(); d->params.push_back(a); d->scaleIdx = (int)d->params.size(); d->params.push_back(b); }
   bool audio = false; for (auto& o : d->outs) if (o.type == PType::Audio) audio = true;
   if (audio && d->type != "mixer" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {
     ParamDef q = pr("pan", "PAN", -1, 1, 0); q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };
@@ -66,8 +72,8 @@ Module* Engine::create(const std::string& type, int id) {
 void Engine::collectGarbage() { Module* m; while (garbage.pop(m)) delete m; AudioBuf* b; while (bufGarbage.pop(b)) delete b; }
 
 bool Module::patched(int inPort) const { for (auto& c : eng->cables) if (c.to == id && c.toPort == inPort && c.type != PType::Mod) return true; return false; }
-int Module::root() const { return eng->key.root.load(std::memory_order_relaxed); }
-int Module::scale() const { return eng->key.scale.load(std::memory_order_relaxed); }
+int Module::root() const { if (def->keyIdx >= 0) { const int k = (int)e[def->keyIdx]; if (k >= 1) return k - 1; } return eng->key.root.load(std::memory_order_relaxed); }
+int Module::scale() const { if (def->scaleIdx >= 0) { const int k = (int)e[def->scaleIdx]; if (k >= 1 && k <= (int)scales().size()) return k - 1; } return eng->key.scale.load(std::memory_order_relaxed); }
 float Module::note(int oct, int step) const { return midiOf(degOf(oct, step, scale()), root(), scale()); }
 
 void Module::emit(int port, Event ev) {

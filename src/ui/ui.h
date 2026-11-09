@@ -12,6 +12,7 @@
 namespace tb {
 
 struct UiMod {
+  int colScroll = 0;   // TRACKER: the first of the two columns on show
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
   float hist[48] = {0}; int hi = 0; float ht = 0;   // recent values, for drawing the LFO's line
@@ -26,7 +27,7 @@ struct UiMod {
 struct UiCable { int from, fromPort, to, toPort, toParam; PType type; unsigned seen = 0; std::vector<float> pulses; float flow = 0, lastV = 0, rate = 0; };   // flow: how far its moving pattern has gone   // pulses: triggers on their way along it (0 at the output, 1 at the input)
 
 // a list that drops down from a button: pick one item (an optional title row can't be picked)
-struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; int rows = 1, colW = 60; };   // sw: a palette colour shown beside each item
+struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; int rows = 1, colW = 60; bool stay = false; };   // stay: picking doesn't close it (trying colours)   // sw: a palette colour shown beside each item
 
 class Ui {
 public:
@@ -123,6 +124,8 @@ private:
   int jackY(int k) const { return 8 + k * 7 + 3; }
 public:
   bool unplugSelected();   // Delete / Backspace, or the UNPLUG button
+  int trFocus = 0;          // the Tracker last touched: the arrow keys and Delete work on it
+  bool trackerKey(int key); // 1 up, 2 down, 3 left, 4 right, 5 delete
   static constexpr bool jacksIn = true;
   bool cableMotion = true; float flowT = 0;   // SETTINGS: pulses travel along trigger cables, audio cables flow (off: the old header flash)
   int inJackX(const UiMod& u) const { return u.x + (jacksIn ? 4 : 0); }

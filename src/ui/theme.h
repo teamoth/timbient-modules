@@ -9,7 +9,7 @@
 
 namespace tb {
 
-struct Theme { std::string bg = "#000000", mod = "#3b3b41", audio = "#6fb3ad", trig = "#b39ddb", modc = "#86b34f"; };
+struct Theme { std::string bg = "#000000", mod = "#3b3b41", audio = "#5f8f8a", trig = "#8f84a8", modc = "#7f9467"; };   // cables: soft by default
 using Choice = std::pair<const char*, const char*>;
 inline const std::vector<Choice>& bgChoices() { static const std::vector<Choice> v = {{"POND", "pond"}, {"BLACK", "#000000"}, {"CHARCOAL", "#1a1a1d"}, {"SLATE", "#232c33"}, {"NAVY", "#111a2e"}, {"FOREST", "#13201a"}, {"PLUM", "#221624"},
   {"CLAY", "#3a2a24"}, {"MIDNIGHT", "#0b1020"}, {"EARTH", "#2a1d18"}, {"STEEL", "#5c5f66"}, {"LIGHT GREY", "#c9c9ce"}, {"PAPER", "#ebe6da"},
@@ -19,7 +19,7 @@ inline const std::vector<Choice>& modChoices() { static const std::vector<Choice
   {"DARK MOSS", "#0f1a10"}, {"DARK GREY", "#2b2b2b"}, {"RUST", "#4a3328"}, {"PLUM", "#3d2d42"}, {"SILVER", "#b8bac0"}, {"BONE", "#d9d3c3"},
   {"TEAL", "#1f4a4c"}, {"PINE", "#23392c"}, {"WINE", "#4a2230"}, {"INDIGO", "#2b2a55"}, {"BROWN", "#4b3a2a"}, {"OLIVE", "#4a4a2a"}, {"STORM", "#3e4a5a"}, {"MAUVE", "#5a4560"},
   {"CLAY", "#7a5040"}, {"STONE", "#8f8b82"}, {"SAGE", "#9eae95"}, {"SAND", "#c9b98f"}, {"MIST", "#c6ced6"}, {"ROSE", "#d8b7b4"}, {"LILAC", "#c5bad9"}, {"CREAM", "#e9e1cc"}}; return v; }
-inline const std::vector<Choice>& cableChoices() { static const std::vector<Choice> v = {{"TEAL", "#6fb3ad"}, {"LILAC", "#b39ddb"}, {"GREEN", "#86b34f"}, {"AMBER", "#e0a83c"}, {"CORAL", "#e07a5f"}, {"CREAM", "#ece6cf"},
+inline const std::vector<Choice>& cableChoices() { static const std::vector<Choice> v = {{"SOFT TEAL", "#5f8f8a"}, {"DUSTY LILAC", "#8f84a8"}, {"SAGE", "#7f9467"}, {"TEAL", "#6fb3ad"}, {"LILAC", "#b39ddb"}, {"GREEN", "#86b34f"}, {"AMBER", "#e0a83c"}, {"CORAL", "#e07a5f"}, {"CREAM", "#ece6cf"},
   {"SKY", "#7fb8e6"}, {"PINK", "#e6a1d8"}, {"DEEP TEAL", "#1f5f5a"}, {"DEEP PURPLE", "#5b3f8f"}, {"GREY", "#8a8a90"}, {"ICE", "#7fd1e8"}, {"LIME", "#a8e07a"}, {"GOLD", "#c9b26b"}, {"PEACH", "#e09a6b"}, {"MINT", "#9fd28b"},
   {"TAN", "#e3b07a"}, {"ORCHID", "#c8a2c8"}, {"NEON", "#4cff7a"}, {"YELLOW", "#ffd23f"}, {"AZURE", "#4cc9ff"}, {"WHITE", "#e0e0e0"}, {"SILVER", "#bdbdbd"}, {"DEEP GREEN", "#4f7a2a"}, {"OLIVE", "#3f6b1f"},
   {"RED", "#e04848"}, {"CRIMSON", "#b0303f"}, {"ORANGE", "#f08a30"}, {"SAFFRON", "#f2b134"}, {"LEMON", "#f2e86b"}, {"CHARTREUSE", "#c2e04a"}, {"EMERALD", "#2fb36a"}, {"JADE", "#3fa38a"},

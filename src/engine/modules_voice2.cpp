@@ -9,24 +9,6 @@ static std::vector<ParamDef> vp(std::vector<ParamDef> p, std::vector<ParamDef> e
 }
 static std::vector<ParamDef> ENVD() { return envP(0.003f, 0.3f, 1, 4, 2); }
 
-// ---------------- GLASS: three bright partials that bend down into pitch, then ring away ----------------
-struct GlassV : VoiceBase { float ph[3], t = 0, d = 1, kd = 0; };
-struct Glass : Poly<GlassV> {
-  enum { PITCHK, BEND, DECAY };
-  Glass() { gainScale = 0.08f; }
-  void start(GlassV& x) override { x.t = 0; x.d = e[DECAY]; for (auto& p : x.ph) p = 0; x.kd = std::log(0.0001f / 1.f) / std::max(0.01f, x.d - 0.004f); }
-  void voice(GlassV& x, float& l, float& r) override {
-    const float dt = 1.f / sr; x.t += dt; if (x.t > x.d) { l = r = 0; return; }
-    const float a = x.t < 0.004f ? x.t / 0.004f : std::exp(x.kd * (x.t - 0.004f));
-    const float bend = std::pow(1 + e[BEND], 1 - std::min(1.f, x.t / 0.07f));
-    static const float K[3] = {1, 2.01f, 3.98f}, A[3] = {1, 0.25f, 0.08f}; float y = 0;
-    for (int k = 0; k < 3; k++) { const float fr = x.f * K[k] * bend; if (fr > sr * 0.45f) continue; x.ph[k] += fr * dt; x.ph[k] -= std::floor(x.ph[k]); y += std::sin(TAU * x.ph[k]) * A[k]; }
-    l = r = y * a;
-  }
-};
-static Reg rGlass(new ModuleDef{"glass", "GLASS", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), pr("glide", "BEND", 0, 0.1f, 0.025f), T("decay", "RING", 0.2f, 4, 0.9f)}, ENVD(), 0.4f), 0, 68, false, [] { return new Glass(); }});
-
 // ---------------- NOISE CLICK: a burst of noise through a tuned band ----------------
 struct ClickV : VoiceBase { Biquad bp; float t = 0, d = 0.08f, kd = 0; };
 struct Click : Poly<ClickV> {
@@ -41,26 +23,6 @@ struct Click : Poly<ClickV> {
 };
 static Reg rClick(new ModuleDef{"click", "NOISE CLICK", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   vp({PITCH(), pr("q", "FOCUS", 1, 30, 12), T("decay", "RING", 0.01f, 0.5f, 0.08f), pr("tune", "BAND", 0.5f, 4, 2)}, ENVD(), 0.4f), 0, 68, false, [] { return new Click(); }});
-
-// ---------------- GRAIN CLOUD: a scatter of tiny sine grains around the note ----------------
-struct GrainsV : VoiceBase { static constexpr int G = 12; float at[G], dur[G], fr[G], ph[G], gl[G], gr[G]; int n = 0; float t = 0; };
-struct Grains : Poly<GrainsV> {
-  enum { PITCHK, DENS, SPREAD, GRAIN };
-  Grains() { gainScale = 0.05f; selfPan = true; }
-  void start(GrainsV& x) override {
-    static const float mult[4] = {1, 1.5f, 2, 3}; const float w = e[pi("width")];
-    x.n = std::min(GrainsV::G, (int)e[DENS]); x.t = 0;
-    for (int i = 0; i < x.n; i++) { x.at[i] = rng.uni() * e[SPREAD] + 0.005f; x.dur[i] = e[GRAIN] * rng.range(0.6f, 1.4f); x.fr[i] = x.f * mult[rng.next() % 4] * (1 + rng.range(-0.01f, 0.01f)); x.ph[i] = 0; panGains(rng.bi() * w, x.gl[i], x.gr[i]); }
-  }
-  void voice(GrainsV& x, float& l, float& r) override {
-    const float dt = 1.f / sr; x.t += dt; float L = 0, R = 0;
-    for (int i = 0; i < x.n; i++) { const float u = (x.t - x.at[i]) / x.dur[i]; if (u < 0 || u > 1) continue;
-      x.ph[i] += x.fr[i] * dt; x.ph[i] -= std::floor(x.ph[i]); const float s = std::sin(TAU * x.ph[i]) * hann(u); L += s * x.gl[i]; R += s * x.gr[i]; }
-    l = L; r = R;
-  }
-};
-static Reg rGrains(new ModuleDef{"grains", "GRAIN CLOUD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), ST("dens", "DENSITY", 1, 12, 7), T("spread", "SCATTER", 0.02f, 1, 0.18f), T("grain", "GRAIN", 0.005f, 0.12f, 0.03f)}, ENVD(), 0.5f), 0, 68, false, [] { return new Grains(); }});
 
 // ---------------- ANALOG: an oscillator and a sub through a resonant lowpass that snaps open on each note ----------------
 struct AnalogV : VoiceBase { Osc o, sub; Biquad lp; float t = 0, top = 1000; int cnt = 0; };

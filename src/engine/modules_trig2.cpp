@@ -81,7 +81,8 @@ static Reg rTools(new ModuleDef{"tools", "TRIG TOOLS", Cat::Trig, {{"IN", PType:
 // ---------------- TRACKER: notes typed in step by step ----------------
 static const int TRK_DIV[3] = {1, 2, 4};
 struct Tracker : Module {
-  enum { SYNC, BPM, DIV, LEN, ESTEP, REC, VEL, CHANCE, DEL, CLEAR };
+  enum { SYNC, BPM, DIV, LEN, ESTEP, REC, VEL, CHANCE, DEL, CLEAR, COLS };
+  int cols() const { return std::max(1, std::min(SEQ_COLS, (int)e[COLS])); }
   int pos = -1; double next = -1; ClockIn2 ck;
   Tracker() { allocSeq(); }
   int len() const { return std::max(1, std::min(SEQ_MAX, (int)e[LEN])); }
@@ -90,22 +91,23 @@ struct Tracker : Module {
     const float ppb = clk ? ck.ppb : (float)TRK_DIV[(int)e[DIV]];
     pos = (pos + 1) % len();
     Event p; p.note = note(4, 0); p.vel = e[VEL]; p.period = per; p.ppb = ppb; emit(1, p);
-    const float nt = seq[pos * 2].load(std::memory_order_relaxed);
-    if (nt >= 0) { Event ev; ev.note = nt; ev.vel = seq[pos * 2 + 1].load(std::memory_order_relaxed) * e[VEL]; ev.period = per; ev.ppb = ppb; emit(0, ev); }
+    for (int c = 0; c < cols(); c++) {   // every column's note on this step, together
+      const float nt = seq[si(pos, c)].load(std::memory_order_relaxed);
+      if (nt >= 0) { Event ev; ev.note = nt; ev.vel = seq[si(pos, c) + 1].load(std::memory_order_relaxed) * e[VEL]; ev.period = per; ev.ppb = ppb; emit(0, ev); } }
   }
-  void blockStart(int) override { clockedIn.store(patched(0)); int c = cursor.load(); if (c >= len()) cursor.store(len() - 1); }
+  void blockStart(int) override { clockedIn.store(patched(0)); int c = cursor.load(); if (c >= len()) cursor.store(len() - 1); if (cursorCol.load() >= cols()) cursorCol.store(cols() - 1); }
   void trig(int port, const Event& ev) override {
     if (port == 0) { ck.tick(t + eng->pos / sr, ev); if (!mute.load(std::memory_order_relaxed)) step(); return; }
-    if (e[REC] < 0.5f) return;   // ENTER (when RECORD is on): write at the cursor, then move on by ADVANCE
-    const int c = std::min(cursor.load(), len() - 1);
-    seq[c * 2].store(ev.note); seq[c * 2 + 1].store(std::round(ev.vel * 100) / 100);
+    if (e[REC] < 0.5f) return;   // STEP ENTER (when STEP RECORD is on): write at the cursor, then move on by ADVANCE
+    const int c = std::min(cursor.load(), len() - 1), cc = std::min(cursorCol.load(), cols() - 1);
+    seq[si(c, cc)].store(ev.note); seq[si(c, cc) + 1].store(std::round(ev.vel * 100) / 100);
     disp[2].store((float)c); disp[3].store(ev.note); disp[4].store(disp[4].load() + 1);
     cursor.store((c + (int)e[ESTEP]) % len()); seqVer.fetch_add(1);
   }
   void action(const std::string& k) override {
     const int c = std::min(cursor.load(), len() - 1);
-    if (k == "del") { seq[c * 2].store(-1); seqVer.fetch_add(1); }
-    else if (k == "clear") { for (int i = 0; i < SEQ_MAX; i++) seq[i * 2].store(-1); cursor.store(0); seqVer.fetch_add(1); }
+    if (k == "del") { seq[si(c, std::min(cursorCol.load(), cols() - 1))].store(-1); seqVer.fetch_add(1); }
+    else if (k == "clear") { for (int i = 0; i < SEQ_MAX * SEQ_COLS; i++) seq[i * 2].store(-1); cursor.store(0); cursorCol.store(0); seqVer.fetch_add(1); }
   }
   void render(int a, int b) override {
     if (mute.load(std::memory_order_relaxed)) { pos = -1; next = -1; }   // the footer's ON/OFF starts and stops it
@@ -116,11 +118,11 @@ struct Tracker : Module {
     disp[0].store((float)pos); disp[1].store((float)TRK_DIV[(int)e[DIV]]);
   }
 };
-static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PType::Trig}, {"ENTER", PType::Trig}}, {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}},
+static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PType::Trig}, {"STEP ENTER", PType::Trig}}, {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}},
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float v) { return std::to_string((int)v); }), "own"),
-   only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), ST("estep", "ADVANCE", 0, 8, 1), OP("rec", "RECORD", {"OFF", "ON"}, 1), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
-   ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL")},
-  85, 68, false, [] { return new Tracker(); }});
+   only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), ST("estep", "ADVANCE", 0, 8, 1), OP("rec", "STEP RECORD", {"OFF", "ON"}, 1), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
+   ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL"), ST("cols", "COLUMNS", 1, 8, 1)},
+  85, 84, false, [] { return new Tracker(); }});
 
 }  // namespace tb
 
@@ -128,55 +130,58 @@ namespace tb {
 
 // ---------------- TOMBOLA: a slowly turning drum with note-balls bouncing inside; a ball plays its note when it hits a wall ----------------
 struct Tombola : Module {
-  enum { VEL, CHANCE, SPIN, BOUNCE, ADD, EVERY, DISSOLVE, MAXB, SIDES, RANGE, OCT, SHAKE };
+  // notes come in only through ADD (another sequencer, say a NOTE GRID); each becomes a ball in the turning drum
+  enum { VEL, CHANCE, SPIN, SPEED, BOUNCE, DISSOLVE, MAXB, SIDES, WALLS, FREEZE, CLEAR };
   static constexpr int MAXN = 12; static constexpr float RB = 0.07f, G = 3.2f;
-  struct Ball { float x, y, vx, vy, age, cool, flash; int deg; float midi; };   // deg < 0: a note that came in through ADD
-  Ball b[MAXN]; int n = 0; float ang = 0, addT = 0;
-  void addBall(int deg, float midi) {
-    if (n >= std::min(MAXN, (int)e[MAXB])) return;
-    Ball& q = b[n++]; q.x = rng.range(-0.3f, 0.3f); q.y = rng.range(-0.5f, -0.1f); q.vx = rng.range(-0.6f, 0.6f); q.vy = 0; q.age = 0; q.cool = 0.3f; q.flash = 0; q.deg = deg; q.midi = midi;
+  struct Ball { float x, y, vx, vy, age, cool, flash; float midi; };
+  Ball b[MAXN]; int n = 0; float ang = 0;
+  void addBall(float midi) {
+    if (n >= std::min(MAXN, (int)e[MAXB])) { for (int i = 1; i < n; i++) b[i - 1] = b[i]; n--; }   // full: the oldest makes room
+    Ball& q = b[n++]; q.x = rng.range(-0.3f, 0.3f); q.y = rng.range(-0.5f, -0.1f); q.vx = rng.range(-0.6f, 0.6f); q.vy = 0; q.age = 0; q.cool = 0.3f; q.flash = 0; q.midi = midi;
   }
-  void prepare() override { for (int i = 0; i < 3; i++) addBall((int)(rng.uni() * e[RANGE]), 0); }
+  // DISSOLVE: off at the left; further right, balls last less time (down to about a second and a half), and get quieter as they go
+  float life() const { const float d = e[DISSOLVE]; return d < 0.01f ? 0.f : 1.5f + 150 * std::pow(1 - d, 3.f); }
+  float fadeOf(const Ball& q) const { const float L = life(); return L > 0 ? clampf(1 - q.age / L, 0, 1) : 1; }
   void shake() { for (int i = 0; i < n; i++) { b[i].vx += rng.range(-2.5f, 2.5f); b[i].vy += rng.range(-3.5f, -1); } }
-  void trig(int port, const Event& ev) override { if (port == 0) addBall(-1, ev.note); else if (port == 1) shake(); }   // ADD: another sequencer drops balls in, with its notes. SHAKE: each pulse (a slow clock, say) shakes the drum
-  void action(const std::string& k) override { if (k == "shake") shake(); }
+  void trig(int port, const Event& ev) override { if (port == 0) addBall(ev.note); else if (port == 1) shake(); }   // ADD: a note comes in. SHAKE: each pulse shakes the drum
+  void action(const std::string& k) override { if (k == "shake") shake(); else if (k == "clear") n = 0; }
+  void play(Ball& q, float vn) { if (q.cool > 0) return; q.cool = 0.12f; q.flash = 0.15f;   // (CHANCE is applied as every sequencer's is)
+    Event ev; ev.note = q.midi; ev.vel = clampf(vn / 2.5f, 0.15f, 1) * e[VEL] * fadeOf(q); if (ev.vel > 0.02f) emit(0, ev); }
   void render(int a, int bEnd) override {
-    const float dt = (bEnd - a) / sr; eng->pos = a;
-    const int S = (int)e[SIDES]; const float w = e[SPIN] * TAU, ap = std::cos(PI / S), life = e[DISSOLVE], rest = 0.35f + e[BOUNCE] * 0.6f;
-    ang += w * dt; if (ang > TAU) ang -= TAU; if (ang < 0) ang += TAU;
-    if (e[ADD] > 0.5f) { addT += dt; if (addT >= e[EVERY]) { addT = 0; addBall((int)(rng.uni() * e[RANGE]), 0); } }
+    const float dt = (bEnd - a) / sr, bt = dt * e[SPEED]; eng->pos = a;   // SPEED: the balls in slow (or quick) motion
+    const int S = (int)e[SIDES], wm = (int)e[WALLS]; const float w = (e[FREEZE] > 0.5f ? 0.f : e[SPIN]) * TAU, ap = std::cos(PI / S), rest = 0.35f + e[BOUNCE] * 0.6f, L = life();
+    ang += w * dt; ang = std::fmod(ang, TAU); if (ang < 0) ang += TAU;
+    const float wb = w * dt / std::max(1e-6f, bt);   // the walls' speed as the balls feel it
     for (int i = 0; i < n; i++) {
-      Ball& q = b[i]; q.vy += G * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.age += dt; q.cool -= dt; q.flash = std::max(0.f, q.flash - dt);
+      Ball& q = b[i]; q.vy += G * bt; q.x += q.vx * bt; q.y += q.vy * bt; q.age += dt; q.cool -= dt; q.flash = std::max(0.f, q.flash - dt);
       for (int s = 0; s < S; s++) {   // each wall: push back inside, bounce off it, and get carried along a little by its turning
         const float na = ang + (s + 0.5f) * TAU / S, nx = std::cos(na), ny = std::sin(na), d = q.x * nx + q.y * ny;
         if (d <= ap - RB) continue;
         q.x -= (d - (ap - RB)) * nx; q.y -= (d - (ap - RB)) * ny;
-        const float wx = -w * q.y, wy = w * q.x, rvx = q.vx - wx, rvy = q.vy - wy, vn = rvx * nx + rvy * ny;
+        const float wx = -wb * q.y, wy = wb * q.x, rvx = q.vx - wx, rvy = q.vy - wy, vn = rvx * nx + rvy * ny;
         if (vn <= 0) continue;
         const float tx = rvx - vn * nx, ty = rvy - vn * ny;
         q.vx = wx + tx * 0.8f - rest * vn * nx; q.vy = wy + ty * 0.8f - rest * vn * ny;
-        if (vn > 0.35f && q.cool <= 0) {   // a real knock, not just rolling: play its note
-          q.cool = 0.12f; q.flash = 0.15f;
-          const float fade = life > 0 ? clampf(1 - (q.age / life - 0.7f) / 0.3f, 0, 1) : 1;   // dissolving balls get quieter
-          Event ev; ev.note = q.deg >= 0 ? note((int)e[OCT], q.deg) : q.midi; ev.vel = clampf(vn / 2.5f, 0.15f, 1) * e[VEL] * fade; if (ev.vel > 0.02f) emit(0, ev);
-        }
+        const bool sounds = wm == 0 || (wm == 1 && s % 2 == 0) || (wm == 2 && s == 0);   // WALLS: which walls play
+        if (vn > 0.35f && sounds) play(q, vn);
       }
     }
-    for (int i = 0; i < n; i++) for (int j = i + 1; j < n; j++) {   // balls knock each other about (silently)
+    for (int i = 0; i < n; i++) for (int j = i + 1; j < n; j++) {   // balls knock each other, and both sound when they knock hard
       const float dx = b[j].x - b[i].x, dy = b[j].y - b[i].y, d2 = dx * dx + dy * dy; if (d2 >= 4 * RB * RB || d2 < 1e-8f) continue;
       const float d = std::sqrt(d2), nx = dx / d, ny = dy / d, over = 2 * RB - d; b[i].x -= nx * over / 2; b[i].y -= ny * over / 2; b[j].x += nx * over / 2; b[j].y += ny * over / 2;
-      const float vn = (b[j].vx - b[i].vx) * nx + (b[j].vy - b[i].vy) * ny; if (vn < 0) { b[i].vx += vn * nx; b[i].vy += vn * ny; b[j].vx -= vn * nx; b[j].vy -= vn * ny; } }
-    if (life > 0) for (int i = 0; i < n; ) { if (b[i].age > life) b[i] = b[--n]; else i++; }   // DISSOLVE: old balls fade away
-    while (n > std::max(1, (int)e[MAXB])) n--;
-    disp[0].store(ang); disp[1].store((float)S); disp[2].store((float)n);
-    for (int i = 0; i < n; i++) { disp[3 + i * 4].store(b[i].x); disp[4 + i * 4].store(b[i].y); disp[5 + i * 4].store(life > 0 ? clampf(1 - (b[i].age / life - 0.7f) / 0.3f, 0, 1) : 1); disp[6 + i * 4].store(b[i].flash); }
+      const float vn = (b[j].vx - b[i].vx) * nx + (b[j].vy - b[i].vy) * ny;
+      if (vn < 0) { b[i].vx += vn * nx; b[i].vy += vn * ny; b[j].vx -= vn * nx; b[j].vy -= vn * ny; if (-vn > 0.6f && wm == 0) { play(b[i], -vn); play(b[j], -vn); } } }
+    if (L > 0) for (int i = 0; i < n; ) { if (b[i].age > L) { for (int k = i + 1; k < n; k++) b[k - 1] = b[k]; n--; } else i++; }   // DISSOLVE: gone
+    while (n > std::max(1, (int)e[MAXB])) { for (int k = 1; k < n; k++) b[k - 1] = b[k]; n--; }
+    disp[0].store(ang); disp[1].store((float)S); disp[2].store((float)n); disp[51].store((float)wm);
+    for (int i = 0; i < n; i++) { disp[3 + i * 4].store(b[i].x); disp[4 + i * 4].store(b[i].y); disp[5 + i * 4].store(fadeOf(b[i]) * e[VEL]); disp[6 + i * 4].store(b[i].flash); }
   }
 };
 static Reg rTombola(new ModuleDef{"tombola", "TOMBOLA", Cat::Trig, {{"ADD", PType::Trig}, {"SHAKE", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
-   fmt(pr("spin", "SPIN", -0.5f, 0.5f, 0.08f), [](float v) { if (std::fabs(v) < 0.005f) return std::string("STOPPED"); char t[16]; std::snprintf(t, 16, "%s%.2f REV/S", v < 0 ? "<" : "", std::fabs(v)); return std::string(t); }),
-   pct("bounce", "BOUNCE", 0.6f), OP("add", "ADD", {"OFF", "ON"}, 1), T("every", "EVERY", 0.5f, 60, 6),
-   fmt(pr("dissolve", "DISSOLVE", 0, 240, 60), [](float v) { return v < 1 ? std::string("OFF") : fmtSecs(v); }), ST("maxb", "BALLS", 1, 12, 6), ST("sides", "SIDES", 3, 8, 6),
-   ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 5), ACT("shake", "SHAKE")}, 40, 68, false, [] { return new Tombola(); }});
+   fmt(pr("spin", "SPIN", -1.5f, 1.5f, 0.08f), [](float v) { if (std::fabs(v) < 0.005f) return std::string("STOPPED"); char t[16]; std::snprintf(t, 16, "%s%.2f REV/S", v < 0 ? "<" : "", std::fabs(v)); return std::string(t); }),
+   fmt(prExp("speed", "SPEED", 0.1f, 2, 1), [](float v) { char t[16]; std::snprintf(t, 16, "%.2fX", v); return std::string(t); }),
+   pct("bounce", "BOUNCE", 0.6f), fmt(pct("dslv", "DISSOLVE", 0), [](float v) { return v < 0.01f ? std::string("OFF") : std::to_string((int)std::lround(v * 100)) + "%"; }),
+   ST("maxb", "BALLS", 1, 12, 8), ST("sides", "SIDES", 3, 8, 6), OP("walls", "WALLS", {"ALL PLAY", "EVERY 2ND", "ONE WALL"}, 0), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), ACT("clear", "CLEAR NOTES")}, 40, 68, false, [] { return new Tombola(); }});
 
 }  // namespace tb

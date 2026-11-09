@@ -38,7 +38,7 @@ struct Clock : Module {
   }
 };
 static Reg rClock(new ModuleDef{"clock", "CLOCK", Cat::Trig, {}, {{"PULSE", PType::Trig}, {"BAR", PType::Trig}},
-  {tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), only(fmt(ST("bpm", "BPM", 20, 240, 72), [](float v) { return std::to_string((int)v); }), "own"),
+  {tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), fmt(ST("bpm", "BPM", 20, 240, 72), [](float v) { return std::to_string((int)v); }),   // on SHARED, this is the session's tempo (the top bar's)
    OP("div", "STEP", {"1/4", "1/8", "1/16", "1/8T"}, 1), pct("swing", "SWING", 0), pct("vel", "VELOCITY", 1)}, 5, 68, false, [] { return new Clock(); }});
 
 // ---------------- CLUMP SEQ ----------------
@@ -74,7 +74,7 @@ struct Clump : Module {
 };
 static Reg rClump(new ModuleDef{"clump", "CLUMP SEQ", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("steps", "STEPS", 2, 16, 8), pct("clump", "CLUMP", 0.6f),
-   only(fmt(prExp("speed", "SPEED", 0.2f, 8, 1.6f), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f/S", v); return std::string(b); }), "free"),
+   only(fmt(prExp("speed", "BPM", 0.2f, 8, 1.6f), [](float v) { return std::to_string((int)std::lround(v * 60)) + " BPM"; }), "free"),   // stored as steps a second; shown as BPM
    only(pctX("drift", "DRIFT", 1.6f, 0.25f), "free"), pctX("mutate", "MUTATE", 3, 0.2f), ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 4)}, 14, 68, false, [] { return new Clump(); }});
 
 // ---------------- ORBITS ----------------
@@ -119,7 +119,7 @@ struct Hops : Module {
   }
 };
 static Reg rHops(new ModuleDef{"hops", "RANDOM HOPS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), fmt(prExp("rate", "SPEED", 0.1f, 20, 2), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f/S", v); return std::string(b); }),
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), fmt(prExp("rate", "BPM", 0.1f, 20, 2), [](float v) { return std::to_string((int)std::lround(v * 60)) + " BPM"; }),
    pct("cluster", "CLUMP", 0.3f), ST("spread", "RANGE", 1, 14, 8), OCTP("oct", 1, 8, 6)}, 16, 68, false, [] { return new Hops(); }});
 
 // ---------------- NOTE GRID: pads pressed on screen arrive here and go out as notes ----------------

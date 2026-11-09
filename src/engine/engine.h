@@ -54,6 +54,7 @@ struct ModuleDef {
   std::vector<PortDef> ins, outs; std::vector<ParamDef> params;
   int vis = 0, width = 58; bool fixed = false;
   std::function<Module*()> make;
+  int keyIdx = -1, scaleIdx = -1;   // sequencers: their own KEY and SCALE (0 = GLOBAL, the session's)
   int panIdx = -1;   // PAN: every module with an audio output (but MIXER, which pans each channel) has one, added last
   int paramIndex(const std::string& k) const { for (size_t i = 0; i < params.size(); i++) if (params[i].key == k) return (int)i; return -1; }
   int inIndex(const std::string& n) const { for (size_t i = 0; i < ins.size(); i++) if (ins[i].name == n) return (int)i; return -1; }
@@ -98,7 +99,10 @@ public:
   std::atomic<int> cursor{0}, seqVer{0};
   std::atomic<int> devSlot{-1};    // MIDI OUT: which opened device it sends to
   std::atomic<float> roots[8];      // SAMPLE in MULTI mode: the note each of its sounds was recorded at
-  void allocSeq() { seq.reset(new std::atomic<float>[SEQ_MAX * 2]); for (int i = 0; i < SEQ_MAX; i++) { seq[i * 2].store(-1); seq[i * 2 + 1].store(0.8f); } }
+  static constexpr int SEQ_COLS = 8;   // the Tracker's columns: each step can hold a note in each
+  static int si(int row, int col) { return (row * SEQ_COLS + col) * 2; }   // where a step's note is (its velocity is next)
+  std::atomic<int> cursorCol{0};
+  void allocSeq() { seq.reset(new std::atomic<float>[SEQ_MAX * SEQ_COLS * 2]); for (int i = 0; i < SEQ_MAX * SEQ_COLS; i++) { seq[i * 2].store(-1); seq[i * 2 + 1].store(0.8f); } }
 
   Module() { for (auto& d : disp) d.store(0.f); }
   virtual ~Module() {}

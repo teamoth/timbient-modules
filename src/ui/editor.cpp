@@ -59,7 +59,7 @@ void Ui::drawEditor(Canvas& c) {
     for (int yy = ya; yy <= yb; yy++) c.px(wx + k, yy, in ? 48 : 21); }
   auto hx = [&](double tt) { return wx + (int)std::lround((tt - ed.v0) / (ed.v1 - ed.v0) * (ww - 1)); };
   for (int s = 0; s < 2; s++) { const int X = hx(s ? ed.b : ed.a); if (X < wx || X >= wx + ww) continue; for (int yy = wy; yy < wy + WH; yy++) c.px(X, yy, 4); c.rect(X - (s ? 3 : 0), wy, 4, 3, 4); }   // the handles
-  if (ed.playing) { const int X = hx(ed.a + (ed.b - ed.a) * std::max(0.f, eng.previewAt.load())); if (X >= wx && X < wx + ww) for (int yy = wy; yy < wy + WH; yy++) c.px(X, yy, 15); }
+  if (ed.playing) { const int X = hx(ed.a + (ed.b - ed.a) * std::max(0.f, eng.previewAt.load())); if (X >= wx && X < wx + ww) for (int yy = wy; yy < wy + WH; yy++) c.px(X, yy, 9); }
   // where you are: the view's ends, and a bar for the whole sound with the view on it (drag it to move along)
   const int ry = wy + WH + 2; c.rect(wx, ry, ww, 3, 21); const int vx0 = wx + (int)(ed.v0 / dur * ww), vx1 = wx + (int)std::ceil(ed.v1 / dur * ww); c.rect(vx0, ry, std::max(2, vx1 - vx0), 3, 9);
   c.text(tText(ed.v0), wx, ry + 5, 21); { const std::string e = tText(ed.v1); c.text(e, wx + ww - Canvas::tw(e), ry + 5, 21); }

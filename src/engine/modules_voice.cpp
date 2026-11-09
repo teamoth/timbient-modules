@@ -76,23 +76,5 @@ static std::vector<ParamDef> padParams() { std::vector<ParamDef> p = {PITCH(), S
 static Reg rPad(new ModuleDef{"pad", "PAD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, padParams(), 0, 68, false, [] { return new Pad(); }});
 
 
-// ---------------- MODAL BELL: four partials, each with its own ring ----------------
-struct BellV : VoiceBase { float ph[4], fr[4], amp[4], kd[4], lv[4]; float t = 0; };
-struct Bell : Poly<BellV> {
-  enum { PITCHK, CRACK, DECAY };
-  Bell() { gainScale = 0.09f; }
-  void start(BellV& x) override {
-    const float cr = e[CRACK]; const float ratios[4] = {1, 2.76f + cr * 0.55f, 5.4f - cr * 0.9f, 8.93f + cr * 1.6f}, amps[4] = {1, 0.45f + cr * 0.3f, 0.22f + cr * 0.3f, 0.1f + cr * 0.25f}, decs[4] = {2.2f, 1.1f, 0.5f, 0.25f};
-    for (int i = 0; i < 4; i++) { x.ph[i] = 0; x.fr[i] = x.f * ratios[i]; x.amp[i] = amps[i]; x.lv[i] = 1; x.kd[i] = std::exp(std::log(0.0001f) / (decs[i] * e[DECAY] * sr)); }
-    x.t = 0;
-  }
-  void voice(BellV& x, float& l, float& r) override {
-    x.t += 1.f / sr; const float atk = std::min(1.f, x.t / 0.004f); float y = 0;
-    for (int i = 0; i < 4; i++) { if (x.fr[i] > sr * 0.45f) continue; x.ph[i] += x.fr[i] / sr; if (x.ph[i] >= 1) x.ph[i] -= 1; y += std::sin(TAU * x.ph[i]) * x.amp[i] * x.lv[i]; x.lv[i] *= x.kd[i]; }
-    l = r = y * atk;
-  }
-};
-static std::vector<ParamDef> bellParams() { std::vector<ParamDef> p = {PITCH(), pct("crack", "CRACK", 0.15f), T("decay", "RING", 0.3f, 4, 1.2f)}; for (auto& q : envP(0.003f, 0.3f, 1, 4, 2)) p.push_back(q); p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.4f)); p.push_back(LEVEL()); return p; }
-static Reg rBell(new ModuleDef{"bell", "MODAL BELL", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, bellParams(), 0, 68, false, [] { return new Bell(); }});
 
 }  // namespace tb

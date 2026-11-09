@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.19.0";
+static const char* VERSION = "0.20.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -293,15 +293,15 @@ int main(int argc, char** argv) {
       if (i == 7) { setTheme(Theme{}); ui.status("THEME RESET"); return; }
       Dropdown q; q.x = x0; q.y = 11 + (i ? i * 8 : 0); const int SW = 64;
       if (i == 0) { int k = 0; for (auto& p : presets()) { canvas.setColour(SW + k, p.second.mod.c_str()); q.items.push_back(p.first); q.sw.push_back(SW + k); if (sameTheme(p.second, theme)) q.cur = k; k++; }
-        q.pick = [&](int j) { setTheme(presets()[j].second); ui.status(std::string("THEME ") + presets()[j].first); }; ui.openDropdown(q); return; }
+        q.pick = [&](int j) { setTheme(presets()[j].second); ui.status(std::string("THEME ") + presets()[j].first + "  (TAP AWAY WHEN DONE)"); }; q.stay = true; ui.openDropdown(q); return; }
       const std::vector<Choice>& list = i == 1 ? bgChoices() : i == 2 ? modChoices() : cableChoices();
       std::string Theme::*field = i == 1 ? &Theme::bg : i == 2 ? &Theme::mod : i == 3 ? &Theme::audio : i == 4 ? &Theme::trig : &Theme::modc;
       int k = 0; for (auto& c : list) { if (i == 1 && std::string(c.second) == "pond" && !pondReady) continue; canvas.setColour(SW + k, std::string(c.second) == "pond" ? "#1d4a52" : c.second); q.items.push_back(c.first); q.sw.push_back(SW + k); if (theme.*field == c.second) q.cur = k; k++; }
       const std::string label = labels[i];
       q.pick = [&, field, label, i](int j) { std::vector<Choice> l2; const std::vector<Choice>& list2 = i == 1 ? bgChoices() : i == 2 ? modChoices() : cableChoices();
         for (auto& c : list2) if (!(i == 1 && std::string(c.second) == "pond" && !pondReady)) l2.push_back(c);
-        Theme t = theme; t.*field = l2[j].second; setTheme(t); ui.status(label + " " + l2[j].first); };
-      ui.openDropdown(q);
+        Theme t = theme; t.*field = l2[j].second; setTheme(t); ui.status(label + " " + l2[j].first + "  (TAP AWAY WHEN DONE)"); };
+      q.stay = true; ui.openDropdown(q);
     };
     ui.openDropdown(d);
   };
@@ -386,6 +386,9 @@ int main(int argc, char** argv) {
         case SDL_EVENT_KEY_DOWN:
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
           if ((ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) && !ui.ask && ui.unplugSelected()) break;   // a picked cable
+          if (!ui.ask && !ui.br.open && !ui.ed.open) {   // the Tracker last touched: arrows move its cursor, Delete empties the step
+            const int tk = ev.key.key == SDLK_UP ? 1 : ev.key.key == SDLK_DOWN ? 2 : ev.key.key == SDLK_LEFT ? 3 : ev.key.key == SDLK_RIGHT ? 4 : (ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) ? 5 : 0;
+            if (tk && ui.trackerKey(tk)) break; }
           if (ui.ed.open && (ev.key.key == SDLK_ESCAPE || ev.key.key == SDLK_SPACE)) { ui.editorKey(ev.key.key == SDLK_ESCAPE ? 27 : ' '); break; }
           if (ui.br.open) {   // the sound browser: arrows step through, Enter loads, Escape closes
             if (ev.key.key == SDLK_DOWN) { ui.browserKey(1); break; } if (ev.key.key == SDLK_UP) { ui.browserKey(-1); break; }

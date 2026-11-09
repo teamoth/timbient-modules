@@ -17,7 +17,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "midi", "midiout"}},
-  {"VOICES", {"tone", "pluck", "bell", "mi", "grains", "glass", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
+  {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
   {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "crush", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
@@ -71,7 +71,7 @@ void Ui::clearPatch() { for (auto& u : mods) eng.remove(u->m->id); mods.clear();
 // a patch in the spirit of your session, so there's something to listen to straight away
 void Ui::demoPatch() {
   auto col = [&](int x, std::vector<std::string> types) { std::vector<UiMod*> v; int y = 16; for (auto& t : types) { UiMod* u = add(t, x, y); v.push_back(u); y += geom(*u).h + 5; } return v; };
-  auto c1 = col(6, {"clump", "orbits", "clock"}), c2 = col(86, {"pluck", "glass"}), c3 = col(166, {"pad", "bell"}), c4 = col(246, {"echo", "filter", "lfo"}), c5 = col(326, {"mixer"}), c6 = col(406, {"reverb", "ducker"}), c7 = col(486, {"out"});
+  auto c1 = col(6, {"clump", "orbits", "clock"}), c2 = col(86, {"pluck", "tone"}), c3 = col(166, {"pad", "additive"}), c4 = col(246, {"echo", "filter", "lfo"}), c5 = col(326, {"mixer"}), c6 = col(406, {"reverb", "ducker"}), c7 = col(486, {"out"});
   UiMod *clump = c1[0], *orb = c1[1], *clk = c1[2], *pl = c2[0], *fm = c2[1], *pad = c3[0], *bell = c3[1], *echo = c4[0], *filt = c4[1], *lfo = c4[2], *mix = c5[0], *verb = c6[0], *duck = c6[1], *out = c7[0];
   set(clump, "oct", 5); set(clump, "mutate", 1); set(clump, "speed", 2.5f); set(pl, "tone", 0.08f); set(pad, "cut", 420); set(verb, "size", 10); set(verb, "mix", 0.5f);
   set(duck, "depth", 0.9f); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "decay", 1.6f);
@@ -84,7 +84,9 @@ void Ui::demoPatch() {
 
 // ---------------- geometry and hit testing ----------------
 static int trLen(Module* m) { return std::max(1, std::min(Module::SEQ_MAX, (int)m->p[3].load())); }
-static int trShown(Module* m) { int last = -1; for (int i = Module::SEQ_MAX - 1; i >= 0; i--) if (m->seq[i * 2].load() >= 0) { last = i; break; } return std::max(trLen(m), last + 1); }
+static int trCols(Module* m) { return std::max(1, std::min(Module::SEQ_COLS, (int)m->p[m->def->paramIndex("cols")].load())); }
+static int trShown(Module* m) { int last = -1; const int nc = trCols(m); for (int i = Module::SEQ_MAX - 1; i >= 0 && last < 0; i--) for (int c = 0; c < nc; c++) if (m->seq[Module::si(i, c)].load() >= 0) { last = i; break; } return std::max(trLen(m), last + 1); }
+static int trHead(Module* m) { return trCols(m) > 1 ? 7 : 0; }   // with more than one column: a strip naming the two on show, with < and > to move along
 static int trRows(Module* m) { return std::min(16, trShown(m)); }   // the Tracker grows with the rows in use, up to 16; beyond that it scrolls
 // PAN is added as a module's last setting, but shown just above WIDTH (or LEVEL), where it belongs
 static int panRowAt(const ModuleDef* d) { if (d->panIdx < 0) return -1; int t = d->paramIndex("width"); if (t < 0) t = d->paramIndex("level"); return t < 0 ? d->panIdx : t; }
@@ -100,9 +102,12 @@ static int paramOfRow(const UiMod& u, int r) { const auto o = rowOrder(u); retur
 static int rowY(const UiMod& u, int j) { return std::max(0, rowOf(u, j)); }   // a cable to a hidden row lands on the first one
 // effects can be bypassed: a straight audio IN to an audio OUT (not MIXER, which has four)
 static bool bypassable(const ModuleDef* d) { return d->cat == Cat::Proc && d->type != "mixer" && !d->ins.empty() && d->ins[0].type == PType::Audio && !d->outs.empty() && d->outs[0].type == PType::Audio; }
+// a sequencer's own KEY and SCALE, or the session's when set to GLOBAL
+static int keyOf(const UiMod& u, const Engine& eng) { const int k = u.m->def->keyIdx; const int v = k >= 0 ? (int)u.m->p[k].load() : 0; return v >= 1 ? v - 1 : eng.key.root.load(); }
+static int scaleOf(const UiMod& u, const Engine& eng) { const int k = u.m->def->scaleIdx; const int v = k >= 0 ? (int)u.m->p[k].load() : 0; return v >= 1 && v <= (int)scales().size() ? v - 1 : eng.key.scale.load(); }
 Ui::Geom Ui::geom(const UiMod& u) const {
   const ModuleDef* d = u.m->def; const int jr = (int)std::max(d->ins.size(), d->outs.size()), np = u.fold ? 0 : (int)rowOrder(u).size();
-  const int vh = d->type == "tracker" && d->vis ? trRows(u.m) * 6 + 1 : d->vis;
+  const int vh = d->type == "tracker" && d->vis ? trRows(u.m) * 6 + 1 + trHead(u.m) : d->vis;
   Geom g; g.jr = jr; g.vh = vh; g.vy = HEAD + jr * ROW + (vh ? 1 : 0); g.py = HEAD + jr * ROW + (vh ? vh + 2 : 0); g.h = g.py + np * ROW + FOOT; g.w = d->width; return g;
 }
 UiMod* Ui::hit(int wx, int wy, int& lx, int& ly) {
@@ -202,10 +207,12 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
       c.rect(px - 1, py - 1, lit ? 3 : 2, lit ? 3 : 2, lit ? 4 : 24); }
   } else if (ty == "tombola") {   // the turning drum and its balls
     const float cx = x + w / 2.f, cy = y + vh / 2.f, R = std::min(w, vh) / 2.f - 1.5f, ang = D(0); const int S = std::max(3, (int)D(1)), n = (int)D(2);
-    for (int s = 0; s < S; s++) { const float a0 = ang + s * TAU / S, a1 = ang + (s + 1) * TAU / S;
-      c.line((int)std::lround(cx + R * std::cos(a0)), (int)std::lround(cy + R * std::sin(a0)), (int)std::lround(cx + R * std::cos(a1)), (int)std::lround(cy + R * std::sin(a1)), 18); }
-    for (int i = 0; i < n && i < 12; i++) { const int bx = (int)std::lround(cx + D(3 + i * 4) * R), by = (int)std::lround(cy + D(4 + i * 4) * R); const float lifeK = D(5 + i * 4); const bool hitNow = D(6 + i * 4) > 0;
-      const int col = hitNow ? 4 : lifeK > 0.66f ? 24 : lifeK > 0.33f ? 44 : 18; c.rect(bx - 1, by - 1, 3, 3, col); }
+    const int wm = (int)D(51);
+    for (int s = 0; s < S; s++) { const float a0 = ang + s * TAU / S, a1 = ang + (s + 1) * TAU / S; const bool plays = wm == 0 || (wm == 1 && s % 2 == 0) || (wm == 2 && s == 0);   // walls that play are brighter
+      c.line((int)std::lround(cx + R * std::cos(a0)), (int)std::lround(cy + R * std::sin(a0)), (int)std::lround(cx + R * std::cos(a1)), (int)std::lround(cy + R * std::sin(a1)), plays ? 9 : 21); }
+    for (int i = 0; i < n && i < 12; i++) { const int bx = (int)std::lround(cx + D(3 + i * 4) * R), by = (int)std::lround(cy + D(4 + i * 4) * R); const float vel = D(5 + i * 4); const bool hitNow = D(6 + i * 4) > 0;
+      const int col = hitNow ? 12 : vel > 0.75f ? 4 : vel > 0.5f ? 24 : vel > 0.25f ? 44 : 19; c.rect(bx - 1, by - 1, 3, 3, col); }   // brighter = louder (dissolving balls dim)
+    c.text("SHAKE", x + w - Canvas::tw("SHAKE"), y, 9);
   } else if (ty == "hops") {   // each hop a stepping stone, placed by pitch, drifting left and fading
     const int fired = (int)D(0); if (fired != u.hopSeen) { u.hopSeen = fired; if (u.dots.size() > 40) u.dots.erase(u.dots.begin()); u.dots.push_back({0.f, D(1)}); }
     for (auto& dt2 : u.dots) dt2.first += dt; u.dots.erase(std::remove_if(u.dots.begin(), u.dots.end(), [](const std::pair<float, float>& q) { return q.first > 4; }), u.dots.end());
@@ -266,11 +273,22 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     const float gr = clampf(-D(0) / 18, 0, 1); const int gy = y + 16;   // GR: how much it's turning down (red, from the right)
     c.text("GR", x, gy - 1, 18); c.rect(bx, gy, bw, 2, 21); if (gr > 0.003f) c.rect(bx + bw - (int)std::lround(gr * bw), gy, (int)std::lround(gr * bw), 2, 14);
     if (ty == "master") { const float gg = clampf(-D(2) / 12, 0, 1); if (gg > 0.003f) c.rect(bx + bw - (int)std::lround(gg * bw), gy + 1, (int)std::lround(gg * bw), 1, 12); }
-  } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
-    const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
-      const int h = std::max(0, std::min(5, (int)std::lround(std::sqrt(D(4 + k)) * 5))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
-      for (int xx = x0; xx < x1 - (w >= 64 ? 1 : 0); xx++) for (int j = -h; j <= h; j++) c.px(xx, y + 6 + j, col); }
-    const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, D(1) > 0.5f ? 14 : 12);
+  } else if (ty == "tloop") {   // a cassette: the label shows the sound on the tape; the reels turn as the tape moves, the full one emptying into the other
+    const float hd = clampf(D(0), 0, 1), a0 = D(2), n0 = D(3); const bool rec = D(1) > 0.5f; const int H = vh;
+    c.frame(x, y, w, H, 18); c.frame(x + 2, y + 2, w - 4, 8, 21);   // the shell, and its label
+    for (int k = 0; k < 32; k++) { const int x0 = x + 3 + k * (w - 6) / 32, x1 = x + 3 + (k + 1) * (w - 6) / 32; const float fx = (k + 0.5f) / 32;
+      const int h = std::max(0, std::min(2, (int)std::lround(std::sqrt(D(4 + k)) * 2.5f))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
+      for (int xx = x0; xx < x1; xx++) for (int j = -h; j <= h; j++) c.px(xx, y + 6 + j, col); }
+    { const int lx = x + 3 + (int)std::lround(hd * (w - 7)); c.px(lx, y + 3, rec ? 14 : 4); c.px(lx, y + 9, rec ? 14 : 4); }
+    const int cy = y + 10 + (H - 18) / 2 + 2, lxc = x + w * 28 / 100, rxc = x + w * 72 / 100, rmax = std::max(4, std::min((H - 16) / 2, w / 6));
+    c.rect(lxc, cy - 4, rxc - lxc, 9, 25);   // the window between the reels
+    const float ang = hd * 40.f;   // the reels turn with the tape (and backwards when it runs backwards)
+    for (int s2 = 0; s2 < 2; s2++) { const int rx = s2 ? rxc : lxc; const float fill = s2 ? hd : 1 - hd, rr = 2.5f + (rmax - 2.5f) * (0.25f + 0.75f * fill);
+      for (int yy = -rmax; yy <= rmax; yy++) for (int xx = -rmax; xx <= rmax; xx++) { const float d = std::sqrt((float)(xx * xx + yy * yy));
+        if (d <= rr && d > 2.5f) c.px(rx + xx, cy + yy, 44); else if (d <= 2.5f && d > 1.2f) c.px(rx + xx, cy + yy, 9); }
+      for (int sp = 0; sp < 3; sp++) { const float a = ang + sp * TAU / 3; c.px(rx + (int)std::lround(std::cos(a) * 2), cy + (int)std::lround(std::sin(a) * 2), 25); } }
+    const int ty = y + H - 4; c.line(lxc, cy + rmax - 1, x + w / 2 - 4, ty, 44); c.line(rxc, cy + rmax - 1, x + w / 2 + 4, ty, 44); c.line(x + w / 2 - 4, ty, x + w / 2 + 4, ty, 44);   // the tape, across the head
+    c.rect(x + w / 2 - 2, ty + 1, 5, 2, rec ? 14 : 12);   // the head: red while recording
   } else if (ty == "listen") {   // what key and scale it hears, how sure it is, the runner-up, and the 12 notes it's hearing
     const int r = (int)D(0), sc = std::max(0, std::min((int)scales().size() - 1, (int)D(1))), r2 = (int)D(3), sc2 = std::max(0, std::min((int)scales().size() - 1, (int)D(4)));
     if (D(2) <= 0 && D(18) < 1e-6f) c.text("LISTENING...", x + 1, y + 1, 18);
@@ -284,7 +302,7 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
-    const int n = (int)scales()[eng.key.scale.load()].steps.size(), root = eng.key.root.load(), sc = eng.key.scale.load();
+    const int root = keyOf(u, eng), sc = scaleOf(u, eng), n = (int)scales()[sc].steps.size();
     const int oct = (int)m->p[1].load(), rowStep = 8;   // each row carries on up the scale from the row below
     for (int i = 0; i < 32; i++) { const int deg = (i / 8) * rowStep + (i % 8), note = (int)midiOf(degOf(oct, deg, sc), root, sc), cx = (i % 8) * 13, cy = (3 - i / 8) * 9;
       u.lit[i] = std::max(0.f, u.lit[i] - dt);
@@ -312,21 +330,29 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
 // ---------------- the Tracker's list of steps ----------------
 static void trClamp(UiMod& u) { u.scroll = clampf(std::round(u.scroll), 0, (float)std::max(0, trShown(u.m) - trRows(u.m))); }
 static void trShow(UiMod& u, int row) { if (row < u.scroll) u.scroll = (float)row; else if (row >= u.scroll + trRows(u.m)) u.scroll = (float)(row - trRows(u.m) + 1); trClamp(u); }
-void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
+void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y0, int w, float dt) {
   Module* m = u.m; const int TR_ROWS = trRows(m), len = trLen(m), shown = trShown(m), pos = (int)m->disp[0].load(), div = std::max(1, (int)m->disp[1].load()), cur = m->cursor.load();
+  const int nc = trCols(m), curC = std::min(nc - 1, m->cursorCol.load()), head = trHead(m), y = y0 + head;
+  u.colScroll = std::max(0, std::min(std::max(0, nc - 2), u.colScroll)); const int vis = std::min(2, nc), cw = (w - 14) / vis;
   u.hold = std::max(0.f, u.hold - dt);
   if (u.hold <= 0 && pos >= 0 && (pos < u.scroll || pos >= u.scroll + TR_ROWS)) u.scroll = (float)pos;   // follows the playhead, except for a few seconds after you touch it
   trClamp(u); const int sc = (int)u.scroll;
+  if (head) {   // which columns are on show, and < > to move along
+    if (u.colScroll > 0) c.text("<", x + 1, y0, 9);
+    if (u.colScroll + 2 < nc) c.text(">", x + w - 4, y0, 9);
+    for (int k = 0; k < vis; k++) { const int col = u.colScroll + k; const std::string t = "COL " + std::to_string(col + 1); c.text(t, x + 14 + k * cw, y0, col == curC ? 4 : 18); } }
   auto num = [](int r) { char b[16]; std::snprintf(b, 16, "%03d", r + 1); return std::string(b); };
   for (int i = 0; i < TR_ROWS; i++) { const int r = sc + i, ry = y + 1 + i * 6; if (r >= shown) break;
-    const float nt = m->seq[r * 2].load(), vel = m->seq[r * 2 + 1].load(); const bool has = nt >= 0;
     if (r >= len) { if (r == len) { for (int k = 0; k < w; k += 2) c.px(x + k, ry - 1, 18); c.text("OFF", x + w - 13, ry, 18); }
-      c.text(num(r), x + 1, ry, 21); c.text(has ? noteName((int)nt) : "---", x + 15, ry, 21); continue; }
+      c.text(num(r), x + 1, ry, 21);
+      for (int k = 0; k < vis; k++) { const float nt = m->seq[Module::si(r, u.colScroll + k)].load(); c.text(nt >= 0 ? noteName((int)nt) : "---", x + 14 + k * cw, ry, 21); } continue; }
     const bool play = r == pos, isCur = r == cur, beat = r % div == 0;
-    if (play) c.rect(x, ry - 1, w, 7, 17); else if (isCur) c.rect(x, ry - 1, w, 7, 21);
+    if (play) c.rect(x, ry - 1, w, 7, 17);
     c.text(num(r), x + 1, ry, play ? 15 : beat ? 9 : 18);
-    c.text(has ? noteName((int)nt) : "---", x + 15, ry, has ? (play ? 15 : 9) : play ? 15 : 18);
-    if (has) { const int vw = (int)std::lround(vel * 10); for (int k = 0; k < vw; k++) c.px(x + w - 12 + k, ry + 2, play ? 15 : 7); }
+    for (int k = 0; k < vis; k++) { const int col = u.colScroll + k, cx = x + 14 + k * cw; const float nt = m->seq[Module::si(r, col)].load(), vel = m->seq[Module::si(r, col) + 1].load(); const bool has = nt >= 0;
+      if (isCur && col == curC && !play) c.rect(cx - 1, ry - 1, cw, 7, 21);   // the cursor: this step, this column
+      c.text(has ? noteName((int)nt) : "---", cx, ry, has ? (play ? 15 : 9) : play ? 15 : 18);
+      if (has) { const int vw = (int)std::lround(vel * std::max(2, cw - 15)); for (int q = 0; q < vw; q++) c.px(cx + 13 + q, ry + 2, play ? 15 : 7); } }
     if (isCur) { c.px(x - 2, ry + 1, 4); c.px(x - 2, ry + 2, 4); c.px(x - 2, ry + 3, 4); c.px(x - 1, ry + 2, 4); }
   }
   if (shown > TR_ROWS) {   // where the view is, along the right edge
@@ -334,6 +360,16 @@ void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int j = 0; j < H; j++) c.px(x + w + 1, y + j - 1, j >= sy && j < sy + h ? 9 : 21);
     if (pos >= 0) { const int py = (int)std::lround((float)pos / std::max(1, shown - 1) * (H - 2)); c.px(x + w + 1, y + py - 1, 17); c.px(x + w + 1, y + py, 17); c.px(x + w, y + py, 17); }
   }
+}
+// the keyboard on the Tracker last touched: arrows move the cursor between steps and columns; Delete empties the step
+bool Ui::trackerKey(int key) {
+  UiMod* u = byId(trFocus); if (!u || u->m->def->type != "tracker") return false; Module* m = u->m;
+  const int nc = trCols(m), len = trLen(m); int r = m->cursor.load(), c = std::min(nc - 1, m->cursorCol.load());
+  if (key == 1) r = (r + len - 1) % len; else if (key == 2) r = (r + 1) % len; else if (key == 3) c = std::max(0, c - 1); else if (key == 4) c = std::min(nc - 1, c + 1);
+  else if (key == 5) { eng.action(m->id, "del"); status("CLEARED THE STEP", 1); u->hold = 6; return true; } else return false;
+  m->cursor.store(r); m->cursorCol.store(c); u->hold = 6; trShow(*u, r);
+  if (c < u->colScroll) u->colScroll = c; else if (c >= u->colScroll + 2) u->colScroll = c - 1;
+  char b[40]; std::snprintf(b, 40, "STEP %03d  COLUMN %d", r + 1, c + 1); status(b, 1); return true;
 }
 void Ui::trackerWatch(UiMod& u) {   // notes typed in through ENTER arrive from the audio side: show and save them
   const int v = u.m->seqVer.load(); if (v == u.seqVer) return; u.seqVer = v;
@@ -363,7 +399,7 @@ static std::string statusLabel(const UiMod& u, const ParamDef& q) {
 }
 int Ui::minusX(const UiMod& u, int j) const {   // after the name: normally at 39, further for a long name or an inside socket
   const ParamDef& q = u.m->def->params[j]; std::string lab = q.label;
-  const int ins = jacksIn && modulatable(q) ? 5 : 0;
+  const int ins = jacksIn && modulatable(q) ? 7 : 0;   // a clear gap after the socket, so the name doesn't look like it starts with O
   return std::max(39, 3 + Canvas::tw(lab.substr(0, 11)) + 2) + ins;
 }
 void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
@@ -371,9 +407,8 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   const ModuleDef* d = u.m->def; const Geom g = geom(u); const int x = u.x - viewX, y = u.y - viewY, w = g.w;
   if (x > c.W || y > c.H || x + w < 0 || y + g.h < 0) return;
   static uint8_t inkTbl[128]; static bool init = false; if (!init) { for (int i = 0; i < 128; i++) inkTbl[i] = (uint8_t)i; inkTbl[9] = 28; inkTbl[18] = 29; inkTbl[21] = 30; inkTbl[4] = 47; init = true; }
-  c.rect(x + 2, y + 2, w, g.h, 26);
   c.ink = inkTbl; c.rect(x, y, w, g.h, 27); c.frame(x, y, w, g.h, 21);
-  c.ink = nullptr; const bool fl = !cableMotion && u.m->flash.load() > 0, mu = u.m->mute.load();
+  c.ink = nullptr; const bool fl = false, mu = u.m->mute.load();
   c.rect(x, y, w, HEAD, fl ? 4 : mu ? 18 : catCol(d->cat)); c.text(d->name, x + 2, y + 2, 15); if (!d->fixed) c.text("x", x + w - 6, y + 2, 15);
   c.ink = inkTbl;
   for (size_t k = 0; k < d->ins.size(); k++) { bool conn = false; for (auto& cb : cables) if (cb.to == u.m->id && cb.toPort == (int)k) conn = true;
@@ -381,6 +416,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   for (size_t k = 0; k < d->outs.size(); k++) { bool conn = false; for (auto& cb : cables) if (cb.from == u.m->id && cb.fromPort == (int)k) conn = true;
     drawJack(c, outJackX(u) - viewX, y + jackY((int)k), d->outs[k].type, conn, fl && d->outs[k].type == PType::Trig); c.text(d->outs[k].name, x + w - 4 - (jacksIn ? 5 : 0) - Canvas::tw(d->outs[k].name), y + jackY((int)k) - 2, 9); }
   if (d->vis) drawDisplay(c, u, x + 3, y + g.vy, w - 6, dt);
+  if (d->type == "clock" && u.m->p[0].load() > 0.5f) u.m->p[1].store(eng.tempo.bpm.load());   // SHARED: BPM follows the session's tempo
   const int root = eng.key.root.load(); const bool clocked = u.m->clockedIn.load();
   for (size_t j = 0; j < (u.fold ? 0 : d->params.size()); j++) {
     if (rowOf(u, (int)j) < 0) continue;
@@ -396,10 +432,10 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     if (d->type == "sample") { const int kind = (int)u.m->p[1].load(); const bool once = u.m->p[3].load() > 0.5f;   // settings that don't apply to this kind of sound or way of playing
       idle = idle || (q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once); }
     std::string lab = q.label;
-    c.text(lab.substr(0, 11), x + 3 + (jacksIn && modulatable(q) ? 5 : 0), ry + 1, active ? 4 : idle ? 21 : 18);
+    c.text(lab.substr(0, 11), x + 3 + (jacksIn && modulatable(q) ? 7 : 0), ry + 1, active ? 4 : idle ? 21 : 18);
     bool modded = false; for (auto& cb : cables) if (cb.type == PType::Mod && cb.to == u.m->id && cb.toParam == (int)j) modded = true;
     if (modulatable(q)) drawJack(c, sockX(u) - viewX, ry + 3, PType::Mod, modded, false);   // its mod socket: filled when something moves it
-    if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, (size_t)std::max(6, (w - Canvas::tw(lab.substr(0, 11)) - 10 - (jacksIn ? 5 : 0)) / 4)); /* as much of the choice as fits beside its name */ c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
+    if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, (size_t)std::max(6, (w - Canvas::tw(lab.substr(0, 11)) - 10 - (jacksIn ? 7 : 0)) / 4)); /* as much of the choice as fits beside its name */ c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
     const bool stepping = drag.kind == D_STEP && drag.m == &u && drag.k == (int)j;
     const int mx = x + minusX(u, (int)j); c.text("-", mx, ry + 1, stepping && drag.dir < 0 ? 4 : idle ? 21 : 9); c.text("+", x + w - 6, ry + 1, stepping && drag.dir > 0 ? 4 : idle ? 21 : 9);   // nudge it a little at a time
     const int bx = mx + 5, bw = x + w - 8 - bx; const float nb = clampf(q.toNorm(v), 0, 1), n = modded ? clampf(q.toNorm(u.m->eff[j].load(std::memory_order_relaxed)), 0, 1) : nb;
@@ -427,18 +463,18 @@ void Ui::draw(Canvas& c, float dt) {
     const int ax = outJackX(*a) - viewX, ay = a->y + jackY(cb.fromPort) - viewY;
     int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = sockX(*b) - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + rowY(*b, cb.toParam) * ROW + 3) - viewY; } else { bx = inJackX(*b) - viewX; by = b->y + jackY(cb.toPort) - viewY; }
     const bool hi = (selT > 0 && sameCable(cb, sel)) || (drag.kind == D_MOVE && drag.splice >= 0 && drag.splice < (int)cables.size() && sameCable(cb, cables[drag.splice]));
-    if (!cableMotion) { drawCable(c, ax, ay, bx, by, hi ? 4 : a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type)); continue; }
+    if (!cableMotion) { drawCable(c, ax, ay, bx, by, hi ? 4 : typeCol(cb.type)); continue; }   // still: nothing moves or flashes
     if (cb.type == PType::Audio && !hi) {   // audio: dashes that run faster, longer and brighter the louder it is; still when silent
       const float lin = cb.fromPort < 8 ? a->m->outLev[cb.fromPort].load(std::memory_order_relaxed) : 0, n = clampf((20 * std::log10(lin + 1e-6f) + 48) / 48, 0, 1);
       if (n < 0.03f) drawCable(c, ax, ay, bx, by, typeCol(cb.type));
-      else { cb.flow += dt * (5 + 40 * n); drawCable(c, ax, ay, bx, by, typeCol(cb.type), n > 0.25f ? 15 : 9, cb.flow, 12, 2 + std::lround(4 * n), n > 0.5f ? 9 : 21); } }
+      else { cb.flow += dt * (5 + 40 * n); drawCable(c, ax, ay, bx, by, typeCol(cb.type), n > 0.25f ? 4 : 9, cb.flow, 12, 2 + std::lround(4 * n), n > 0.5f ? 9 : 21); } }
     else if (cb.type == PType::Mod && !hi) {   // mod: little arrows that speed up as the signal changes faster, brighter the further it's moving the setting
       float v = 0;
       if (b && cb.toParam >= 0 && cb.toParam < (int)b->m->def->params.size()) { const ParamDef& q = b->m->def->params[cb.toParam];
         v = q.toNorm(b->m->eff[cb.toParam].load(std::memory_order_relaxed)) - q.toNorm(b->m->p[cb.toParam].load()); }
       if (dt > 0) cb.rate += (std::fabs(v - cb.lastV) / dt - cb.rate) * std::min(1.f, dt * 4); cb.lastV = v;
       const float amt = std::fabs(v); cb.flow += dt * (3 + std::min(60.f, cb.rate * 120));
-      drawCable(c, ax, ay, bx, by, typeCol(cb.type), amt > 0.05f ? 15 : 9, cb.flow, 7, 3, 21); }
+      drawCable(c, ax, ay, bx, by, typeCol(cb.type), amt > 0.05f ? 4 : 9, cb.flow, 7, 3, 21); }
     else drawCable(c, ax, ay, bx, by, hi ? 4 : typeCol(cb.type));
     if (cb.type == PType::Trig) {   // each trigger sent: a pulse that runs along the cable to where it's going
       const unsigned n = cb.fromPort < 8 ? a->m->fires[cb.fromPort].load(std::memory_order_relaxed) : 0;
@@ -447,7 +483,7 @@ void Ui::draw(Canvas& c, float dt) {
       for (auto& t : cb.pulses) { t += sp; if (t < 0 || t > 1) continue; float x, y; cablePt((float)ax, (float)ay, (float)bx, (float)by, t, x, y);
         for (int k = 3; k >= 1; k--) { const float tt = t - k * 0.025f; if (tt < 0) continue; float tx, ty; cablePt((float)ax, (float)ay, (float)bx, (float)by, tt, tx, ty);   // a fading tail behind it
           c.px((int)std::lround(tx), (int)std::lround(ty), k == 1 ? 46 : k == 2 ? 9 : 18); }
-        const int xi = (int)std::lround(x), yi = (int)std::lround(y); c.rect(xi - 1, yi - 1, 3, 3, 46); c.px(xi, yi, 15); }
+        const int xi = (int)std::lround(x), yi = (int)std::lround(y); c.rect(xi - 1, yi - 1, 3, 3, 46); c.px(xi, yi, 4); }
       cb.pulses.erase(std::remove_if(cb.pulses.begin(), cb.pulses.end(), [](float t) { return t > 1; }), cb.pulses.end());
       if (cb.pulses.size() > 24) cb.pulses.erase(cb.pulses.begin(), cb.pulses.end() - 24); }
   }
@@ -488,12 +524,16 @@ void Ui::draw(Canvas& c, float dt) {
   // the ADD menu
   menuItems.clear();
   if (menuOpen) {
-    std::vector<std::pair<bool, std::string>> lines; for (auto& cat : MENU) { lines.push_back({true, cat.first}); for (auto& t : cat.second) if (findDef(t)) lines.push_back({false, t}); }
-    const int colW = 66, cols = std::max(1, std::min(4, (c.W - 6) / colW)), per = ((int)lines.size() + cols - 1) / cols, mh = per * 8 + 6;
-    c.rect(1, TOP + 1, cols * colW + 4, mh, 15); c.frame(1, TOP + 1, cols * colW + 4, mh, 21);
-    for (size_t i = 0; i < lines.size(); i++) { const int cc = (int)i / per, r = (int)i % per, x = 4 + cc * colW, y = TOP + 4 + r * 8;
-      if (lines[i].first) c.text(lines[i].second, x, y, 18);
-      else { const ModuleDef* d = findDef(lines[i].second); c.rect(x, y + 1, 3, 3, catCol(d->cat)); c.text(d->name, x + 6, y, 9); menuItems.push_back({d->type, x, y, colW - 6}); } }
+    // four columns, RHYTHM, VOICES, PROCESS, MOD, each A to Z
+    std::vector<std::vector<const ModuleDef*>> colsD; std::vector<int> ws; int tot = 4;
+    for (auto& cat : MENU) { std::vector<const ModuleDef*> v; for (auto& t : cat.second) if (const ModuleDef* d = findDef(t)) v.push_back(d);
+      std::sort(v.begin(), v.end(), [](const ModuleDef* a, const ModuleDef* b) { return a->name < b->name; }); int w = Canvas::tw(cat.first);
+      for (auto* d : v) w = std::max(w, Canvas::tw(d->name) + 6); ws.push_back(w + 8); tot += w + 8; colsD.push_back(v); }
+    size_t most = 0; for (auto& v : colsD) most = std::max(most, v.size()); const int mh = (int)most * 8 + 16;
+    c.rect(1, TOP + 1, tot, mh, 15); c.frame(1, TOP + 1, tot, mh, 21);
+    int x = 4; for (size_t k = 0; k < colsD.size(); k++) { c.text(MENU[k].first, x, TOP + 4, 18);
+      for (size_t r = 0; r < colsD[k].size(); r++) { const ModuleDef* d = colsD[k][r]; const int y = TOP + 13 + (int)r * 8; c.rect(x, y + 1, 3, 3, catCol(d->cat)); c.text(d->name, x + 6, y, 9); menuItems.push_back({d->type, x, y, ws[k] - 6}); }
+      x += ws[k]; }
   }
   // a dropdown list
   if (dd) {
@@ -553,8 +593,8 @@ void Ui::keyEnter() { if (!ask) return; auto a = std::move(ask); std::string t =
 // ---------------- input ----------------
 void Ui::keysPress(UiMod& u, int x, int y) {
   const int col = x / 13, row = 3 - y / 9; if (col < 0 || col > 7 || row < 0 || row > 3) return;
-  const int i = row * 8 + col, sc = eng.key.scale.load(), n = (int)scales()[sc].steps.size(), rowStep = 8;
-  Event ev; ev.note = midiOf(degOf((int)u.m->p[1].load(), row * rowStep + col, sc), eng.key.root.load(), sc); ev.vel = u.m->p[0].load();
+  const int i = row * 8 + col, sc = scaleOf(u, eng), n = (int)scales()[sc].steps.size(), rowStep = 8;
+  Event ev; ev.note = midiOf(degOf((int)u.m->p[1].load(), row * rowStep + col, sc), keyOf(u, eng), sc); ev.vel = u.m->p[0].load();
   eng.trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;
 }
 
@@ -588,7 +628,9 @@ void Ui::pointerDown(float sx, float sy) {
   if (ed.open) { if (!editorDown(sx, sy)) closeEditor(); return; }
   if (dd) {   // a tap picks from the open list, or closes it
     auto d0 = std::move(dd); const int r = (int)std::floor((sy - d0->y - 1) / 8), col = (int)std::floor((sx - d0->x + 2) / std::max(1, d0->colW)), i = col * d0->rows + r;
-    if (sx >= d0->x - 2 && sx < d0->x - 2 + d0->w && r >= 0 && r < d0->rows && i >= 0 && i < (int)d0->items.size() && i != d0->title && d0->pick) d0->pick(i);
+    const bool hit = sx >= d0->x - 2 && sx < d0->x - 2 + d0->w && r >= 0 && r < d0->rows && i >= 0 && i < (int)d0->items.size() && i != d0->title;
+    if (hit && d0->stay) { d0->cur = i; auto pk = d0->pick; dd = std::move(d0); if (pk) pk(i); return; }   // stays open: try another, tap away when done
+    if (hit && d0->pick) d0->pick(i);
     return;
   }
   if (menuOpen) { for (auto& it : menuItems) if (sx >= it.x - 1 && sx < it.x + it.w && sy >= it.y - 1 && sy < it.y + 7) {
@@ -607,11 +649,12 @@ void Ui::pointerDown(float sx, float sy) {
     drag.from = j; drag.rev = true; return;
   }
   int lx, ly; UiMod* u = hit(wx, wy, lx, ly);
+  trFocus = u && u->m->def->type == "tracker" ? u->m->id : 0;   // the arrow keys work on a Tracker once you touch it
   // a cable under the pointer: tap to see it, pull it away to unplug it. Title bars and a module's own controls still win
   if (!u) {   // cables run behind modules, so only where you can see them
     bool onControl = false;
     if (u) { const Geom g0 = geom(*u); const ModuleDef* d0 = u->m->def;
-      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + g0.vh && (d0->type == "keys" || d0->type == "out" || d0->type == "tracker" || d0->type == "sample")); }
+      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + g0.vh && (d0->type == "keys" || d0->type == "out" || d0->type == "tracker" || d0->type == "sample" || (d0->type == "tombola" && ly < g0.vy + 7 && lx >= g0.w - 30))); }
     const int ci = onControl ? -1 : cableAt(wx, wy, u ? 2.5f : 4.f);
     if (ci >= 0) { drag.kind = D_GRAB; drag.grab = cables[ci]; return; }
   }
@@ -639,6 +682,8 @@ void Ui::pointerDown(float sx, float sy) {
   if (d->vis && ly >= g.vy && ly < g.vy + g.vh) {
     const int vx = lx - 3, vy = ly - g.vy;
     if (d->type == "keys") { keysPress(*u, vx, vy); return; }
+    if (d->type == "tombola" && vy < 7) {   // the drum's CLEAR and SHAKE buttons
+      if (vx >= g.w - 6 - 24) { eng.action(u->m->id, "shake"); status("SHAKE!", 1.5f); return; } }
     if (d->type == "out" && vy >= 20) { drag.kind = D_XFADE; drag.m = u; pointerMove(sx, sy); return; }
     if (d->type == "sample" && (int)u->m->p[1].load() >= 2 && vy < 6) {   // KIT / MULTI: a sound's place
       const int k = std::min(UiMod::SLOTS - 1, std::max(0, lx - 3) / 6); u->shown = k; const bool has = !u->snd[k].id.empty(), multi = (int)u->m->p[1].load() == 3;
@@ -652,9 +697,11 @@ void Ui::pointerDown(float sx, float sy) {
           r.pick = [this, id, k](int j) { UiMod* t2 = byId(id); if (!t2) return; t2->snd[k].root = (float)(24 + j); t2->m->roots[k].store((float)(24 + j)); status("SOUND " + std::to_string(k + 1) + " ROOT " + noteName(24 + j)); changed(); }; openDropdown(r); return; }
         if (has) { eng.setBuffer(id, nullptr, k); t->snd[k] = UiMod::Snd(); status("REMOVED SOUND " + std::to_string(k + 1)); changed(); } };
       openDropdown(z); return; }
-    if (d->type == "tracker") {   // tap a row to put the cursor there; drag up and down to scroll
-      u->hold = 6; const int r = (int)u->scroll + std::max(0, (vy - 1) / 6);
-      if (r < trLen(u->m)) { u->m->cursor.store(r); char b[32]; std::snprintf(b, 32, "CURSOR AT STEP %03d", r + 1); status(b, 1.2f); }
+    if (d->type == "tracker") {   // tap a step (and column) to put the cursor there; drag up and down to scroll. < > move along the columns
+      u->hold = 6; trFocus = u->m->id; const int head = trHead(u->m), nc = trCols(u->m), vis = std::min(2, nc), cw = (g.w - 6 - 14) / vis;
+      if (head && vy < head) { if (vx < 8) u->colScroll = std::max(0, u->colScroll - 1); else if (vx >= g.w - 6 - 8) u->colScroll = std::min(std::max(0, nc - 2), u->colScroll + 1); return; }
+      const int r = (int)u->scroll + std::max(0, (vy - head - 1) / 6), col = vx >= 14 ? std::min(nc - 1, u->colScroll + std::min(vis - 1, (vx - 14) / std::max(1, cw))) : u->m->cursorCol.load();
+      if (r < trLen(u->m)) { u->m->cursor.store(r); u->m->cursorCol.store(col); char b[40]; std::snprintf(b, 40, "CURSOR AT STEP %03d  COLUMN %d", r + 1, col + 1); status(b, 1.2f); }
       drag.kind = D_SCROLL; drag.m = u; drag.n0 = u->scroll; return; }
   }
   const int pj = paramAt(u, ly);
@@ -683,12 +730,14 @@ void Ui::pointerDown(float sx, float sy) {
   drag.kind = D_MOVE; drag.m = u; drag.ox = wx - u->x; drag.oy = wy - u->y;
 }
 
+// a CLOCK on SHARED tempo: its BPM is the session's tempo, shown on the top bar
+static void clockToTempo(UiMod* u, int k, Engine& eng) { if (u->m->def->type == "clock" && u->m->def->params[k].key == "bpm" && u->m->p[0].load() > 0.5f) eng.tempo.bpm.store(std::round(u->m->p[k].load())); }
 // - and +: one step for settings that move in steps, otherwise about a hundredth of the way along
 void Ui::nudge(UiMod* u, int k, int dir) {
   const ParamDef& q = u->m->def->params[k]; const float v0 = u->m->p[k].load();
   float v = q.step > 0 ? clampf(v0 + dir * q.step, std::min(q.min, q.max), std::max(q.min, q.max)) : q.fromNorm(q.toNorm(v0) + dir * q.nudge);
   if (q.step > 0 && q.rev) v = clampf(v0 - dir * q.step, q.min, q.max);
-  u->m->p[k].store(v); status(u->m->def->name + "  " + statusLabel(*u, q) + "  " + valueText(*u, k, v, eng.key.root.load()), 1.5f);
+  u->m->p[k].store(v); clockToTempo(u, k, eng); status(u->m->def->name + "  " + statusLabel(*u, q) + "  " + valueText(*u, k, v, eng.key.root.load()), 1.5f);
 }
 void Ui::selectCable(const UiCable& c, float sx, float sy) {
   sel = c; selOn = true; selT = 1; ubx = (int)sx + 4; uby = (int)sy - 12; status(cableName(c), 3);
@@ -714,7 +763,7 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_PARAM && !drag.moved && !drag.held && std::fabs(sx - drag.sx) < 2) {}   // not moved far enough to count as a drag yet
   else if (drag.kind == D_PARAM && drag.held) {}
   else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 ? 40.f : 70.f));
-    drag.m->m->p[drag.k].store(v); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + valueText(*drag.m, drag.k, v, eng.key.root.load()), 1.5f); }
+    drag.m->m->p[drag.k].store(v); clockToTempo(drag.m, drag.k, eng); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + valueText(*drag.m, drag.k, v, eng.key.root.load()), 1.5f); }
   else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng.tempo.bpm.load())) { eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
@@ -751,6 +800,8 @@ void Ui::pointerUp(float sx, float sy) {
       status(t->m->def->name + " " + t->m->def->params[k].label + " " + (smp ? std::string(SMP[i]) : std::to_string(V[i])), 2); changed(); };
     openDropdown(z); return; }
   if (d.kind == D_PARAM && !d.moved && !d.held) { const ParamDef& q = d.m->m->def->params[d.k]; status(d.m->m->def->name + "  " + statusLabel(*d.m, q) + "  " + valueText(*d.m, d.k, d.m->m->p[d.k].load(), eng.key.root.load()) + "  (DRAG, OR TAP - +)", 2.5f); return; }
+  if (d.kind == D_MOVE && !d.moved && d.m && d.m->m->def->type == "tombola") {   // TOMBOLA: a tap on SHAKE (its input's name, or the drum's corner) shakes it
+    const int si = d.m->m->def->inIndex("SHAKE"), ly = d.oy, lx = d.ox; if (si >= 0 && ly >= jackY(si) - 3 && ly <= jackY(si) + 3 && lx < 40) { eng.action(d.m->m->id, "shake"); status("SHAKE!", 1.5f); return; } }
   if (d.kind == D_MOVE || d.kind == D_PARAM || d.kind == D_XFADE || d.kind == D_STEP) { changed(); return; }
   if (d.kind != D_CABLE) return;
   bool made = false;

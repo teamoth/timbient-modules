@@ -10,6 +10,26 @@
 
 namespace tb {
 
+// the Tracker's steps, a column at a time: [note, velocity] or null, up to the last one used (column 1 is "seq", as the web version keeps it)
+static Json seqCol(Module* m, int col) {
+  int last = -1; for (int i = 0; i < Module::SEQ_MAX; i++) if (m->seq[Module::si(i, col)].load() >= 0) last = i;
+  Json sq = Json::array(); for (int i = 0; i <= last; i++) { const float nt = m->seq[Module::si(i, col)].load(); if (nt < 0) { sq.push(Json()); continue; }
+    Json st = Json::array(); st.push(Json::number(nt)); st.push(Json::number(m->seq[Module::si(i, col) + 1].load())); sq.push(st); }
+  return sq;
+}
+static void readCol(Module* m, int col, const Json* sq) {   // every step of the column: from the list, or empty past its end
+  for (int i = 0; i < Module::SEQ_MAX; i++) { float nt = -1, vel = 0.8f;
+    if (sq && sq->t == Json::ARR && i < (int)sq->a.size()) { const Json& st = sq->a[i]; if (st.t == Json::ARR && !st.a.empty() && st.a[0].t == Json::NUM) { nt = (float)st.a[0].n; if (st.a.size() > 1 && st.a[1].t == Json::NUM) vel = (float)st.a[1].n; } }
+    if (m->seq[Module::si(i, col)].load() != nt) m->seq[Module::si(i, col)].store(nt); if (nt >= 0) m->seq[Module::si(i, col) + 1].store(vel); }
+}
+static void readSeq(Module* m, const Json* p) {
+  readCol(m, 0, p ? p->get("seq") : nullptr); const Json* more = p ? p->get("seqc") : nullptr;
+  for (int c = 1; c < Module::SEQ_COLS; c++) readCol(m, c, more && more->t == Json::ARR && c - 1 < (int)more->a.size() ? &more->a[c - 1] : nullptr);
+}
+
+static int inIdx(const ModuleDef* d, const std::string& n) { const int i = d->inIndex(n); if (i >= 0) return i; return n == "ENTER" ? d->inIndex("STEP ENTER") : -1; }   // (renamed inputs)
+
+
 std::string readFile(const std::string& path) { std::ifstream f(path, std::ios::binary); if (!f) return ""; std::stringstream ss; ss << f.rdbuf(); return ss.str(); }
 bool writeFile(const std::string& path, const std::string& text) {
   const std::string tmp = path + ".tmp"; { std::ofstream f(tmp, std::ios::binary); if (!f) return false; f << text; if (!f) return false; }
@@ -36,11 +56,8 @@ Json serializePatch(Ui& ui) {
   for (auto& up : ui.mods) { UiMod& u = *up; const ModuleDef* def = u.m->def; Json m = Json::object();
     m.set("id", Json::number(u.m->id)); m.set("type", Json::string(def->type)); m.set("x", Json::number(u.x)); m.set("y", Json::number(u.y));
     Json p = Json::object(); for (size_t k = 0; k < def->params.size(); k++) if (!def->params[k].act) p.set(def->params[k].key, Json::number(u.m->p[k].load()));
-    if (u.m->seq) {   // the Tracker's steps: [note, velocity] or null, up to the last one used
-      int last = -1; for (int i = 0; i < Module::SEQ_MAX; i++) if (u.m->seq[i * 2].load() >= 0) last = i;
-      Json sq = Json::array(); for (int i = 0; i <= last; i++) { const float nt = u.m->seq[i * 2].load(); if (nt < 0) { sq.push(Json()); continue; }
-        Json st = Json::array(); st.push(Json::number(nt)); st.push(Json::number(u.m->seq[i * 2 + 1].load())); sq.push(st); }
-      p.set("seq", sq); }
+    if (u.m->seq) { p.set("seq", seqCol(u.m, 0)); bool more = false; Json mc = Json::array();   // the Tracker's steps; columns 2 to 8 in "seqc"
+      for (int c = 1; c < Module::SEQ_COLS; c++) { Json sq = seqCol(u.m, c); if (!sq.a.empty()) more = true; mc.push(sq); } if (more) p.set("seqc", mc); }
     if (!u.snd[0].id.empty()) p.set("audio", Json::string(u.snd[0].id));   // the first sound, as the web version keeps it
     { int last = -1; for (int k = 0; k < UiMod::SLOTS; k++) if (!u.snd[k].id.empty()) last = k;
       if (last > 0 || (last == 0 && (u.snd[0].root != 60 || !u.snd[0].name.empty()))) { Json a = Json::array();   // every sound: [id, root, name] or null
@@ -76,10 +93,7 @@ void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& c
     order.push_back(u); u->x = (int)m.num("x"); u->y = (int)m.num("y");
     const Json* p = m.get("p");
     for (size_t k = 0; k < def->params.size(); k++) { if (def->params[k].act) continue; const Json* v = p ? p->get(def->params[k].key) : nullptr; if (v && v->t == Json::NUM && u->m->p[k].load() != (float)v->n) u->m->p[k].store((float)v->n); }
-    if (u->m->seq) { const Json* sq = p ? p->get("seq") : nullptr;   // the Tracker's steps (the playhead carries on)
-      for (int i = 0; i < Module::SEQ_MAX; i++) { float nt = -1, vel = 0.8f;
-        if (sq && sq->t == Json::ARR && i < (int)sq->a.size()) { const Json& st = sq->a[i]; if (st.t == Json::ARR && !st.a.empty() && st.a[0].t == Json::NUM) { nt = (float)st.a[0].n; if (st.a.size() > 1 && st.a[1].t == Json::NUM) vel = (float)st.a[1].n; } }
-        if (u->m->seq[i * 2].load() != nt) u->m->seq[i * 2].store(nt); if (nt >= 0 && u->m->seq[i * 2 + 1].load() != vel) u->m->seq[i * 2 + 1].store(vel); } }
+    if (u->m->seq) readSeq(u->m, p);   // the Tracker's steps (the playhead carries on)
     UiMod::Snd want[UiMod::SLOTS]; if (p) { const std::string aid = p->str("audio"); if (!aid.empty()) want[0].id = aid;
       if (const Json* a = p->get("sounds")) if (a->t == Json::ARR) for (size_t k = 0; k < a->a.size() && k < (size_t)UiMod::SLOTS; k++) { const Json& e = a->a[k];
         if (e.t == Json::ARR && !e.a.empty() && e.a[0].t == Json::STR) { want[k].id = e.a[0].s; if (e.a.size() > 1 && e.a[1].t == Json::NUM) want[k].root = (float)e.a[1].n; if (e.a.size() > 2 && e.a[2].t == Json::STR) want[k].name = e.a[2].s; } } }
@@ -99,7 +113,7 @@ void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& c
     UiMod *a = ui.byId((int)c.num("f")), *b = ui.byId((int)c.num("t")); if (!a || !b) continue; const std::string ty = c.str("ty");
     const int fp = a->m->def->outIndex(c.str("fp")); if (fp < 0) continue;
     if (ty == "mod") { const int pk = b->m->def->paramIndex(c.str("tq")); if (pk >= 0) want.push_back({a->m->id, fp, b->m->id, -1, pk, PType::Mod}); }
-    else { const int tp = b->m->def->inIndex(c.str("tp")); if (tp >= 0) want.push_back({a->m->id, fp, b->m->id, tp, -1, a->m->def->outs[fp].type}); } }
+    else { const int tp = inIdx(b->m->def, c.str("tp")); if (tp >= 0) want.push_back({a->m->id, fp, b->m->id, tp, -1, a->m->def->outs[fp].type}); } }
   auto same = [](const UiCable& c, const Want& w) { return c.from == w.f && c.fromPort == w.fp && c.to == w.t && (w.ty == PType::Mod ? c.type == PType::Mod && c.toParam == w.tq : c.type != PType::Mod && c.toPort == w.tp); };
   const std::vector<UiCable> now = ui.cables;
   for (auto& c : now) { bool keep = false; for (auto& w : want) if (same(c, w)) keep = true; if (!keep) ui.unplug(c); }
@@ -143,9 +157,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (!u) u = ui.add(ty, mx(m), (int)m.num("y"));
     if (!u) { skipped.insert(ty); continue; }
     if (const Json* p = m.get("p")) for (size_t k = 0; k < def->params.size(); k++) { const Json* v = p->get(def->params[k].key); if (v && v->t == Json::NUM) u->m->p[k].store((float)v->n); }
-    if (const Json* p = m.get("p")) if (const Json* sq = p->get("seq")) if (sq->t == Json::ARR && u->m->seq)
-      for (size_t i = 0; i < sq->a.size() && i < (size_t)Module::SEQ_MAX; i++) { const Json& st = sq->a[i];
-        if (st.t == Json::ARR && st.a.size() >= 1 && st.a[0].t == Json::NUM) { u->m->seq[i * 2].store((float)st.a[0].n); u->m->seq[i * 2 + 1].store(st.a.size() > 1 && st.a[1].t == Json::NUM ? (float)st.a[1].n : 0.8f); } }
+    if (u->m->seq) readSeq(u->m, m.get("p"));
     if (const Json* p = m.get("p")) { const std::string aid = p->str("audio"); if (!aid.empty()) u->snd[0].id = aid;
       if (const Json* a = p->get("sounds")) if (a->t == Json::ARR) for (size_t k = 0; k < a->a.size() && k < (size_t)UiMod::SLOTS; k++) { const Json& e = a->a[k];
         if (e.t == Json::ARR && e.a.size() >= 1 && e.a[0].t == Json::STR) { u->snd[k].id = e.a[0].s; if (e.a.size() > 1 && e.a[1].t == Json::NUM) u->snd[k].root = (float)e.a[1].n; if (e.a.size() > 2 && e.a[2].t == Json::STR) u->snd[k].name = e.a[2].s;
@@ -164,12 +176,12 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     UiMod *a = fi->second, *b = ti->second; const std::string ty = c.str("ty"), fp = c.str("fp"); std::string tp = c.str("tp");
     if (b->m->def->type == "out" && tp == "IN") tp = "A"; if (tp == "SWELL") tp = "TRIG";
     if (ty == "mod") { const int pk = b->m->def->paramIndex(c.str("tq")); if (pk < 0 || !ui.modulate(a, b, pk)) lost++; }
-    else if (!ui.connect(a, a->m->def->outIndex(fp), b, b->m->def->inIndex(tp))) lost++;
+    else if (!ui.connect(a, a->m->def->outIndex(fp), b, inIdx(b->m->def, tp))) lost++;
   }
   std::string note;
-  const bool fm = skipped.erase("fm2") > 0;
+  std::vector<std::string> gone; for (const char* g : {"fm2", "grains", "bell", "glass"}) if (skipped.erase(g)) gone.push_back(std::string(g) == "fm2" ? "FM 2-OP" : std::string(g) == "grains" ? "GRAIN CLOUD" : std::string(g) == "bell" ? "MODAL BELL" : "GLASS");
   if (!skipped.empty()) { note = "NOT IN THE NATIVE VERSION YET: "; bool first = true; for (auto& s : skipped) { const ModuleDef* d = findDef(s); std::string nm = d ? d->name : s; for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); note += (first ? "" : ", ") + nm; first = false; } }
-  if (fm) note += std::string(note.empty() ? "" : ". ") + "FM 2-OP HAS BEEN REMOVED, SO IT WAS LEFT OUT";
+  if (!gone.empty()) { std::string l; for (auto& g : gone) l += (l.empty() ? "" : ", ") + g; note += std::string(note.empty() ? "" : ". ") + l + (gone.size() > 1 ? " HAVE" : " HAS") + " BEEN REMOVED, SO LEFT OUT"; }
   return note;
 }
 
