@@ -29,7 +29,7 @@ set(ENGINE_SOURCES
   src/engine/modules_audio.cpp
   src/engine/modules_midi.cpp
   src/engine/modules_fx.cpp)
-set(UI_SOURCES src/ui/ui.cpp src/ui/session.cpp src/ui/browser.cpp)
+set(UI_SOURCES src/ui/ui.cpp src/ui/session.cpp src/ui/browser.cpp src/ui/editor.cpp)
 
 # Mutable Instruments' Plaits (MIT licence, see third_party/mutable/LICENSE): the MI VOICES module
 file(GLOB_RECURSE MUTABLE_SOURCES third_party/mutable/plaits/*.cc third_party/mutable/stmlib/*.cc)

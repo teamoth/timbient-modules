@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.18.0";
+static const char* VERSION = "0.19.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
   // ---- sounds held by Sample and Grain Looper modules: kept as WAV files in the app's folder, named by id ----
   const std::string audioDir = store.dir + "audio/"; SDL_CreateDirectory(audioDir.c_str());
   auto giveSound = [&](UiMod* u, AudioBuf* b, bool keep, int slot = 0, const std::string& name = "") {   // hand a sound to a module (and keep a copy so sessions bring it back)
-    UiMod::Snd& sd = u->snd[slot]; sd.peaks = peaksOf(*b); sd.missing = false; if (keep) sd.name = name;
+    UiMod::Snd& sd = u->snd[slot]; sd.peaks = peaksOf(*b); sd.missing = false; sd.secs = b->d.size() / b->sr; if (keep) sd.name = name;
     if (keep) { char id[40]; std::snprintf(id, 40, "n%llx%04x", (unsigned long long)std::time(nullptr), (unsigned)(SDL_rand(65536)));
       if (writeWavMono16(audioDir + id + ".wav", *b)) { sd.id = id; dirty = true; saveT = 0.5f; } else ui.status("COULD NOT KEEP THE SOUND", 4); }
     u->m->roots[slot].store(sd.root); engine.setBuffer(u->m->id, b, slot);
@@ -195,12 +195,23 @@ int main(int argc, char** argv) {
       Ctx* c = (Ctx*)ud; SDL_PathInfo info; std::string full = d; if (!full.empty() && full.back() != '/' && full.back() != '\\') full += "/"; full += name;
       const bool folder = SDL_GetPathInfo(full.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY; c->out->push_back({name, folder}); return SDL_ENUM_CONTINUE; }, &ctx); };
   ui.br.autoPreview = settings.num("autoPreview", 1) > 0.5; ui.br.wide = settings.num("browseWide", 0) > 0.5;
+  ui.onEditPlay = [&](const std::vector<float>& d, float sr) { if (d.empty()) { engine.preview(nullptr); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = d; engine.preview(b); };
+  ui.onEditCrop = [&](int id, int slot, std::vector<float>&& d, float sr, const std::string& name) {   // CROP: the part becomes the module's sound (kept, so sessions bring it back)
+    UiMod* u = ui.byId(id); if (!u) return; AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = std::move(d); const double secs = b->d.size() / sr;
+    giveSound(u, b, true, slot, name.empty() ? "CROPPED" : (name.size() > 4 && name.substr(name.size() - 4) == " (C)" ? name : name + " (C)"));
+    if (u->m->def->type == "sample") { const int ks = u->m->def->paramIndex("start"), kl = u->m->def->paramIndex("len"); if (ks >= 0) u->m->p[ks].store(0); if (kl >= 0) u->m->p[kl].store(1); }   // the whole of the new sound
+    char t[48]; std::snprintf(t, 48, "CROPPED TO %.2fS", secs); ui.status(t, 4); histDirty = true; histT = 0.1f; dirty = true; saveT = 0.3f; };
   ui.onBrowseChanged = [&] { settings.set("autoPreview", Json::number(ui.br.autoPreview ? 1 : 0)); settings.set("browseWide", Json::number(ui.br.wide ? 1 : 0)); saveSettings(); };
   ui.onBrowseFolder = [&]() { const std::string d = ui.br.dir; SDL_ShowOpenFolderDialog(onFolderDialog, nullptr, win, d.empty() ? nullptr : d.c_str(), false); };
   ui.onBrowseFile = [&](int id, int slot) { const UiMod* u = ui.byId(id); const bool many = slot < 0 && u && u->m->def->type == "sample";
     SDL_ShowOpenFileDialog(onAudioDialog, (void*)(((intptr_t)id << 8) | (intptr_t)(slot + 1)), win, AUDIO_FILTER, 1, nullptr, many); };
   ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
     const std::string& ty = u->m->def->type;
+    if ((ty == "sample" || ty == "looper" || ty == "stretch") && k == "edit") {   // EDIT SOUND: the editor, with this module's sound (for SAMPLE, the place on show)
+      const int slot = ty == "sample" ? std::max(0, std::min(UiMod::SLOTS - 1, u->shown)) : 0; const UiMod::Snd& sd = u->snd[slot];
+      if (sd.id.empty()) { ui.status("THERE'S NO SOUND TO EDIT YET: LOAD ONE FIRST", 4); return true; }
+      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (!b) { ui.status(err, 4); return true; }
+      ui.openEditor(u->m->id, slot, sd.name, std::move(b->d), b->sr); delete b; return true; }
     if ((ty == "sample" || ty == "looper" || ty == "stretch") && (k == "load" || k.rfind("load:", 0) == 0)) {   // LOAD FILE: KIT and MULTI take several at once, into the empty places
       const bool many = ty == "sample" && u->m->p[1].load() >= 2 && k == "load"; const int slot = k == "load" ? (many ? -1 : 0) : std::atoi(k.c_str() + 5);
       ui.openBrowser(u->m->id, slot, browseDir()); return true; }
@@ -375,6 +386,7 @@ int main(int argc, char** argv) {
         case SDL_EVENT_KEY_DOWN:
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
           if ((ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) && !ui.ask && ui.unplugSelected()) break;   // a picked cable
+          if (ui.ed.open && (ev.key.key == SDLK_ESCAPE || ev.key.key == SDLK_SPACE)) { ui.editorKey(ev.key.key == SDLK_ESCAPE ? 27 : ' '); break; }
           if (ui.br.open) {   // the sound browser: arrows step through, Enter loads, Escape closes
             if (ev.key.key == SDLK_DOWN) { ui.browserKey(1); break; } if (ev.key.key == SDLK_UP) { ui.browserKey(-1); break; }
             if (ev.key.key == SDLK_ESCAPE) { ui.closeBrowser(); break; }
@@ -396,6 +408,7 @@ int main(int argc, char** argv) {
         case SDL_EVENT_MOUSE_BUTTON_UP: if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerUp(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
         case SDL_EVENT_MOUSE_WHEEL:   // with Ctrl or Cmd held: zoom. Otherwise: move around the patch
           if (SDL_GetModState() & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) { wheelAcc += ev.wheel.y; if (std::fabs(wheelAcc) >= 1) { pendingZoom += wheelAcc > 0 ? 1 : -1; wheelAcc = 0; } }
+          else if (ui.ed.open) ui.editorWheel(ev.wheel.mouse_x * dens / scale, ev.wheel.y);   // the sound editor: zoom
           else if (ui.br.open) ui.browserScroll(-ev.wheel.y * 2);   // over the sound browser: scroll its list
           else { ui.viewX -= (int)std::lround(ev.wheel.x * 12); ui.viewY -= (int)std::lround(ev.wheel.y * 12); }
           break;

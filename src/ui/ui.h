@@ -18,7 +18,7 @@ struct UiMod {
   float lit[64] = {0};                               // Note Grid pads that were just pressed
   float scroll = 0, hold = 0; int seqVer = 0, entered = 0;   // the Tracker: first row on show, a pause in FOLLOW after an edit
   // Sample / Grain Looper: the sounds held (Grain Looper uses only the first), each kept as a file named by id
-  struct Snd { std::string id, name; float root = 60; std::vector<float> peaks; bool missing = false; };
+  struct Snd { std::string id, name; float root = 60; std::vector<float> peaks; bool missing = false; double secs = 0; };   // secs: how long it is
   static constexpr int SLOTS = 8; Snd snd[SLOTS]; int shown = 0;
   std::string dev;                                                       // MIDI OUT: the device chosen (empty: the first one there)
   std::vector<std::pair<float, float>> dots; int hopSeen = 0;            // Random Hops: recent hops (age, height); Tombola uses dots too
@@ -71,7 +71,17 @@ public:
     bool autoPreview = true, wide = false;   // PREVIEW: tapping a sound plays it. <>: the wide browser, for long names
     std::string infoPath; bool infoReady = false, infoFailed = false; SoundInfo info; int channels = 0; float fileRate = 0; double secs = 0; } br;
   std::function<void(const std::string&)> onInfo;
-  std::function<void()> onBrowseChanged;   // PREVIEW or <> switched: remember it   // look into a sound file (the answer comes back into br)
+  std::function<void()> onBrowseChanged;
+  // the sound editor (EDIT SOUND on SAMPLE, GRAIN LOOPER, STRETCH): pick a part of the sound and keep just that (CROP)
+  struct Editor { bool open = false; int target = 0, slot = 0; std::string name; std::vector<float> d; float sr = 48000, peak = 1;
+    std::vector<float> mipLo, mipHi;   // every 256 samples' lowest and highest, for drawing long sounds quickly
+    double a = 0, b = 0, v0 = 0, v1 = 0; bool fades = true, norm = false, playing = false; } ed;
+  void openEditor(int targetId, int slot, const std::string& name, std::vector<float>&& data, float sr);
+  void closeEditor();
+  void editorWheel(float sx, float wheel);   // zoom in or out around the pointer
+  void editorKey(int key);                   // Escape closes, Space plays
+  std::function<void(const std::vector<float>&, float)> onEditPlay;                     // play a piece (empty: stop)
+  std::function<void(int, int, std::vector<float>&&, float, const std::string&)> onEditCrop;   // keep this piece as the module's sound   // PREVIEW or <> switched: remember it   // look into a sound file (the answer comes back into br)
   void openBrowser(int targetId, int slot, const std::string& dir);   // slot -1: the next empty place (KIT / MULTI)
   void browseTo(const std::string& dir);
   void browserScroll(float rows);
@@ -126,7 +136,7 @@ private:
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT };
   // cables as curves you can touch
   bool cableEnds(const UiCable& c, float& ax, float& ay, float& bx, float& by);
   int cableAt(int wx, int wy, float maxD, bool audioOnly = false);
@@ -139,6 +149,11 @@ private:
   void setBpm(float v);
   bool tempoDown(float sx, float sy);
   bool browserDown(float sx, float sy);
+  bool editorDown(float sx, float sy);
+  void editorMove(float sx, float sy);
+  void drawEditor(Canvas& c);
+  int edX = 0, edY = 0, edW = 0, edH = 0;
+  double edTimeAt(float sx) const;
   void drawBrowser(Canvas& c);
   int brX = 0, brY = 0, brW = 0, brH = 0, brRows = 0;
   std::unique_ptr<Dropdown> dd; bool menuOpen = false; int lastW = 400; float blink = 0;

@@ -91,7 +91,9 @@ static int panRowAt(const ModuleDef* d) { if (d->panIdx < 0) return -1; int t = 
 // rows that don't apply right now are hidden (STRETCH: LOAD FILE and POSITION only show with SOURCE on FILE)
 static bool hiddenRow(const UiMod& u, int j) { const ParamDef& q = u.m->def->params[j]; return q.only == "file" && u.m->def->type == "stretch" && u.m->p[0].load() < 0.5f; }
 static std::vector<int> rowOrder(const UiMod& u) { const ModuleDef* d = u.m->def; std::vector<int> o; const int p = d->panIdx, t = panRowAt(d);
-  for (int j = 0; j < (int)d->params.size(); j++) { if (j == p && t != p) continue; if (j == t && p >= 0 && t != p && !hiddenRow(u, p)) o.push_back(p); if (!hiddenRow(u, j)) o.push_back(j); }
+  const int ed = d->paramIndex("edit"), ld = d->paramIndex("load");   // EDIT SOUND sits just under LOAD FILE
+  for (int j = 0; j < (int)d->params.size(); j++) { if ((j == p && t != p) || (j == ed && ld >= 0)) continue; if (j == t && p >= 0 && t != p && !hiddenRow(u, p)) o.push_back(p);
+    if (!hiddenRow(u, j)) { o.push_back(j); if (j == ld && ed >= 0 && !hiddenRow(u, ed)) o.push_back(ed); } }
   return o; }
 static int rowOf(const UiMod& u, int j) { const auto o = rowOrder(u); for (int r = 0; r < (int)o.size(); r++) if (o[r] == j) return r; return -1; }
 static int paramOfRow(const UiMod& u, int r) { const auto o = rowOrder(u); return r >= 0 && r < (int)o.size() ? o[r] : -1; }
@@ -341,6 +343,18 @@ void Ui::trackerWatch(UiMod& u) {   // notes typed in through ENTER arrive from 
 }
 
 // a setting's name for the status line. MI VOICES: Plaits' names, plus what HARMONICS / TIMBRE / MORPH do in this model
+// a time as the screen shows it: 0:02.40, or 12.4S
+static std::string timeText(double t) { char b[24]; if (t >= 60) std::snprintf(b, 24, "%d:%05.2f", (int)(t / 60), t - 60 * (int)(t / 60)); else std::snprintf(b, 24, t < 10 ? "%.2fS" : "%.1fS", t); return b; }
+// a setting's value for the status line. SAMPLE's START and LENGTH: as times in the loaded sound
+static std::string valueText(const UiMod& u, int j, float v, int root) {
+  const ParamDef& q = u.m->def->params[j];
+  if (u.m->def->type == "sample" && (q.key == "start" || q.key == "len")) { const double dur = u.snd[std::max(0, std::min(UiMod::SLOTS - 1, u.shown))].secs;
+    if (dur > 0) { const bool slices = u.m->p[1].load() > 0.5f && u.m->p[1].load() < 1.5f; const float st = u.m->p[u.m->def->paramIndex("start")].load();
+      if (q.key == "start") return timeText(v * dur);
+      if (slices) { const int n = std::max(1, (int)u.m->p[2].load()); return timeText(dur / n * v); }
+      return timeText(std::max(0.05, v * (dur - st * dur))); } }
+  return fmtParam(q, v, root);
+}
 static std::string statusLabel(const UiMod& u, const ParamDef& q) {
   if (u.m->def->type != "mi") return q.label;
   const int w3 = q.key == "harm" ? 0 : q.key == "timb" ? 1 : q.key == "morph" ? 2 : -1; if (w3 < 0) return q.label;
@@ -506,6 +520,7 @@ void Ui::draw(Canvas& c, float dt) {
     btn(x + 4, y + 21, 21, "TAP"); btn(x + 29, y + 21, 17, "-10"); btn(x + 50, y + 21, 17, "+10");
   }
   drawBrowser(c);
+  drawEditor(c);
   // the name box
   if (ask) {
     const int w = std::min(c.W - 10, 150), h = 34, x = (c.W - w) / 2, y = TOP + 30;
@@ -570,6 +585,7 @@ void Ui::pointerDown(float sx, float sy) {
     if (sx >= ubx - 1 && sx < ubx + bw + 1 && sy >= uby - 1 && sy < uby + 10) { selOn = true; unplugSelected(); return; } }
   if (tp.open) { if (!tempoDown(sx, sy)) tp.open = false; return; }   // a tap away closes it
   if (br.open) { if (!browserDown(sx, sy)) closeBrowser(); return; }
+  if (ed.open) { if (!editorDown(sx, sy)) closeEditor(); return; }
   if (dd) {   // a tap picks from the open list, or closes it
     auto d0 = std::move(dd); const int r = (int)std::floor((sy - d0->y - 1) / 8), col = (int)std::floor((sx - d0->x + 2) / std::max(1, d0->colW)), i = col * d0->rows + r;
     if (sx >= d0->x - 2 && sx < d0->x - 2 + d0->w && r >= 0 && r < d0->rows && i >= 0 && i < (int)d0->items.size() && i != d0->title && d0->pick) d0->pick(i);
@@ -670,9 +686,9 @@ void Ui::pointerDown(float sx, float sy) {
 // - and +: one step for settings that move in steps, otherwise about a hundredth of the way along
 void Ui::nudge(UiMod* u, int k, int dir) {
   const ParamDef& q = u->m->def->params[k]; const float v0 = u->m->p[k].load();
-  float v = q.step > 0 ? clampf(v0 + dir * q.step, std::min(q.min, q.max), std::max(q.min, q.max)) : q.fromNorm(q.toNorm(v0) + dir * 0.01f);
+  float v = q.step > 0 ? clampf(v0 + dir * q.step, std::min(q.min, q.max), std::max(q.min, q.max)) : q.fromNorm(q.toNorm(v0) + dir * q.nudge);
   if (q.step > 0 && q.rev) v = clampf(v0 - dir * q.step, q.min, q.max);
-  u->m->p[k].store(v); status(u->m->def->name + "  " + statusLabel(*u, q) + "  " + fmtParam(q, v, eng.key.root.load()), 1.5f);
+  u->m->p[k].store(v); status(u->m->def->name + "  " + statusLabel(*u, q) + "  " + valueText(*u, k, v, eng.key.root.load()), 1.5f);
 }
 void Ui::selectCable(const UiCable& c, float sx, float sy) {
   sel = c; selOn = true; selT = 1; ubx = (int)sx + 4; uby = (int)sy - 12; status(cableName(c), 3);
@@ -698,8 +714,9 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_PARAM && !drag.moved && !drag.held && std::fabs(sx - drag.sx) < 2) {}   // not moved far enough to count as a drag yet
   else if (drag.kind == D_PARAM && drag.held) {}
   else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 ? 40.f : 70.f));
-    drag.m->m->p[drag.k].store(v); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + fmtParam(q, v, eng.key.root.load()), 1.5f); }
+    drag.m->m->p[drag.k].store(v); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + valueText(*drag.m, drag.k, v, eng.key.root.load()), 1.5f); }
   else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng.tempo.bpm.load())) { eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
+  else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
   else if (drag.kind == D_SCROLL) { drag.m->hold = 6; drag.m->scroll = drag.n0 - (sy - drag.sy) / 6; trClamp(*drag.m); }
   else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
@@ -733,7 +750,7 @@ void Ui::pointerUp(float sx, float sy) {
     z.pick = [this, id, k, smp](int i) { UiMod* t = byId(id); if (!t) return; t->m->p[k].store((float)V[i]);
       status(t->m->def->name + " " + t->m->def->params[k].label + " " + (smp ? std::string(SMP[i]) : std::to_string(V[i])), 2); changed(); };
     openDropdown(z); return; }
-  if (d.kind == D_PARAM && !d.moved && !d.held) { const ParamDef& q = d.m->m->def->params[d.k]; status(d.m->m->def->name + "  " + statusLabel(*d.m, q) + "  " + fmtParam(q, d.m->m->p[d.k].load(), eng.key.root.load()) + "  (DRAG, OR TAP - +)", 2.5f); return; }
+  if (d.kind == D_PARAM && !d.moved && !d.held) { const ParamDef& q = d.m->m->def->params[d.k]; status(d.m->m->def->name + "  " + statusLabel(*d.m, q) + "  " + valueText(*d.m, d.k, d.m->m->p[d.k].load(), eng.key.root.load()) + "  (DRAG, OR TAP - +)", 2.5f); return; }
   if (d.kind == D_MOVE || d.kind == D_PARAM || d.kind == D_XFADE || d.kind == D_STEP) { changed(); return; }
   if (d.kind != D_CABLE) return;
   bool made = false;

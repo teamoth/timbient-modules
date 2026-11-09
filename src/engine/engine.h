@@ -24,7 +24,7 @@ struct ParamDef {
   std::string key, label;
   float min = 0, max = 1, def = 0;
   bool exp = false, rev = false, time = false, hz = false, pctFmt = false, play = false, tog = false;
-  float step = 0;
+  float step = 0, nudge = 0.01f;   // nudge: how far one tap of - or + moves it (of the whole slider)
   std::vector<std::string> opts;   // a list of named choices (stored as an index)
   std::string only;                // 'free', 'clock', 'own': greyed out depending on the module's state
   bool act = false;                // an action button rather than a value

@@ -93,10 +93,10 @@ struct Sample : Module {
 };
 static Reg rSample(new ModuleDef{"sample", "SAMPLE", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   {ACT("load", "LOAD FILE"), OP("kind", "SOUNDS", {"ONE", "SLICES", "KIT", "MULTI"}, 0), only(ST("slices", "SLICES", 2, 32, 8), "slices"),
-   OP("mode", "TRIG", {"LOOP", "ONCE"}, 0), only(OP("notes", "NOTES", {"OFF", "ON"}, 0), "one"), only(pct("start", "START", 0), "region"), pct("len", "LENGTH", 1),
+   OP("mode", "TRIG", {"LOOP", "ONCE"}, 0), only(OP("notes", "NOTES", {"OFF", "ON"}, 0), "one"), only(fine(pct("start", "START", 0)), "region"), fmt(prExp("len", "LENGTH", 0.0005f, 1, 1), [](float v) { char b[16]; std::snprintf(b, 16, v < 0.1f ? "%.1f%%" : "%.0f%%", v * 100); return std::string(b); }),   // the screen shows these as times
    ST("pitch", "PITCH", -24, 24, 0), OP("rev", "PLAY", {"FWD", "BACK", "BOUNCE", "RANDOM"}, 0),
    only(T("atk", "ATTACK", 0.002f, 4, 0.01f), "once"), only(T("rel", "RELEASE", 0.005f, 8, 0.3f), "once"), only(T("fade", "FADE", 0.005f, 4, 0.4f), "loop"),
-   only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 80, 20000, 20000), pct("res", "RES", 0), pct("vsens", "VEL SENS", 1), pct("width", "WIDTH", 0), LEVEL()},
+   only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 80, 20000, 20000), pct("res", "RES", 0), pct("vsens", "VEL SENS", 1), pct("width", "WIDTH", 0), LEVEL(), ACT("edit", "EDIT SOUND")},
   12, 68, false, [] { return new Sample(); }});
 
 // ---------------- GRAIN LOOPER: catches the last seconds of its input (or a file) and plays it as a cloud of grains ----------------
@@ -145,7 +145,7 @@ struct Looper : Module {
 };
 static Reg rLooper(new ModuleDef{"looper", "GRAIN LOOPER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {ACT("catch", "CATCH"), ACT("load", "LOAD FILE"), ST("len", "LENGTH", 2, 16, 8), pct("pos", "POSITION", 0.5f), pct("crawl", "CRAWL", 0.3f),
-   T("size", "SIZE", 0.03f, 2, 0.25f), pctX("dens", "DENSITY", 1.6f, 0.35f), ST("pitch", "GRAIN PITCH", -24, 24, 0), pctX("scatter", "SCATTER", 2, 0.2f), pct("rev", "REVERSE", 0.2f), pctX("tex", "TEXTURE", 2, 0.4f), pct("mix", "MIX", 1), LEVEL()},
+   T("size", "SIZE", 0.03f, 2, 0.25f), pctX("dens", "DENSITY", 1.6f, 0.35f), ST("pitch", "GRAIN PITCH", -24, 24, 0), pctX("scatter", "SCATTER", 2, 0.2f), pct("rev", "REVERSE", 0.2f), pctX("tex", "TEXTURE", 2, 0.4f), pct("mix", "MIX", 1), LEVEL(), ACT("edit", "EDIT SOUND")},
   12, 68, false, [] { return new Looper(); }});
 
 // ---------------- STRETCH: paulstretch, a random-phase spectral smear of the last few seconds ----------------
@@ -233,7 +233,7 @@ static Reg rStretch(new ModuleDef{"stretch", "STRETCH", Cat::Proc, {{"IN", PType
   {OP("src", "SOURCE", {"LIVE", "FILE"}, 0), only(ACT("load", "LOAD FILE"), "file"),
    fmt(prExp("amt", "STRETCH", 1, 1000, 10), [](float v) { char b[16]; std::snprintf(b, 16, v < 10 ? "%.1fX" : "%.0fX", v); return std::string(b); }),
    OP("win", "WINDOW", {"0.04S", "0.09S", "0.17S", "0.34S", "0.68S"}, 1), only(pct("pos", "POSITION", 0), "file"), ST("pitch", "PITCH", -24, 24, 0),
-   pct("shim", "SHIMMER", 0), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("mix", "MIX", 1)}, 12, 68, false, [] { return new Stretch(); }});
+   pct("shim", "SHIMMER", 0), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("mix", "MIX", 1), only(ACT("edit", "EDIT SOUND"), "file")}, 12, 68, false, [] { return new Stretch(); }});
 
 // ---------------- TAPE LOOP: one loop of tape, in the spirit of the oooooo script for norns ----------------
 // What comes in is recorded onto a loop (LENGTH seconds, or BEATS of a clock patched into CLOCK). Each pass while
