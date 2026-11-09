@@ -11,6 +11,7 @@
 namespace tb {
 
 struct UiMod {
+  float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
   float hist[48] = {0}; int hi = 0; float ht = 0;   // recent values, for drawing the LFO's line
   float lit[64] = {0};                               // Note Grid pads that were just pressed

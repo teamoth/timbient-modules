@@ -166,14 +166,15 @@ struct Out : Module {
       for (int ch = 0; ch < 2; ch++) {
         float v = in[0][ch][i] * gA + in[1][ch][i] * gB;
         if (!flat) v = hi.run(mid.run(lo.run(v, ch), ch), ch);
-        v = sane(v) * lev; (ch ? eng->masterR : eng->masterL)[i] += v; peak = std::max(peak * 0.99995f, std::fabs(v));
+        v = sane(v) * lev; (ch ? eng->masterR : eng->masterL)[i] += v; float& pk = ch ? peakR : peak; pk = std::max(pk * 0.99995f, std::fabs(v));
       }
     }
-    disp[0].store(peak);
+    disp[0].store(peak); disp[3].store(peakR);   // left, right
   }
+  float peakR = 0;
 };
 static ParamDef eqP(const char* k, const char* l) { auto p = pr(k, l, -12, 12, 0); p.fmt = [](float v) { char b[16]; std::snprintf(b, 16, "%+.1fDB", v); return std::string(std::fabs(v) < 0.05f ? "0DB" : b); }; return p; }
 static Reg rOut(new ModuleDef{"out", "OUTPUT", Cat::Out, {{"A", PType::Audio}, {"B", PType::Audio}}, {},
-  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), eqP("low", "LOW"), eqP("mid", "MID"), eqP("high", "HIGH")}, 21, 68, true, [] { return new Out(); }});
+  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), eqP("low", "LOW"), eqP("mid", "MID"), eqP("high", "HIGH")}, 27, 68, true, [] { return new Out(); }});
 
 }  // namespace tb

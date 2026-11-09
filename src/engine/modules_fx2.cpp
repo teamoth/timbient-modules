@@ -185,27 +185,27 @@ static inline float compGain(float lev, float thr, float ratio, float knee) {
 // COMPRESSOR: turns loud parts down. Listens to IN, or to KEY when something is plugged in there (sidechain)
 struct CompModule : Module {
   enum { THR, RATIO, ATK, REL, KNEE, MAKEUP, MIX };
-  float env = -120, gr = 0, peakDisp = -120; Smooth mk, dry;
+  float env = -120, gr = 0, peakDisp = -120, peakR = -120; Smooth mk, dry;
   void prepare() override { mk.setTime(0.02f, sr); mk.snap(dbToGain(e[MAKEUP])); dry.setTime(0.02f, sr); dry.snap(1 - e[MIX]); }
   void render(int a, int b) override {
     const bool key = patched(1); const float aC = std::exp(-1.f / (std::max(0.0001f, e[ATK]) * sr)), rC = std::exp(-1.f / (std::max(0.005f, e[REL]) * sr));
-    mk.t = dbToGain(e[MAKEUP]); dry.t = 1 - e[MIX]; float pk = 0, worst = 0;
+    mk.t = dbToGain(e[MAKEUP]); dry.t = 1 - e[MIX]; float pk = 0, pkR = 0, worst = 0;
     for (int i = a; i < b; i++) {
       const float l = in[0][0][i], r = in[0][1][i], dl = key ? in[1][0][i] : l, dr = key ? in[1][1][i] : r;
       const float lev = toDb(std::max(std::fabs(dl), std::fabs(dr)));
       env = lev > env ? lev + aC * (env - lev) : lev + rC * (env - lev);   // the level it follows: quick up (ATTACK), slower down (RELEASE)
       gr = compGain(env, e[THR], e[RATIO], e[KNEE]); worst = std::min(worst, gr);
       const float g = dbToGain(gr) * mk.tick(), d = dry.tick(), w = 1 - d;
-      out[0][0][i] = l * (d + w * g); out[0][1][i] = r * (d + w * g); pk = std::max(pk, std::max(std::fabs(l), std::fabs(r)));
+      out[0][0][i] = l * (d + w * g); out[0][1][i] = r * (d + w * g); pk = std::max(pk, std::fabs(out[0][0][i])); pkR = std::max(pkR, std::fabs(out[0][1][i]));
     }
-    disp[0].store(worst, std::memory_order_relaxed); peakDisp = std::max(toDb(pk), peakDisp - 0.5f); disp[1].store(peakDisp, std::memory_order_relaxed);
+    disp[0].store(worst, std::memory_order_relaxed); peakDisp = std::max(toDb(pk), peakDisp - 0.5f); disp[1].store(peakDisp, std::memory_order_relaxed); this->peakR = std::max(toDb(pkR), this->peakR - 0.5f); disp[3].store(this->peakR, std::memory_order_relaxed);
   }
 };
 static Reg rComp(new ModuleDef{"comp", "COMPRESSOR", Cat::Proc, {{"IN", PType::Audio}, {"KEY", PType::Audio}}, {{"OUT", PType::Audio}},
   {fmt(pr("thr", "THRESHOLD", -48, 0, -18), dbText), fmt(prExp("ratio", "RATIO", 1, 20, 4), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f:1", v); return std::string(b); }),
    fmt(prExp("atk", "ATTACK", 0.0001f, 0.2f, 0.01f), msText), fmt(prExp("rel", "RELEASE", 0.01f, 2, 0.2f), msText),
    fmt(pr("knee", "KNEE", 0, 18, 6), [](float v) { char b[16]; std::snprintf(b, 16, "%.0fDB", v); return std::string(b); }), fmt(pr("makeup", "MAKEUP", 0, 24, 0), dbText), pct("mix", "MIX", 1)},
-  7, 68, false, [] { return new CompModule(); }});
+  20, 68, false, [] { return new CompModule(); }});
 
 // a look-ahead peak limiter: the sound is held back a moment so the gain can come down before a peak arrives
 struct PeakLimiter {
@@ -222,29 +222,29 @@ struct PeakLimiter {
 // LIMITER: nothing gets past CEILING. DRIVE pushes it harder into it, for a louder, denser sound
 struct Limiter : Module {
   enum { DRIVE, CEIL, REL };
-  PeakLimiter lim; float peakDisp = -120;
+  PeakLimiter lim; float peakDisp = -120, peakR = -120;
   void render(int a, int b) override {
-    const float dv = dbToGain(e[DRIVE]), ce = dbToGain(e[CEIL]), rC = std::exp(-1.f / (std::max(0.005f, e[REL]) * sr)); float worst = 1, pk = 0;
-    for (int i = a; i < b; i++) { float l = in[0][0][i] * dv, r = in[0][1][i] * dv; lim.run(l, r, ce, rC); worst = std::min(worst, lim.g); out[0][0][i] = l; out[0][1][i] = r; pk = std::max(pk, std::max(std::fabs(l), std::fabs(r))); }
-    disp[0].store(toDb(worst), std::memory_order_relaxed); peakDisp = std::max(toDb(pk), peakDisp - 0.5f); disp[1].store(peakDisp, std::memory_order_relaxed);
+    const float dv = dbToGain(e[DRIVE]), ce = dbToGain(e[CEIL]), rC = std::exp(-1.f / (std::max(0.005f, e[REL]) * sr)); float worst = 1, pk = 0, pkR = 0;
+    for (int i = a; i < b; i++) { float l = in[0][0][i] * dv, r = in[0][1][i] * dv; lim.run(l, r, ce, rC); worst = std::min(worst, lim.g); out[0][0][i] = l; out[0][1][i] = r; pk = std::max(pk, std::fabs(l)); pkR = std::max(pkR, std::fabs(r)); }
+    disp[0].store(toDb(worst), std::memory_order_relaxed); peakDisp = std::max(toDb(pk), peakDisp - 0.5f); disp[1].store(peakDisp, std::memory_order_relaxed); this->peakR = std::max(toDb(pkR), this->peakR - 0.5f); disp[3].store(this->peakR, std::memory_order_relaxed);
   }
 };
 static Reg rLimiter(new ModuleDef{"limit", "LIMITER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {fmt(pr("drive", "DRIVE", 0, 24, 0), dbText), fmt(pr("ceil", "CEILING", -12, 0, -0.3f), dbText), fmt(prExp("rel", "RELEASE", 0.01f, 1, 0.1f), msText)},
-  7, 68, false, [] { return new Limiter(); }});
+  20, 68, false, [] { return new Limiter(); }});
 
 // MASTER: a light finishing chain for just before OUTPUT: rumble out, a gentle tone tilt, a little warmth,
 // soft glue compression, stereo width, and a limiter so nothing clips
 struct Master : Module {
   enum { LOWCUT, TILT, WARMTH, GLUE, WIDTH, CEIL };
-  Biquad hp, ls, hs; PeakLimiter lim; float env = -120, peakDisp = -120; float lastTilt = 99, lastCut = -1;
+  Biquad hp, ls, hs; PeakLimiter lim; float env = -120, peakDisp = -120, peakR = -120; float lastTilt = 99, lastCut = -1;
   void render(int a, int b) override {
     if (e[LOWCUT] != lastCut) { lastCut = e[LOWCUT]; hp.set(Biquad::HP, e[LOWCUT], 0.707f, sr); }
     if (e[TILT] != lastTilt) { lastTilt = e[TILT]; ls.setShelf(false, 700, -e[TILT] * 4, sr); hs.setShelf(true, 1400, e[TILT] * 4, sr); }   // TILT: darker to the left, brighter to the right
     const float drv = 1 + e[WARMTH] * 3, norm = 1 / std::tanh(drv), wet = e[WARMTH];
     const float thr = -4 - 16 * e[GLUE], ratio = 1 + 2 * e[GLUE], aC = std::exp(-1.f / (0.03f * sr)), rC = std::exp(-1.f / (0.3f * sr));
     const float ce = dbToGain(e[CEIL]), lrC = std::exp(-1.f / (0.08f * sr)), wd = e[WIDTH];
-    float worstL = 1, worstG = 0, pk = 0;
+    float worstL = 1, worstG = 0, pk = 0, pkR = 0;
     for (int i = a; i < b; i++) {
       float l = in[0][0][i], r = in[0][1][i];
       l = hs.run(ls.run(hp.run(l, 0), 0), 0); r = hs.run(ls.run(hp.run(r, 1), 1), 1);
@@ -253,10 +253,10 @@ struct Master : Module {
         const float gr = compGain(env, thr, ratio, 8); worstG = std::min(worstG, gr); const float g = dbToGain(gr - gr * 0.35f * e[GLUE]); l *= g; r *= g; }   // GLUE, with a little of it made back up
       const float m = (l + r) * 0.5f, sd = (l - r) * 0.5f * wd; l = m + sd; r = m - sd;   // WIDTH: 0 mono, 1 as it was, 2 wider
       lim.run(l, r, ce, lrC); worstL = std::min(worstL, lim.g);
-      out[0][0][i] = l; out[0][1][i] = r; pk = std::max(pk, std::max(std::fabs(l), std::fabs(r)));
+      out[0][0][i] = l; out[0][1][i] = r; pk = std::max(pk, std::fabs(l)); pkR = std::max(pkR, std::fabs(r));
     }
     disp[0].store(toDb(worstL), std::memory_order_relaxed); disp[2].store(worstG, std::memory_order_relaxed);
-    peakDisp = std::max(toDb(pk), peakDisp - 0.5f); disp[1].store(peakDisp, std::memory_order_relaxed);
+    peakDisp = std::max(toDb(pk), peakDisp - 0.5f); disp[1].store(peakDisp, std::memory_order_relaxed); this->peakR = std::max(toDb(pkR), this->peakR - 0.5f); disp[3].store(this->peakR, std::memory_order_relaxed);
   }
 };
 static Reg rMaster(new ModuleDef{"master", "MASTER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
@@ -264,5 +264,5 @@ static Reg rMaster(new ModuleDef{"master", "MASTER", Cat::Proc, {{"IN", PType::A
    fmt(pr("tilt", "TILT", -1, 1, 0), [](float v) { if (std::fabs(v) < 0.02f) return std::string("FLAT"); char b[16]; std::snprintf(b, 16, "%s %.0f%%", v < 0 ? "DARKER" : "BRIGHTER", std::fabs(v) * 100); return std::string(b); }),
    pct("warmth", "WARMTH", 0.2f), pct("glue", "GLUE", 0.3f),
    fmt(pr("width", "WIDTH", 0, 2, 1), [](float v) { return std::to_string((int)std::lround(v * 100)) + "%"; }), fmt(pr("ceil", "CEILING", -6, 0, -0.5f), dbText)},
-  7, 68, false, [] { return new Master(); }});
+  20, 68, false, [] { return new Master(); }});
 }  // namespace tb

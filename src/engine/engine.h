@@ -54,6 +54,7 @@ struct ModuleDef {
   std::vector<PortDef> ins, outs; std::vector<ParamDef> params;
   int vis = 0, width = 58; bool fixed = false;
   std::function<Module*()> make;
+  int panIdx = -1;   // PAN: every module with an audio output (but MIXER, which pans each channel) has one, added last
   int paramIndex(const std::string& k) const { for (size_t i = 0; i < params.size(); i++) if (params[i].key == k) return (int)i; return -1; }
   int inIndex(const std::string& n) const { for (size_t i = 0; i < ins.size(); i++) if (ins[i].name == n) return (int)i; return -1; }
   int outIndex(const std::string& n) const { for (size_t i = 0; i < outs.size(); i++) if (outs[i].name == n) return (int)i; return -1; }
@@ -79,7 +80,8 @@ public:
   float modv = 0;                  // this module's MOD output (-1..1)
   std::atomic<bool> mute{false}, solo{false};
   std::atomic<float> flash{0};     // lights the header when it fires (shown on screen)
-  std::atomic<unsigned> fires[8] = {};   // how many triggers each output has sent: the screen sends a pulse along its cables
+  std::atomic<unsigned> fires[8] = {};
+  float panNow = 0;   // PAN as last applied (the engine ramps from it)   // how many triggers each output has sent: the screen sends a pulse along its cables
   std::atomic<float> disp[64];     // values the screen draws (playheads, meters, shapes), written by the audio thread
   std::atomic<bool> clockedIn{false};   // something is patched into a CLOCK input
   float sr = 48000; double t = 0;  // sample rate and running time in seconds

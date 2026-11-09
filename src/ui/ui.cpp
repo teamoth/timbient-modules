@@ -223,10 +223,12 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     if (!smp && D(0) >= 0) { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, 12);
       const int n = (int)D(1); for (int k = 0; k < n && k < 30; k++) c.px(x + (int)std::lround(clampf(D(2 + k), 0, 1) * (w - 1)), y + 6 + (int)(std::rand() % 9) - 4, 4); }
   } else if (ty == "comp" || ty == "limit" || ty == "master") {   // how loud it is (top) and how much it's turning down (red, from the right)
-    const float lv = clampf((D(1) + 48) / 48, 0, 1), gr = clampf(-D(0) / 18, 0, 1);
-    c.rect(x, y + 1, w, 2, 21); c.rect(x, y + 1, (int)std::lround(lv * w), 2, D(1) > -1 ? 14 : 48);
-    c.rect(x, y + 4, w, 2, 21); if (gr > 0.003f) c.rect(x + w - (int)std::lround(gr * w), y + 4, (int)std::lround(gr * w), 2, 14);
-    if (ty == "master") { const float gg = clampf(-D(2) / 12, 0, 1); if (gg > 0.003f) c.rect(x + w - (int)std::lround(gg * w), y + 4, (int)std::lround(gg * w), 1, 12); }
+    const int bx = x + 10, bw = w - 10;
+    for (int s = 0; s < 2; s++) { const float lv = clampf((D(s ? 3 : 1) + 48) / 48, 0, 1); const int by = y + 2 + s * 7;   // L and R: how loud
+      c.text(s ? "R" : "L", x, by - 1, 18); c.rect(bx, by, bw, 2, 21); c.rect(bx, by, (int)std::lround(lv * bw), 2, D(s ? 3 : 1) > -1 ? 14 : 48); }
+    const float gr = clampf(-D(0) / 18, 0, 1); const int gy = y + 16;   // GR: how much it's turning down (red, from the right)
+    c.text("GR", x, gy - 1, 18); c.rect(bx, gy, bw, 2, 21); if (gr > 0.003f) c.rect(bx + bw - (int)std::lround(gr * bw), gy, (int)std::lround(gr * bw), 2, 14);
+    if (ty == "master") { const float gg = clampf(-D(2) / 12, 0, 1); if (gg > 0.003f) c.rect(bx + bw - (int)std::lround(gg * bw), gy + 1, (int)std::lround(gg * bw), 1, 12); }
   } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
     const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
       const int h = std::max(0, std::min(5, (int)std::lround(std::sqrt(D(4 + k)) * 5))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
@@ -258,12 +260,17 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     const float n = clampf((20 * std::log10(D(0) + 1e-6f) + 48) / 54, 0, 1); const int fw = (int)std::lround(n * w), un = (int)std::lround(w * 48 / 54.f);
     for (int i = 0; i < w; i += 2) c.px(x + i, y + 3, 18); for (int i = 0; i < fw; i++) { const int col = i >= un ? 14 : i > un * 0.75f ? 12 : 3; c.px(x + i, y + 1, col); c.px(x + i, y + 2, col); }
   } else if (ty == "out") {
-    const float n = clampf((20 * std::log10(D(0) + 1e-6f) + 48) / 48, 0, 1); const int fw = (int)(n * w);
-    for (int i = 0; i < w; i += 2) c.px(x + i, y + 3, 18); for (int i = 0; i < fw; i++) { const int col = i > w * 0.92f ? 14 : i > w * 0.7f ? 12 : 3; c.px(x + i, y + 1, col); c.px(x + i, y + 2, col); }
+    for (int s = 0; s < 2; s++) {   // the left and right meters, each with its loudest moment held for a second
+      const float n = clampf((20 * std::log10(D(s ? 3 : 0) + 1e-6f) + 48) / 48, 0, 1); const int bx = x + 5, bw = w - 5, fw = (int)(n * bw), by = y + 1 + s * 6;
+      float& hold = s ? u.holdR : u.holdL; float& ht = s ? u.holdRT : u.holdLT; if (n >= hold) { hold = n; ht = 1; } else if ((ht -= dt) <= 0) hold = std::max(n, hold - dt * 0.6f);
+      c.text(s ? "R" : "L", x, by - 1, 18);
+      for (int i = 0; i < bw; i += 2) c.px(bx + i, by + 3, 21);
+      for (int i = 0; i < fw; i++) { const int col = i > bw * 0.92f ? 14 : i > bw * 0.7f ? 12 : 3; c.px(bx + i, by, col); c.px(bx + i, by + 1, col); }
+      const int hx = bx + std::min(bw - 1, (int)(hold * bw)); if (hold > 0.02f) { c.px(hx, by, hold > 0.92f ? 14 : 9); c.px(hx, by + 1, hold > 0.92f ? 14 : 9); } }
     if (m->disp[1].load() > 0.5f) { const int sec = (int)m->disp[2].load(); char b[24]; std::snprintf(b, 24, "REC %d:%02d", sec / 60, sec % 60);
-      if (((int)(blink * 2)) % 2) c.rect(x + 2, y + 6, 3, 3, 14); c.text(b, x + 8, y + 5, 14); }
-    else c.text("NOT RECORDING", x + 2, y + 5, 18);
-    const int sy = y + 14, tx0 = x + 6, tw0 = w - 12; const float xf = clampf(m->p[2].load(), 0, 1); const int hx = tx0 + (int)std::lround(xf * tw0);
+      if (((int)(blink * 2)) % 2) c.rect(x + 2, y + 13, 3, 3, 14); c.text(b, x + 8, y + 12, 14); }
+    else c.text("NOT RECORDING", x + 2, y + 12, 18);
+    const int sy = y + 21, tx0 = x + 6, tw0 = w - 12; const float xf = clampf(m->p[2].load(), 0, 1); const int hx = tx0 + (int)std::lround(xf * tw0);
     c.text("A", x, sy - 2, xf < 0.5f ? 9 : 18); c.text("B", x + w - 3, sy - 2, xf > 0.5f ? 9 : 18);
     for (int i = 0; i <= tw0; i++) { c.px(tx0 + i, sy, 21); c.px(tx0 + i, sy + 1, 21); }
     for (float k : {0.f, 0.5f, 1.f}) c.px(tx0 + (int)std::lround(k * tw0), sy + 4, 18);
@@ -571,7 +578,7 @@ void Ui::pointerDown(float sx, float sy) {
   if (d->vis && ly >= g.vy && ly < g.vy + g.vh) {
     const int vx = lx - 3, vy = ly - g.vy;
     if (d->type == "keys") { keysPress(*u, vx, vy); return; }
-    if (d->type == "out" && vy >= 11) { drag.kind = D_XFADE; drag.m = u; pointerMove(sx, sy); return; }
+    if (d->type == "out" && vy >= 17) { drag.kind = D_XFADE; drag.m = u; pointerMove(sx, sy); return; }
     if (d->type == "sample" && (int)u->m->p[1].load() >= 2 && vy < 6) {   // KIT / MULTI: a sound's place
       const int k = std::min(UiMod::SLOTS - 1, std::max(0, lx - 3) / 6); u->shown = k; const bool has = !u->snd[k].id.empty(), multi = (int)u->m->p[1].load() == 3;
       Dropdown z; z.x = u->x - viewX + 4; z.y = u->y - viewY + g.vy + 6;

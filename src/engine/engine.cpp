@@ -1,5 +1,6 @@
 // Timbient native: the patch engine (see engine.h)
 #include "engine.h"
+#include "params.h"
 #include <algorithm>
 #include <chrono>
 
@@ -26,7 +27,14 @@ float midiOf(int i, int root, int scale) {
 }
 
 std::vector<const ModuleDef*>& allDefs() { static std::vector<const ModuleDef*> v; return v; }
-void registerDef(ModuleDef* d) { d->width += 8; allDefs().push_back(d); }   // +8: room for the - and + beside every slider
+void registerDef(ModuleDef* d) {
+  d->width += 8;   // room for the - and + beside every slider
+  bool audio = false; for (auto& o : d->outs) if (o.type == PType::Audio) audio = true;
+  if (audio && d->type != "mixer" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {
+    ParamDef q = pr("pan", "PAN", -1, 1, 0); q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };
+    d->panIdx = (int)d->params.size(); d->params.push_back(q); }
+  allDefs().push_back(d);
+}   // +8: room for the - and + beside every slider
 const ModuleDef* findDef(const std::string& type) { for (auto* d : allDefs()) if (d->type == type) return d; return nullptr; }
 
 Module* Engine::create(const std::string& type, int id) {
@@ -162,6 +170,12 @@ void Engine::block(float* L, float* R, int n) {
       if (off > at) { pos = at; m->render(at, off); at = off; }
       pos = at; m->trig(q.port[i], q.ev[i]); }
     if (at < n) { pos = at; m->render(at, n); }
+    if (d->panIdx >= 0) {   // PAN, ramped across the block so an LFO can sweep it smoothly. Voices move across; effects balance
+      const float p1 = clampf(m->e[d->panIdx], -1, 1), p0 = m->panNow; m->panNow = p1;
+      if (std::fabs(p0) > 1e-4f || std::fabs(p1) > 1e-4f) { const bool voice = d->cat == Cat::Voice;
+        for (auto& o : m->out) { float* L = o[0].data(); float* R = o[1].data();
+          for (int i = 0; i < n; i++) { const float pp = p0 + (p1 - p0) * (i + 1) / n, a = std::fabs(pp), l = L[i], r = R[i];
+            if (pp > 0) { L[i] = l * (1 - a); R[i] = voice ? r + l * a * 0.5f : r; } else { R[i] = r * (1 - a); L[i] = voice ? l + r * a * 0.5f : l; } } } } }
     m->t += n / sr; m->processed = blockNo;
     const bool silent = (m->mute.load(std::memory_order_relaxed) && d->cat != Cat::Out) || (anySolo && d->cat == Cat::Voice && !m->solo.load(std::memory_order_relaxed));
     if (silent) for (auto& o : m->out) for (auto& ch : o) std::fill(ch.begin(), ch.begin() + n, 0.f);
