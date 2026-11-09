@@ -5,7 +5,7 @@ namespace tb {
 static const char* PAL_HEX[49] = {"#07131d", "#0d2532", "#143d47", "#2a6a66", "#ece6cf", "#33251c", "#6a4a2f", "#a57b4b", "#8d918b", "#d2c7a6", "#2f6b3a", "#86b34f", "#e0a83c", "#1d2a1f", "#c2523f", "#000000", "#120f22", "#6fb3ad", "#9a9e9b", "#5f635e", "#1b1830", "#232328", "#4a4a4f", "#2e2e32", "#b39ddb", "#000000", "#16161a", "#3b3b41", "#d2c7a6", "#9a9e9b", "#232328", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#6fb3ad", "#b39ddb", "#86b34f", "#ddd0f2", "#ece6cf", "#6fb3ad"};
 constexpr int PAL_N = 49;
 struct Glyph { char c; const char* bits; };
-static const Glyph FONT[53] = {
+static const Glyph FONT[54] = {
   {'A', "010101111101101"},
   {'B', "110101110101110"},
   {'C', "011100100100011"},
@@ -59,6 +59,7 @@ static const Glyph FONT[53] = {
   {')', "010001001001010"},
   {',', "000000000010100"},
   {'=', "000111000111000"},
+  {'\'', "010010000000000"},   // an apostrophe: CAN'T, OUTPUT'S
 };
-constexpr int FONT_N = 53;
+constexpr int FONT_N = 54;
 }  // namespace tb

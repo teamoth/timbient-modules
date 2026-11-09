@@ -99,7 +99,7 @@ private:
   void nudge(UiMod* u, int k, int dir);
   void drawModule(Canvas& c, UiMod& u, float dt);
   void drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt);
-  void drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol = -1, float flow = 0);
+  void drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol = -1, float flow = 0, float period = 9, float dash = 2);
   void drawJack(Canvas& c, int x, int y, PType t, bool filled, bool lit);
   int jackY(int k) const { return 8 + k * 7 + 3; }
 public:

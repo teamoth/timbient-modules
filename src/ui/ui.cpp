@@ -103,14 +103,14 @@ static inline void cablePt(float ax, float ay, float bx, float by, float t, floa
   const float sag = std::min(28.f, std::hypot(bx - ax, by - ay) * 0.3f + 4), mx = (ax + bx) / 2, my = (ay + by) / 2 + sag;
   x = (1 - t) * (1 - t) * ax + 2 * (1 - t) * t * mx + t * t * bx; y = (1 - t) * (1 - t) * ay + 2 * (1 - t) * t * my + t * t * by;
 }
-void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol, float flow) {
+void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol, float flow, float period, float dash) {
   int px0 = ax, py0 = ay; float run = 0;
   for (int i = 1; i <= 20; i++) { float x, y; cablePt((float)ax, (float)ay, (float)bx, (float)by, i / 20.f, x, y); const int xi = (int)std::lround(x), yi = (int)std::lround(y);
     if (flowCol < 0) c.line(px0, py0, xi, yi, col);
     else {   // audio flowing: a lighter dash every 9 pixels, drifting from the output towards the input
       const int dx = xi - px0, dy = yi - py0, n = std::max(1, std::max(std::abs(dx), std::abs(dy))); const float step = std::hypot((float)dx, (float)dy) / n;
-      for (int s2 = 0; s2 <= n; s2++) { float ph = std::fmod(run + s2 * step - flow, 9.f); if (ph < 0) ph += 9.f;
-        c.px(px0 + (int)std::lround((float)dx * s2 / n), py0 + (int)std::lround((float)dy * s2 / n), ph < 2.f ? flowCol : col); }
+      for (int s2 = 0; s2 <= n; s2++) { float ph = std::fmod(run + s2 * step - flow, period); if (ph < 0) ph += period;
+        c.px(px0 + (int)std::lround((float)dx * s2 / n), py0 + (int)std::lround((float)dy * s2 / n), ph < dash ? flowCol : col); }
       run += n * step; }
     px0 = xi; py0 = yi; }
 }
@@ -384,7 +384,12 @@ void Ui::draw(Canvas& c, float dt) {
     int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = sockX(*b) - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + cb.toParam * ROW + 3) - viewY; } else { bx = inJackX(*b) - viewX; by = b->y + jackY(cb.toPort) - viewY; }
     const bool hi = (selT > 0 && sameCable(cb, sel)) || (drag.kind == D_MOVE && drag.splice >= 0 && drag.splice < (int)cables.size() && sameCable(cb, cables[drag.splice]));
     if (!cableMotion) { drawCable(c, ax, ay, bx, by, hi ? 4 : a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type)); continue; }
-    drawCable(c, ax, ay, bx, by, hi ? 4 : typeCol(cb.type), cb.type == PType::Audio && !hi ? 15 : -1, flowT);
+    if (cb.type == PType::Mod && !hi) {   // mod: close-set beads drifting slowly towards the setting, brighter the more it's moving it
+      UiMod* b = byId(cb.to); float amt = 0;
+      if (b && cb.toParam >= 0 && cb.toParam < (int)b->m->def->params.size()) { const ParamDef& q = b->m->def->params[cb.toParam];
+        amt = std::fabs(q.toNorm(b->m->eff[cb.toParam].load(std::memory_order_relaxed)) - q.toNorm(b->m->p[cb.toParam].load())); }
+      drawCable(c, ax, ay, bx, by, typeCol(cb.type), amt > 0.15f ? 15 : amt > 0.03f ? 9 : 21, flowT * 0.5f, 4, 1); }
+    else drawCable(c, ax, ay, bx, by, hi ? 4 : typeCol(cb.type), cb.type == PType::Audio && !hi ? 15 : -1, flowT);
     if (cb.type == PType::Trig) {   // each trigger sent: a pulse that runs along the cable to where it's going
       const unsigned n = cb.fromPort < 8 ? a->m->fires[cb.fromPort].load(std::memory_order_relaxed) : 0;
       if (n != cb.seen) { if (cb.seen != 0) for (unsigned k = 0; k < std::min(3u, n - cb.seen); k++) cb.pulses.push_back(-0.08f * k); cb.seen = n; }
