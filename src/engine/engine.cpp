@@ -207,13 +207,16 @@ void Engine::block(float* L, float* R, int n) {
         for (auto& o : m->out) { float* L = o[0].data(); float* R = o[1].data();
           for (int i = 0; i < n; i++) { const float pp = p0 + (p1 - p0) * (i + 1) / n, a = std::fabs(pp), l = L[i], r = R[i];
             if (pp > 0) { L[i] = l * (1 - a); R[i] = voice ? r + l * a * 0.5f : r; } else { R[i] = r * (1 - a); L[i] = voice ? l + r * a * 0.5f : l; } } } } }
+    for (size_t op = 0; op < d->outs.size() && op < 8; op++) if (d->outs[op].type == PType::Audio && op < m->out.size()) {
+      float pk = 0; for (int ch = 0; ch < 2; ch++) { const float* o = m->out[op][ch].data(); for (int i = 0; i < n; i += 4) pk = std::max(pk, std::fabs(o[i])); }
+      const float was = m->outLev[op].load(std::memory_order_relaxed); m->outLev[op].store(std::max(pk, was * 0.97f), std::memory_order_relaxed); }
     m->t += n / sr; m->processed = blockNo;
     if (m->retiring) {   // ringing out: once it's quiet (or after 20 s), fade its cables away; when none are left, it goes
       float pk = 0; for (auto& op : m->out) for (auto& ch : op) for (int i = 0; i < n; i++) pk = std::max(pk, std::fabs(ch[i]));
       m->retireT += n / sr; m->quietT = pk < 1e-4f ? m->quietT + n / sr : 0;
       if (m->quietT > 0.3f || m->retireT > 20) for (auto& k : cables) if (k.from == m->id && !k.dieAtZero) { k.gt = 0; k.dieAtZero = true; } }
     const bool silent = (m->mute.load(std::memory_order_relaxed) && d->cat != Cat::Out) || (anySolo && d->cat == Cat::Voice && !m->solo.load(std::memory_order_relaxed));
-    if (silent) for (auto& o : m->out) for (auto& ch : o) std::fill(ch.begin(), ch.begin() + n, 0.f);
+    if (silent) { for (auto& o : m->out) for (auto& ch : o) std::fill(ch.begin(), ch.begin() + n, 0.f); for (auto& lv : m->outLev) lv.store(0, std::memory_order_relaxed); }
     const float f = m->flash.load(std::memory_order_relaxed); if (f > 0) m->flash.store(std::max(0.f, f - n / sr), std::memory_order_relaxed);
   }
   // the master: a gentle compressor and a safety limit, then out to the sound card

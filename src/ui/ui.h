@@ -23,7 +23,7 @@ struct UiMod {
   std::string dev;                                                       // MIDI OUT: the device chosen (empty: the first one there)
   std::vector<std::pair<float, float>> dots; int hopSeen = 0;            // Random Hops: recent hops (age, height); Tombola uses dots too
 };
-struct UiCable { int from, fromPort, to, toPort, toParam; PType type; unsigned seen = 0; std::vector<float> pulses; };   // pulses: triggers on their way along it (0 at the output, 1 at the input)
+struct UiCable { int from, fromPort, to, toPort, toParam; PType type; unsigned seen = 0; std::vector<float> pulses; float flow = 0, lastV = 0, rate = 0; };   // flow: how far its moving pattern has gone   // pulses: triggers on their way along it (0 at the output, 1 at the input)
 
 // a list that drops down from a button: pick one item (an optional title row can't be picked)
 struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; int rows = 1, colW = 60; };   // sw: a palette colour shown beside each item
@@ -68,15 +68,17 @@ public:
   struct Browser { bool open = false; std::string dir; struct Entry { std::string name; bool folder; }; std::vector<Entry> items;
     int target = 0, slot = 0, sel = -1, playing = -1; float scroll = 0; std::string err;
     // about the picked sound (worked out on another thread): how long, mono or stereo, its rate, and what analyseSound found
+    bool autoPreview = true, wide = false;   // PREVIEW: tapping a sound plays it. <>: the wide browser, for long names
     std::string infoPath; bool infoReady = false, infoFailed = false; SoundInfo info; int channels = 0; float fileRate = 0; double secs = 0; } br;
-  std::function<void(const std::string&)> onInfo;   // look into a sound file (the answer comes back into br)
+  std::function<void(const std::string&)> onInfo;
+  std::function<void()> onBrowseChanged;   // PREVIEW or <> switched: remember it   // look into a sound file (the answer comes back into br)
   void openBrowser(int targetId, int slot, const std::string& dir);   // slot -1: the next empty place (KIT / MULTI)
   void browseTo(const std::string& dir);
   void browserScroll(float rows);
   void browserKey(int dir);               // up / down arrows: the next sound, heard straight away
   void closeBrowser();
   void browserPick(int i);
-  void browserPreview();   // PREVIEW (and Space): hear the picked sound, or stop it
+  void browserPreview();   // the PREVIEW switch (and Space)
   void browserLoad();      // LOAD IT (and Enter)             // a tap on a row: open a folder, or hear a sound (a second tap stops it)
   std::function<void(const std::string&)> onPreview;                     // play a file to the speakers (empty: stop)
   std::function<void(int, int, const std::string&)> onBrowseLoad;        // put a file in a module's place
@@ -106,7 +108,7 @@ private:
   void nudge(UiMod* u, int k, int dir);
   void drawModule(Canvas& c, UiMod& u, float dt);
   void drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt);
-  void drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol = -1, float flow = 0, float period = 9, float dash = 2);
+  void drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol = -1, float flow = 0, float period = 9, float dash = 2, int tailCol = -1);
   void drawJack(Canvas& c, int x, int y, PType t, bool filled, bool lit);
   int jackY(int k) const { return 8 + k * 7 + 3; }
 public:

@@ -49,19 +49,21 @@ void Ui::browserScroll(float rows) {
 void Ui::browserPick(int i) {   // a tap on a row: open a folder, or hear a sound (a second tap stops it)
   if (i < 0 || i >= (int)br.items.size()) return; const auto& e = br.items[i];
   if (e.folder) { if (e.name == "..") browseTo(parentOf(br.dir)); else browseTo(joinPath(br.dir, e.name)); return; }
-  br.sel = i;   // a tap picks it and stops whatever was being heard; PREVIEW plays it
+  br.sel = i;   // a tap picks it: whatever was playing stops, and with PREVIEW on, this one plays
   if (br.playing >= 0 && onPreview) onPreview(""); br.playing = -1;
+  if (br.autoPreview && onPreview) { onPreview(joinPath(br.dir, e.name)); br.playing = i; }
   const std::string p = joinPath(br.dir, e.name); if (p != br.infoPath) { br.infoPath = p; br.infoReady = br.infoFailed = false; if (onInfo) onInfo(p); }
 }
 void Ui::browserLoad() {   // LOAD IT: stop the preview, and put the sound in the module
   if (br.sel < 0 || br.sel >= (int)br.items.size() || br.items[br.sel].folder) return;
   if (br.playing >= 0 && onPreview) onPreview(""); br.playing = -1;
-  if (onBrowseLoad) onBrowseLoad(br.target, br.slot, joinPath(br.dir, br.items[br.sel].name));
+  const int t = br.target, sl = br.slot; const std::string p = joinPath(br.dir, br.items[br.sel].name); closeBrowser();   // loaded: the browser closes
+  if (onBrowseLoad) onBrowseLoad(t, sl, p);
 }
-void Ui::browserPreview() {
-  if (br.sel < 0 || br.sel >= (int)br.items.size() || br.items[br.sel].folder) return;
-  if (br.playing >= 0) { if (onPreview) onPreview(""); br.playing = -1; return; }
-  if (onPreview) onPreview(joinPath(br.dir, br.items[br.sel].name)); br.playing = br.sel;
+void Ui::browserPreview() {   // the PREVIEW switch: whether tapping a sound plays it
+  br.autoPreview = !br.autoPreview; if (!br.autoPreview && br.playing >= 0 && onPreview) { onPreview(""); br.playing = -1; }
+  else if (br.autoPreview && br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder && onPreview) { onPreview(joinPath(br.dir, br.items[br.sel].name)); br.playing = br.sel; }
+  if (onBrowseChanged) onBrowseChanged();
 }
 
 void Ui::browserKey(int dir) {
@@ -74,12 +76,12 @@ void Ui::browserKey(int dir) {
 void Ui::drawBrowser(Canvas& c) {
   if (!br.open) return;
   if (br.playing >= 0 && eng.previewAt.load() < 0) br.playing = -1;   // it finished
-  brW = std::min(c.W - 8, 190); brH = std::min(c.H - TOP - 8, 204); brX = (c.W - brW) / 2; brY = TOP + std::max(2, (c.H - TOP - brH) / 3);
+  brW = br.wide ? c.W - 8 : std::min(c.W - 8, 190); brH = std::min(c.H - TOP - 8, 204); brX = (c.W - brW) / 2; brY = TOP + std::max(2, (c.H - TOP - brH) / 3);
   const int x = brX, y = brY, w = brW, h = brH;
   c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, 15); c.frame(x, y, w, h, 21);
   UiMod* t = byId(br.target);
   std::string title = "SOUNDS"; if (t) title += " FOR " + t->m->def->name + (br.slot >= 0 && t->m->def->type == "sample" && t->m->p[1].load() >= 2 ? " PLACE " + std::to_string(br.slot + 1) : "");
-  c.text(title, x + 4, y + 3, 18); c.text("x", x + w - 6, y + 3, 9);
+  c.text(title, x + 4, y + 3, 18); c.text("x", x + w - 6, y + 3, 9); c.text(br.wide ? "><" : "<>", x + w - 18, y + 3, 9);   // <>: wider, for long names
   std::string d = upper(br.dir); const int room = (w - 8) / 4; if ((int)d.size() > room) d = ".." + d.substr(d.size() - room + 2);
   c.text(d, x + 4, y + 11, 9);
   // the list
@@ -88,10 +90,11 @@ void Ui::drawBrowser(Canvas& c) {
   const int first = (int)br.scroll;
   for (int r = 0; r < brRows && first + r < (int)br.items.size(); r++) { const int i = first + r; const auto& e = br.items[i]; const int ry = ly + r * 8;
     if (i == br.sel) c.rect(x + 3, ry - 1, w - 6, 8, 18);
-    std::string n = e.name == ".." ? "< UP A FOLDER" : (e.folder ? "> " : "") + upper(e.name); const int nroom = (w - 16) / 4; if ((int)n.size() > nroom) n = n.substr(0, nroom - 2) + "..";
+    std::string n = e.name == ".." ? "< UP A FOLDER" : (e.folder ? "> " : "") + upper(e.name); const int nroom = (w - 16) / 4;
+    if ((int)n.size() > nroom) { const int tail = std::max(8, nroom * 2 / 5); n = n.substr(0, nroom - tail - 2) + ".." + n.substr(n.size() - tail); }   // long names keep their end, where they differ
     c.text(n, x + 6, ry + 1, i == br.playing ? 4 : e.folder ? 7 : i == br.sel ? 15 : 9);
     if (i == br.playing) { const float at = std::max(0.f, eng.previewAt.load()); c.rect(x + 6, ry + 6, (int)std::lround(at * (w - 14)), 1, 4); } }
-  if (!br.err.empty()) c.text(br.err, x + 6, ly + (br.items.size() > 1 ? (int)br.items.size() * 8 + 2 : 1), 9);
+  if (!br.err.empty()) c.text(br.err, x + 6, ly + (int)br.items.size() * 8 + 3, 9);   // under the rows (and clear of UP A FOLDER)
   if ((int)br.items.size() > brRows) {   // where you are in a long list
     const int th = std::max(3, lh * brRows / (int)br.items.size()), ty = ly + (int)((lh - th) * br.scroll / std::max(1.f, (float)br.items.size() - brRows));
     c.rect(x + w - 5, ty, 1, th, 9); }
@@ -121,24 +124,22 @@ void Ui::drawBrowser(Canvas& c) {
   // the buttons
   const int by = y + h - 19; auto btn = [&](int bx, int bw, const std::string& l, int col) { c.frame(bx, by - 1, bw, 9, col); c.text(l, bx + (bw - Canvas::tw(l)) / 2, by + 1, col); };
   const bool can = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
-  btn(x + 4, 35, br.playing >= 0 ? "STOP" : "PREVIEW", can ? 9 : 21);
-  btn(x + 42, 35, "LOAD IT", can ? 4 : 21);
-  btn(x + w - 72, 33, "FOLDER..", 9); btn(x + w - 37, 33, "SYSTEM..", 9);
-  c.text("TAP A SOUND, THEN PREVIEW. SPACE PREVIEWS", x + 4, y + h - 9, 21);
+  if (br.autoPreview) { c.rect(x + 4, by - 1, 51, 9, 17); c.text("PREVIEW ON", x + 10, by + 1, 15); } else btn(x + 4, 51, "PREVIEW OFF", 9);   // a switch
+  btn(x + 58, 35, "LOAD IT", can ? 4 : 21);
+  c.text(br.autoPreview ? "TAP A SOUND TO HEAR IT. ENTER LOADS" : "TAP A SOUND TO PICK IT. ENTER LOADS", x + 4, y + h - 9, 21);
 }
 
 bool Ui::browserDown(float sx, float sy) {   // true if the tap was inside the browser
   const int x = brX, y = brY, w = brW, h = brH; if (sx < x || sx >= x + w || sy < y || sy >= y + h) return false;
   if (sy < y + 10 && sx >= x + w - 9) { closeBrowser(); return true; }
+  if (sy < y + 10 && sx >= x + w - 21 && sx < x + w - 10) { br.wide = !br.wide; if (onBrowseChanged) onBrowseChanged(); return true; }
   const int ly = y + 19, lh = h - 19 - 22 - INFO_H;
   if (sy >= ly && sy < ly + lh) { drag.kind = D_BROWSE; drag.n0 = br.scroll; drag.k = (int)br.scroll + (int)((sy - ly) / 8); return true; }   // a tap picks; a drag scrolls
   const int by = y + h - 19;
   if (sy >= by - 1 && sy < by + 8) {
     const bool can = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
-    if (sx >= x + 4 && sx < x + 39 && can) browserPreview();
-    else if (sx >= x + 42 && sx < x + 77 && can) { browserLoad(); }
-    else if (sx >= x + w - 72 && sx < x + w - 39) { if (onBrowseFolder) onBrowseFolder(); }
-    else if (sx >= x + w - 37 && sx < x + w - 4) { const int id = br.target, sl = br.slot; closeBrowser(); if (onBrowseFile) onBrowseFile(id, sl); }
+    if (sx >= x + 4 && sx < x + 55) browserPreview();
+    else if (sx >= x + 58 && sx < x + 93 && can) { browserLoad(); }
   }
   return true;
 }

@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.17.0";
+static const char* VERSION = "0.18.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -194,6 +194,8 @@ int main(int argc, char** argv) {
     return SDL_EnumerateDirectory(dir.c_str(), [](void* ud, const char* d, const char* name) -> SDL_EnumerationResult {
       Ctx* c = (Ctx*)ud; SDL_PathInfo info; std::string full = d; if (!full.empty() && full.back() != '/' && full.back() != '\\') full += "/"; full += name;
       const bool folder = SDL_GetPathInfo(full.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY; c->out->push_back({name, folder}); return SDL_ENUM_CONTINUE; }, &ctx); };
+  ui.br.autoPreview = settings.num("autoPreview", 1) > 0.5; ui.br.wide = settings.num("browseWide", 0) > 0.5;
+  ui.onBrowseChanged = [&] { settings.set("autoPreview", Json::number(ui.br.autoPreview ? 1 : 0)); settings.set("browseWide", Json::number(ui.br.wide ? 1 : 0)); saveSettings(); };
   ui.onBrowseFolder = [&]() { const std::string d = ui.br.dir; SDL_ShowOpenFolderDialog(onFolderDialog, nullptr, win, d.empty() ? nullptr : d.c_str(), false); };
   ui.onBrowseFile = [&](int id, int slot) { const UiMod* u = ui.byId(id); const bool many = slot < 0 && u && u->m->def->type == "sample";
     SDL_ShowOpenFileDialog(onAudioDialog, (void*)(((intptr_t)id << 8) | (intptr_t)(slot + 1)), win, AUDIO_FILTER, 1, nullptr, many); };

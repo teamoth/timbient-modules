@@ -88,12 +88,18 @@ static int trShown(Module* m) { int last = -1; for (int i = Module::SEQ_MAX - 1;
 static int trRows(Module* m) { return std::min(16, trShown(m)); }   // the Tracker grows with the rows in use, up to 16; beyond that it scrolls
 // PAN is added as a module's last setting, but shown just above WIDTH (or LEVEL), where it belongs
 static int panRowAt(const ModuleDef* d) { if (d->panIdx < 0) return -1; int t = d->paramIndex("width"); if (t < 0) t = d->paramIndex("level"); return t < 0 ? d->panIdx : t; }
-static int rowOf(const ModuleDef* d, int j) { const int p = d->panIdx, t = panRowAt(d); if (p < 0 || t == p) return j; if (j == p) return t; return j >= t && j < p ? j + 1 : j; }
-static int paramOfRow(const ModuleDef* d, int r) { const int p = d->panIdx, t = panRowAt(d); if (p < 0 || t == p) return r; if (r == t) return p; return r > t && r <= p ? r - 1 : r; }
+// rows that don't apply right now are hidden (STRETCH: LOAD FILE and POSITION only show with SOURCE on FILE)
+static bool hiddenRow(const UiMod& u, int j) { const ParamDef& q = u.m->def->params[j]; return q.only == "file" && u.m->def->type == "stretch" && u.m->p[0].load() < 0.5f; }
+static std::vector<int> rowOrder(const UiMod& u) { const ModuleDef* d = u.m->def; std::vector<int> o; const int p = d->panIdx, t = panRowAt(d);
+  for (int j = 0; j < (int)d->params.size(); j++) { if (j == p && t != p) continue; if (j == t && p >= 0 && t != p && !hiddenRow(u, p)) o.push_back(p); if (!hiddenRow(u, j)) o.push_back(j); }
+  return o; }
+static int rowOf(const UiMod& u, int j) { const auto o = rowOrder(u); for (int r = 0; r < (int)o.size(); r++) if (o[r] == j) return r; return -1; }
+static int paramOfRow(const UiMod& u, int r) { const auto o = rowOrder(u); return r >= 0 && r < (int)o.size() ? o[r] : -1; }
+static int rowY(const UiMod& u, int j) { return std::max(0, rowOf(u, j)); }   // a cable to a hidden row lands on the first one
 // effects can be bypassed: a straight audio IN to an audio OUT (not MIXER, which has four)
 static bool bypassable(const ModuleDef* d) { return d->cat == Cat::Proc && d->type != "mixer" && !d->ins.empty() && d->ins[0].type == PType::Audio && !d->outs.empty() && d->outs[0].type == PType::Audio; }
 Ui::Geom Ui::geom(const UiMod& u) const {
-  const ModuleDef* d = u.m->def; const int jr = (int)std::max(d->ins.size(), d->outs.size()), np = u.fold ? 0 : (int)d->params.size();
+  const ModuleDef* d = u.m->def; const int jr = (int)std::max(d->ins.size(), d->outs.size()), np = u.fold ? 0 : (int)rowOrder(u).size();
   const int vh = d->type == "tracker" && d->vis ? trRows(u.m) * 6 + 1 : d->vis;
   Geom g; g.jr = jr; g.vh = vh; g.vy = HEAD + jr * ROW + (vh ? 1 : 0); g.py = HEAD + jr * ROW + (vh ? vh + 2 : 0); g.h = g.py + np * ROW + FOOT; g.w = d->width; return g;
 }
@@ -111,11 +117,11 @@ Ui::JackHit Ui::jackAt(int wx, int wy, int tol) {
     for (size_t k = 0; k < d->ins.size(); k++) { const int jx = inJackX(u), jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol && !covered(i, jx, jy)) return {&u, false, (int)k, d->ins[k].type, jx, jy}; }
     for (size_t k = 0; k < d->outs.size(); k++) { const int jx = outJackX(u), jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol && !covered(i, jx, jy)) return {&u, true, (int)k, d->outs[k].type, jx, jy}; }
     if (!u.fold) { const Geom g = geom(u); const int st = std::min(tol, 3);   // the mod socket beside each setting that can be moved
-      for (size_t k = 0; k < d->params.size(); k++) { if (!modulatable(d->params[k])) continue; const int jx = sockX(u), jy = u.y + g.py + rowOf(d, (int)k) * ROW + 3;
+      for (size_t k = 0; k < d->params.size(); k++) { if (!modulatable(d->params[k]) || rowOf(u, (int)k) < 0) continue; const int jx = sockX(u), jy = u.y + g.py + rowOf(u, (int)k) * ROW + 3;
         if (std::abs(wx - jx) <= st && std::abs(wy - jy) <= st && !covered(i, jx, jy)) { JackHit h{&u, false, -1, PType::Mod, jx, jy}; h.param = (int)k; return h; } } } }
   return {};
 }
-int Ui::paramAt(UiMod* u, int ly) { const Geom g = geom(*u); const int j = (ly - g.py) / ROW; return !u->fold && ly >= g.py && j >= 0 && j < (int)u->m->def->params.size() ? paramOfRow(u->m->def, j) : -1; }
+int Ui::paramAt(UiMod* u, int ly) { const Geom g = geom(*u); const int j = (ly - g.py) / ROW; return !u->fold && ly >= g.py && j >= 0 ? paramOfRow(*u, j) : -1; }
 
 // ---------------- drawing ----------------
 // a cable hangs as a curve that sags between its ends (the same shape as the web version)
@@ -123,21 +129,21 @@ static inline void cablePt(float ax, float ay, float bx, float by, float t, floa
   const float sag = std::min(28.f, std::hypot(bx - ax, by - ay) * 0.3f + 4), mx = (ax + bx) / 2, my = (ay + by) / 2 + sag;
   x = (1 - t) * (1 - t) * ax + 2 * (1 - t) * t * mx + t * t * bx; y = (1 - t) * (1 - t) * ay + 2 * (1 - t) * t * my + t * t * by;
 }
-void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol, float flow, float period, float dash) {
+void Ui::drawCable(Canvas& c, int ax, int ay, int bx, int by, int col, int flowCol, float flow, float period, float dash, int tailCol) {
+  // two pixels thick, so what flows along it can be seen. Flowing: dashes moving from the output towards the input, a bright head at the front
   int px0 = ax, py0 = ay; float run = 0;
   for (int i = 1; i <= 20; i++) { float x, y; cablePt((float)ax, (float)ay, (float)bx, (float)by, i / 20.f, x, y); const int xi = (int)std::lround(x), yi = (int)std::lround(y);
-    if (flowCol < 0) c.line(px0, py0, xi, yi, col);
-    else {   // audio flowing: a lighter dash every 9 pixels, drifting from the output towards the input
-      const int dx = xi - px0, dy = yi - py0, n = std::max(1, std::max(std::abs(dx), std::abs(dy))); const float step = std::hypot((float)dx, (float)dy) / n;
-      for (int s2 = 0; s2 <= n; s2++) { float ph = std::fmod(run + s2 * step - flow, period); if (ph < 0) ph += period;
-        c.px(px0 + (int)std::lround((float)dx * s2 / n), py0 + (int)std::lround((float)dy * s2 / n), ph < dash ? flowCol : col); }
-      run += n * step; }
-    px0 = xi; py0 = yi; }
+    const int dx = xi - px0, dy = yi - py0, n = std::max(1, std::max(std::abs(dx), std::abs(dy))); const float step = std::hypot((float)dx, (float)dy) / n;
+    const int ox = std::abs(dx) > std::abs(dy) ? 0 : 1, oy = 1 - ox;
+    for (int s2 = 0; s2 <= n; s2++) { int cc = col;
+      if (flowCol >= 0) { float ph = std::fmod(run + s2 * step - flow, period); if (ph < 0) ph += period; if (ph < dash) cc = ph >= dash - 1 ? flowCol : tailCol >= 0 ? tailCol : col; }
+      const int qx = px0 + (int)std::lround((float)dx * s2 / n), qy = py0 + (int)std::lround((float)dy * s2 / n); c.px(qx, qy, cc); c.px(qx + ox, qy + oy, cc); }
+    run += n * step; px0 = xi; py0 = yi; }
 }
 bool Ui::cableEnds(const UiCable& cb, float& ax, float& ay, float& bx, float& by) {
   UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) return false;
   ax = (float)outJackX(*a); ay = (float)(a->y + jackY(cb.fromPort));
-  if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = (float)sockX(*b); by = (float)(b->y + (b->fold ? g.h - FOOT : g.py + rowOf(b->m->def, cb.toParam) * ROW + 3)); }
+  if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = (float)sockX(*b); by = (float)(b->y + (b->fold ? g.h - FOOT : g.py + rowY(*b, cb.toParam) * ROW + 3)); }
   else { bx = (float)inJackX(*b); by = (float)(b->y + jackY(cb.toPort)); }
   return true;
 }
@@ -363,7 +369,8 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   if (d->vis) drawDisplay(c, u, x + 3, y + g.vy, w - 6, dt);
   const int root = eng.key.root.load(); const bool clocked = u.m->clockedIn.load();
   for (size_t j = 0; j < (u.fold ? 0 : d->params.size()); j++) {
-    const ParamDef& q = d->params[j]; const int ry = y + g.py + rowOf(d, (int)j) * ROW; const float v = u.m->p[j].load(); const bool active = drag.kind == D_PARAM && drag.m == &u && drag.k == (int)j;
+    if (rowOf(u, (int)j) < 0) continue;
+    const ParamDef& q = d->params[j]; const int ry = y + g.py + rowOf(u, (int)j) * ROW; const float v = u.m->p[j].load(); const bool active = drag.kind == D_PARAM && drag.m == &u && drag.k == (int)j;
     if (q.act) { const bool recOn = d->type == "out" && q.key == "rec" && u.m->disp[1].load() > 0.5f; c.text(recOn ? "STOP + SAVE" : q.label, x + 3, ry + 1, recOn ? 14 : 9); c.text(">", x + w - 6, ry + 1, 9); continue; }
     if (q.play) { const bool on = v > 0.5f; c.rect(x + 3, ry, w - 6, 7, on ? 17 : 21); const int ix = x + 6, iy = ry + 1;
       if (on) c.rect(ix, iy + 1, 3, 3, 15); else for (int k = 0; k < 3; k++) for (int jj = k; jj < 5 - k; jj++) c.px(ix + k, iy + jj, 9);
@@ -404,20 +411,28 @@ void Ui::draw(Canvas& c, float dt) {
   for (auto& cb : cables) {
     UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) continue;
     const int ax = outJackX(*a) - viewX, ay = a->y + jackY(cb.fromPort) - viewY;
-    int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = sockX(*b) - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + rowOf(b->m->def, cb.toParam) * ROW + 3) - viewY; } else { bx = inJackX(*b) - viewX; by = b->y + jackY(cb.toPort) - viewY; }
+    int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = sockX(*b) - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + rowY(*b, cb.toParam) * ROW + 3) - viewY; } else { bx = inJackX(*b) - viewX; by = b->y + jackY(cb.toPort) - viewY; }
     const bool hi = (selT > 0 && sameCable(cb, sel)) || (drag.kind == D_MOVE && drag.splice >= 0 && drag.splice < (int)cables.size() && sameCable(cb, cables[drag.splice]));
     if (!cableMotion) { drawCable(c, ax, ay, bx, by, hi ? 4 : a->m->flash.load() > 0 && cb.type == PType::Trig ? 46 : typeCol(cb.type)); continue; }
-    if (cb.type == PType::Mod && !hi) {   // mod: close-set beads drifting slowly towards the setting, brighter the more it's moving it
-      UiMod* b = byId(cb.to); float amt = 0;
+    if (cb.type == PType::Audio && !hi) {   // audio: dashes that run faster, longer and brighter the louder it is; still when silent
+      const float lin = cb.fromPort < 8 ? a->m->outLev[cb.fromPort].load(std::memory_order_relaxed) : 0, n = clampf((20 * std::log10(lin + 1e-6f) + 48) / 48, 0, 1);
+      if (n < 0.03f) drawCable(c, ax, ay, bx, by, typeCol(cb.type));
+      else { cb.flow += dt * (5 + 40 * n); drawCable(c, ax, ay, bx, by, typeCol(cb.type), n > 0.25f ? 15 : 9, cb.flow, 12, 2 + std::lround(4 * n), n > 0.5f ? 9 : 21); } }
+    else if (cb.type == PType::Mod && !hi) {   // mod: little arrows that speed up as the signal changes faster, brighter the further it's moving the setting
+      float v = 0;
       if (b && cb.toParam >= 0 && cb.toParam < (int)b->m->def->params.size()) { const ParamDef& q = b->m->def->params[cb.toParam];
-        amt = std::fabs(q.toNorm(b->m->eff[cb.toParam].load(std::memory_order_relaxed)) - q.toNorm(b->m->p[cb.toParam].load())); }
-      drawCable(c, ax, ay, bx, by, typeCol(cb.type), amt > 0.15f ? 15 : amt > 0.03f ? 9 : 21, flowT * 0.5f, 4, 1); }
-    else drawCable(c, ax, ay, bx, by, hi ? 4 : typeCol(cb.type), cb.type == PType::Audio && !hi ? 15 : -1, flowT);
+        v = q.toNorm(b->m->eff[cb.toParam].load(std::memory_order_relaxed)) - q.toNorm(b->m->p[cb.toParam].load()); }
+      if (dt > 0) cb.rate += (std::fabs(v - cb.lastV) / dt - cb.rate) * std::min(1.f, dt * 4); cb.lastV = v;
+      const float amt = std::fabs(v); cb.flow += dt * (3 + std::min(60.f, cb.rate * 120));
+      drawCable(c, ax, ay, bx, by, typeCol(cb.type), amt > 0.05f ? 15 : 9, cb.flow, 7, 3, 21); }
+    else drawCable(c, ax, ay, bx, by, hi ? 4 : typeCol(cb.type));
     if (cb.type == PType::Trig) {   // each trigger sent: a pulse that runs along the cable to where it's going
       const unsigned n = cb.fromPort < 8 ? a->m->fires[cb.fromPort].load(std::memory_order_relaxed) : 0;
       if (n != cb.seen) { if (cb.seen != 0) for (unsigned k = 0; k < std::min(3u, n - cb.seen); k++) cb.pulses.push_back(-0.08f * k); cb.seen = n; }
       const float len = std::max(20.f, std::hypot((float)(bx - ax), (float)(by - ay)) * 1.2f), sp = 260.f / len * dt;   // about 260 pixels a second
       for (auto& t : cb.pulses) { t += sp; if (t < 0 || t > 1) continue; float x, y; cablePt((float)ax, (float)ay, (float)bx, (float)by, t, x, y);
+        for (int k = 3; k >= 1; k--) { const float tt = t - k * 0.025f; if (tt < 0) continue; float tx, ty; cablePt((float)ax, (float)ay, (float)bx, (float)by, tt, tx, ty);   // a fading tail behind it
+          c.px((int)std::lround(tx), (int)std::lround(ty), k == 1 ? 46 : k == 2 ? 9 : 18); }
         const int xi = (int)std::lround(x), yi = (int)std::lround(y); c.rect(xi - 1, yi - 1, 3, 3, 46); c.px(xi, yi, 15); }
       cb.pulses.erase(std::remove_if(cb.pulses.begin(), cb.pulses.end(), [](float t) { return t > 1; }), cb.pulses.end());
       if (cb.pulses.size() > 24) cb.pulses.erase(cb.pulses.begin(), cb.pulses.end() - 24); }
@@ -632,7 +647,7 @@ void Ui::pointerDown(float sx, float sy) {
     if (q.act) {
       if (d->type == "tracker") { u->hold = 6; trShow(*u, u->m->cursor.load()); }
       if (d->type == "tracker" && q.key == "clear") {   // ask first: this wipes every step
-        Dropdown z; z.items = {"CLEAR EVERY STEP?", "YES, CLEAR ALL", "NO, KEEP THEM"}; z.title = 0; z.danger = 1; z.x = u->x - viewX + 8; z.y = u->y - viewY + g.py + rowOf(u->m->def, pj) * ROW + 4;
+        Dropdown z; z.items = {"CLEAR EVERY STEP?", "YES, CLEAR ALL", "NO, KEEP THEM"}; z.title = 0; z.danger = 1; z.x = u->x - viewX + 8; z.y = u->y - viewY + g.py + rowY(*u, pj) * ROW + 4;
         z.pick = [this, u](int i) { if (i == 1) { eng.action(u->m->id, "clear"); u->scroll = 0; status("TRACKER CLEARED"); } }; openDropdown(z); return; }
       if (d->type == "listen" && q.key == "use") {   // set the app's key and scale to what it hears
         if (u->m->disp[2].load() <= 0) { status("NOTHING HEARD YET"); return; }
@@ -642,7 +657,7 @@ void Ui::pointerDown(float sx, float sy) {
       eng.action(u->m->id, q.key); return; }
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }
-      Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + rowOf(u->m->def, pj) * ROW + 4;
+      Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + rowY(*u, pj) * ROW + 4;
       l.pick = [this, u, pj](int i) { u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i]); changed(); };
       openDropdown(l); return; }
     if (lx >= minusX(*u, pj) - 2 && lx < minusX(*u, pj) + 5) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = -1; drag.holdT = 0; nudge(u, pj, -1); return; }
@@ -713,7 +728,7 @@ void Ui::pointerUp(float sx, float sy) {
     static const char* SMP[5] = {"QUARTER SPEED  -24", "HALF SPEED  -12", "NORMAL SPEED  0", "DOUBLE SPEED  +12", "4X SPEED  +24"};
     static const char* GRN[5] = {"-24  GRAINS 2 OCT DOWN", "-12  GRAINS 1 OCT DOWN", "0  AS RECORDED", "+12  GRAINS 1 OCT UP", "+24  GRAINS 2 OCT UP"};
     static const char* NRM[5] = {"-24  2 OCTAVES DOWN", "-12  1 OCTAVE DOWN", "0", "+12  1 OCTAVE UP", "+24  2 OCTAVES UP"};
-    Dropdown z; z.x = d.m->x - viewX + 30; z.y = d.m->y - viewY + geom(*d.m).py + rowOf(d.m->m->def, k) * ROW + 4;
+    Dropdown z; z.x = d.m->x - viewX + 30; z.y = d.m->y - viewY + geom(*d.m).py + rowY(*d.m, k) * ROW + 4;
     for (int i = 0; i < 5; i++) { z.items.push_back(smp ? SMP[i] : grains ? GRN[i] : NRM[i]); if ((int)std::lround(d.m->m->p[k].load()) == V[i]) z.cur = i; }
     z.pick = [this, id, k, smp](int i) { UiMod* t = byId(id); if (!t) return; t->m->p[k].store((float)V[i]);
       status(t->m->def->name + " " + t->m->def->params[k].label + " " + (smp ? std::string(SMP[i]) : std::to_string(V[i])), 2); changed(); };

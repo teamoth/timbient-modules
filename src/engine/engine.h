@@ -82,6 +82,7 @@ public:
   std::atomic<float> flash{0};     // lights the header when it fires (shown on screen)
   std::atomic<unsigned> fires[8] = {};
   float panNow = 0;   // PAN as last applied (the engine ramps from it)
+  std::atomic<float> outLev[8] = {};   // how loud each audio output is (peak, falling slowly): the screen shows it flowing along the cables
   std::atomic<bool> bypass{false}; float byNow = 0;   // BYPASS: an effect fades over to its dry input
   bool retiring = false; float retireT = 0, quietT = 0;   // being taken away, letting its tail ring out   // how many triggers each output has sent: the screen sends a pulse along its cables
   std::atomic<float> disp[64];     // values the screen draws (playheads, meters, shapes), written by the audio thread
