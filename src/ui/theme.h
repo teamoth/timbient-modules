@@ -9,7 +9,7 @@
 
 namespace tb {
 
-struct Theme { std::string bg = "#000000", mod = "#3b3b41", audio = "#5f8f8a", trig = "#8f84a8", modc = "#7f9467"; };   // cables: soft by default
+struct Theme { std::string bg = "#1c1915", mod = "#3b352d", audio = "#8e9b6b", trig = "#c39a69", modc = "#a8786c"; };   // earthy by default: umber, warm stone, moss, ochre, clay
 using Choice = std::pair<const char*, const char*>;
 inline const std::vector<Choice>& bgChoices() { static const std::vector<Choice> v = {{"POND", "pond"}, {"BLACK", "#000000"}, {"CHARCOAL", "#1a1a1d"}, {"SLATE", "#232c33"}, {"NAVY", "#111a2e"}, {"FOREST", "#13201a"}, {"PLUM", "#221624"},
   {"CLAY", "#3a2a24"}, {"MIDNIGHT", "#0b1020"}, {"EARTH", "#2a1d18"}, {"STEEL", "#5c5f66"}, {"LIGHT GREY", "#c9c9ce"}, {"PAPER", "#ebe6da"},
@@ -19,16 +19,22 @@ inline const std::vector<Choice>& modChoices() { static const std::vector<Choice
   {"DARK MOSS", "#0f1a10"}, {"DARK GREY", "#2b2b2b"}, {"RUST", "#4a3328"}, {"PLUM", "#3d2d42"}, {"SILVER", "#b8bac0"}, {"BONE", "#d9d3c3"},
   {"TEAL", "#1f4a4c"}, {"PINE", "#23392c"}, {"WINE", "#4a2230"}, {"INDIGO", "#2b2a55"}, {"BROWN", "#4b3a2a"}, {"OLIVE", "#4a4a2a"}, {"STORM", "#3e4a5a"}, {"MAUVE", "#5a4560"},
   {"CLAY", "#7a5040"}, {"STONE", "#8f8b82"}, {"SAGE", "#9eae95"}, {"SAND", "#c9b98f"}, {"MIST", "#c6ced6"}, {"ROSE", "#d8b7b4"}, {"LILAC", "#c5bad9"}, {"CREAM", "#e9e1cc"}}; return v; }
-inline const std::vector<Choice>& cableChoices() { static const std::vector<Choice> v = {{"SOFT TEAL", "#5f8f8a"}, {"DUSTY LILAC", "#8f84a8"}, {"SAGE", "#7f9467"}, {"TEAL", "#6fb3ad"}, {"LILAC", "#b39ddb"}, {"GREEN", "#86b34f"}, {"AMBER", "#e0a83c"}, {"CORAL", "#e07a5f"}, {"CREAM", "#ece6cf"},
-  {"SKY", "#7fb8e6"}, {"PINK", "#e6a1d8"}, {"DEEP TEAL", "#1f5f5a"}, {"DEEP PURPLE", "#5b3f8f"}, {"GREY", "#8a8a90"}, {"ICE", "#7fd1e8"}, {"LIME", "#a8e07a"}, {"GOLD", "#c9b26b"}, {"PEACH", "#e09a6b"}, {"MINT", "#9fd28b"},
-  {"TAN", "#e3b07a"}, {"ORCHID", "#c8a2c8"}, {"NEON", "#4cff7a"}, {"YELLOW", "#ffd23f"}, {"AZURE", "#4cc9ff"}, {"WHITE", "#e0e0e0"}, {"SILVER", "#bdbdbd"}, {"DEEP GREEN", "#4f7a2a"}, {"OLIVE", "#3f6b1f"},
-  {"RED", "#e04848"}, {"CRIMSON", "#b0303f"}, {"ORANGE", "#f08a30"}, {"SAFFRON", "#f2b134"}, {"LEMON", "#f2e86b"}, {"CHARTREUSE", "#c2e04a"}, {"EMERALD", "#2fb36a"}, {"JADE", "#3fa38a"},
-  {"CYAN", "#45d6d6"}, {"COBALT", "#3a64d8"}, {"ULTRAMARINE", "#4a3fd0"}, {"VIOLET", "#8a55e0"}, {"MAGENTA", "#d64fb0"}, {"ROSE", "#e88aa0"}, {"SALMON", "#f2a08a"},
-  {"BROWN", "#8a5a3a"}, {"NAVY", "#2a3f7a"}, {"FOREST", "#2f5a3a"}, {"PLUM", "#6a3a6a"}, {"CHARCOAL", "#3a3a40"}, {"BLACK", "#141418"}}; return v; }
+inline const std::vector<Choice>& cableChoices() { static const std::vector<Choice> v = {   // earthy, muted colours (nothing neon)
+  {"MOSS", "#8e9b6b"}, {"OCHRE", "#c39a69"}, {"CLAY", "#a8786c"}, {"TERRACOTTA", "#b86f50"}, {"SAND", "#d4bf91"}, {"SAGE", "#9aab8c"}, {"OLIVE", "#7d7f4a"}, {"RUST", "#9c5a3c"},
+  {"STONE", "#a39e92"}, {"LICHEN", "#b7b58a"}, {"HEATHER", "#9c8aa0"}, {"SLATE BLUE", "#7d8ea0"}, {"DUSK BLUE", "#6f7f96"}, {"PEAT", "#6d5a46"}, {"BRACKEN", "#a4703f"}, {"FERN", "#6f8a5a"},
+  {"SOFT TEAL", "#5f8f8a"}, {"DUSTY LILAC", "#8f84a8"}, {"LINEN", "#e3d9c2"}, {"BONE", "#d8cfbb"}, {"PEWTER", "#8a8a84"}, {"HONEY", "#c9a24f"}, {"BRICK", "#9a4a3a"}, {"PINE", "#4f6b52"},
+  {"TEAL", "#6fb3ad"}, {"LILAC", "#b39ddb"}, {"CREAM", "#ece6cf"}, {"GOLD", "#c9b26b"}, {"PEACH", "#e09a6b"}, {"TAN", "#e3b07a"}, {"BROWN", "#8a5a3a"}, {"FOREST", "#2f5a3a"}, {"PLUM", "#6a3a6a"}, {"CHARCOAL", "#3a3a40"}}; return v; }
 inline const std::vector<std::pair<const char*, Theme>>& presets() { static const std::vector<std::pair<const char*, Theme>> v = {
-  {"DEFAULT", Theme{}}, {"PAPER", {"#ebe6da", "#d9d3c3", "#1f5f5a", "#5b3f8f", "#4f7a2a"}}, {"NIGHT", {"#0b1020", "#1f2a44", "#7fd1e8", "#e6a1d8", "#a8e07a"}},
-  {"MOSS", {"#13201a", "#39432f", "#c9b26b", "#e09a6b", "#9fd28b"}}, {"CLAY", {"#2a1d18", "#4a3328", "#e3b07a", "#c8a2c8", "#9cc28b"}}, {"TERMINAL", {"#000000", "#0f1a10", "#4cff7a", "#ffd23f", "#4cc9ff"}},
-  {"MONO", {"#111111", "#2b2b2b", "#e0e0e0", "#8a8a8a", "#bdbdbd"}}, {"STEEL", {"#5c5f66", "#b8bac0", "#1f5f5a", "#5b3f8f", "#3f6b1f"}}}; return v; }
+  {"EARTH", Theme{}},
+  {"MOSS", {"#161c14", "#323a2a", "#b7b58a", "#c39a69", "#8e9b6b"}},
+  {"CLAY", {"#24180f", "#4a3328", "#d4bf91", "#b86f50", "#9aab8c"}},
+  {"PEAT", {"#1a1612", "#2f2924", "#a4703f", "#9c8aa0", "#7d7f4a"}},
+  {"SLATE", {"#1b1f22", "#363d42", "#9aab8c", "#c39a69", "#7d8ea0"}},
+  {"HEATH", {"#1e1820", "#3a3038", "#b7b58a", "#9c8aa0", "#a8786c"}},
+  {"SANDSTONE", {"#d8ccb2", "#bcae90", "#4f6b52", "#9c5a3c", "#6f7f96"}},
+  {"PAPER", {"#ebe6da", "#d9d3c3", "#4f6b52", "#8f84a8", "#9a4a3a"}},
+  {"NIGHT", {"#11141b", "#272c36", "#7d8ea0", "#c39a69", "#9aab8c"}},
+  {"MONO", {"#141414", "#2e2e2e", "#d8cfbb", "#8a8a84", "#a39e92"}}}; return v; }
 inline bool sameTheme(const Theme& a, const Theme& b) { return a.bg == b.bg && a.mod == b.mod && a.audio == b.audio && a.trig == b.trig && a.modc == b.modc; }
 
 inline void rgbOf(const std::string& h, float c[3]) { for (int i = 0; i < 3; i++) c[i] = h.size() >= 7 ? (float)std::strtoul(h.substr(1 + i * 2, 2).c_str(), 0, 16) : 0; }
@@ -53,7 +59,8 @@ inline void applyTheme(Canvas& cv, const Theme& t) {
   cv.setColour(25, bg.c_str()); cv.setColour(26, (lum(bg) > 0.4f ? mixHex(bg, "#000000", 0.25f) : mixHex(bg, "#000000", 0.6f)).c_str()); cv.setColour(27, md.c_str());
   cv.setColour(28, lightMod ? "#1b1b1f" : "#d2c7a6"); cv.setColour(29, (lightMod ? mixHex(md, "#000000", 0.55f) : mixHex(md, "#ffffff", 0.5f)).c_str());
   cv.setColour(30, (lightMod ? mixHex(md, "#000000", 0.3f) : mixHex(md, "#000000", 0.5f)).c_str());
-  cv.setColour(43, t.audio.c_str()); cv.setColour(44, t.trig.c_str()); cv.setColour(45, t.modc.c_str()); cv.setColour(46, mixHex(t.trig, "#ffffff", 0.55f).c_str());
+  cv.setColour(43, t.audio.c_str()); cv.setColour(44, t.trig.c_str()); cv.setColour(45, t.modc.c_str());
+  cv.setColour(17, t.audio.c_str()); cv.setColour(24, t.trig.c_str()); cv.setColour(11, t.modc.c_str());   // the module headers (and highlights) follow the cable colours, so a theme hangs together cv.setColour(46, mixHex(t.trig, "#ffffff", 0.55f).c_str());
   cv.setColour(47, lightMod ? "#d9761c" : "#ece6cf"); cv.setColour(48, (lightMod ? mixHex(t.audio, "#000000", 0.45f) : t.audio).c_str());
   if (pond) cv.pal[25] &= 0x00ffffffu;   // the pond shows through the background
 }

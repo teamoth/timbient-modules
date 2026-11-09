@@ -179,7 +179,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     else if (!ui.connect(a, a->m->def->outIndex(fp), b, inIdx(b->m->def, tp))) lost++;
   }
   std::string note;
-  std::vector<std::string> gone; for (const char* g : {"fm2", "grains", "bell", "glass"}) if (skipped.erase(g)) gone.push_back(std::string(g) == "fm2" ? "FM 2-OP" : std::string(g) == "grains" ? "GRAIN CLOUD" : std::string(g) == "bell" ? "MODAL BELL" : "GLASS");
+  std::vector<std::string> gone; for (const char* g : {"fm2", "grains", "bell", "glass", "crush"}) if (skipped.erase(g)) gone.push_back(std::string(g) == "fm2" ? "FM 2-OP" : std::string(g) == "grains" ? "GRAIN CLOUD" : std::string(g) == "bell" ? "MODAL BELL" : std::string(g) == "crush" ? "BITCRUSH" : "GLASS");
   if (!skipped.empty()) { note = "NOT IN THE NATIVE VERSION YET: "; bool first = true; for (auto& s : skipped) { const ModuleDef* d = findDef(s); std::string nm = d ? d->name : s; for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); note += (first ? "" : ", ") + nm; first = false; } }
   if (!gone.empty()) { std::string l; for (auto& g : gone) l += (l.empty() ? "" : ", ") + g; note += std::string(note.empty() ? "" : ". ") + l + (gone.size() > 1 ? " HAVE" : " HAS") + " BEEN REMOVED, SO LEFT OUT"; }
   return note;

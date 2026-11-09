@@ -298,7 +298,7 @@ static Reg rTapeLoop(new ModuleDef{"tloop", "TAPE LOOP", Cat::Proc, {{"IN", PTyp
    pct("keep", "KEEP", 0.8f), pct("inlv", "REC LEVEL", 0.8f),
    fmt(pr("speed", "SPEED", -2, 2, 1), [](float v) { char b[16]; std::snprintf(b, 16, "%.2fX", v); return std::string(b); }),
    pct("wander", "WANDER", 0.4f), fmt(prExp("wspd", "WANDER SPD", 0.005f, 0.5f, 0.05f), [](float v) { char b[16]; std::snprintf(b, 16, "1 PER %.0fS", 1 / v); return std::string(b); }),
-   pct("rand", "RANDOM", 0.15f), ACT("clear", "CLEAR TAPE"), LEVEL()}, 40, 68, false, [] { return new TapeLoop(); }});
+   pct("rand", "RANDOM", 0.15f), ACT("clear", "CLEAR TAPE"), LEVEL()}, 12, 68, false, [] { return new TapeLoop(); }});
 
 // ---------------- LISTEN: hears which key and scale a sound is in ----------------
 // Every 1/10 s or so it takes the last 8192 samples, measures how strongly each of the 12 note names sounds

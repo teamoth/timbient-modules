@@ -18,7 +18,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "midi", "midiout"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "crush", "comp", "limit", "master", "mixer", "listen"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -244,10 +244,19 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int i = 0; i < w; i += 2) c.px(x + i, y + 2, 18);
     const float k = 0.5f + 0.5f * std::sin(D(0) * TAU) * m->p[1].load(); c.rect(x + (int)std::lround(k * (w - 3)), y, 3, 5, 17);
     if (m->p[5].load() > 0.5f) c.rect(x + (int)std::lround((1 - k) * (w - 3)), y + 1, 3, 3, 3);
-  } else if (ty == "tape") {   // two turning reels
-    const float ph = D(0);
-    for (int cx : {x + 12, x + w - 13}) { for (float a = 0; a < TAU; a += 0.5f) c.pxf(cx + 4 * std::cos(a), y + 2 + 2 * std::sin(a), 18); c.pxf(cx + 2 * std::cos(ph * TAU), y + 2 + std::sin(ph * TAU), 4); }
-    for (int i = x + 16; i < x + w - 16; i++) c.px(i, y + 4, 7);
+  } else if (ty == "tape") {   // a cassette: its reels turn (surging with WOW), the tape runs past the head, and the label warms with SATURATE
+    const float ang = D(0) * TAU * 3, sat = clampf(D(1), 0, 1), fl = D(2); const int H = vh;
+    c.frame(x, y, w, H, 18); c.frame(x + 2, y + 2, w - 4, 7, 21);
+    for (int k = 0; k < (int)std::lround(sat * (w - 8)); k++) c.px(x + 4 + k, y + 5, k % 2 ? 12 : 44);   // the label: a warmth bar for SATURATE
+    const int cy = y + 9 + (H - 15) / 2 + 1, lxc = x + w * 28 / 100, rxc = x + w * 72 / 100, rmax = std::max(4, std::min((H - 15) / 2, w / 6));
+    c.rect(lxc, cy - 4, rxc - lxc, 9, 25);   // the window between the reels
+    for (int s2 = 0; s2 < 2; s2++) { const int rx = s2 ? rxc : lxc; const float rr = rmax - 0.5f;
+      for (int yy = -rmax; yy <= rmax; yy++) for (int xx = -rmax; xx <= rmax; xx++) { const float d = std::sqrt((float)(xx * xx + yy * yy));
+        if (d <= rr && d > 2.5f) c.px(rx + xx, cy + yy, 44); else if (d <= 2.5f && d > 1.2f) c.px(rx + xx, cy + yy, 9); }
+      for (int sp = 0; sp < 3; sp++) { const float a = ang + sp * TAU / 3; c.px(rx + (int)std::lround(std::cos(a) * 2), cy + (int)std::lround(std::sin(a) * 2), 25);
+        c.px(rx + (int)std::lround(std::cos(a) * (rr - 1)), cy + (int)std::lround(std::sin(a) * (rr - 1)), 19); } }   // spokes, and a mark on each reel so you can see it turn
+    const int ty = y + H - 4 + (int)std::lround(fl * 1.5f); c.line(lxc, cy + rmax - 1, x + w / 2 - 4, ty, 44); c.line(rxc, cy + rmax - 1, x + w / 2 + 4, ty, 44); c.line(x + w / 2 - 4, ty, x + w / 2 + 4, ty, 44);   // the tape (fluttering)
+    c.rect(x + w / 2 - 2, y + H - 3, 5, 2, 12);   // the head
   } else if (ty == "sample" || ty == "looper" || ty == "stretch") {   // the sound's outline; the region or slices (Sample); playheads and grains
     const bool smp = ty == "sample"; const int kind = smp ? (int)m->p[1].load() : 0, multi = kind >= 2; int top = y;
     if (multi) {   // KIT / MULTI: a numbered place for each sound; tap one to load, replace, set its ROOT or remove it
@@ -273,22 +282,11 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     const float gr = clampf(-D(0) / 18, 0, 1); const int gy = y + 16;   // GR: how much it's turning down (red, from the right)
     c.text("GR", x, gy - 1, 18); c.rect(bx, gy, bw, 2, 21); if (gr > 0.003f) c.rect(bx + bw - (int)std::lround(gr * bw), gy, (int)std::lround(gr * bw), 2, 14);
     if (ty == "master") { const float gg = clampf(-D(2) / 12, 0, 1); if (gg > 0.003f) c.rect(bx + bw - (int)std::lround(gg * bw), gy + 1, (int)std::lround(gg * bw), 1, 12); }
-  } else if (ty == "tloop") {   // a cassette: the label shows the sound on the tape; the reels turn as the tape moves, the full one emptying into the other
-    const float hd = clampf(D(0), 0, 1), a0 = D(2), n0 = D(3); const bool rec = D(1) > 0.5f; const int H = vh;
-    c.frame(x, y, w, H, 18); c.frame(x + 2, y + 2, w - 4, 8, 21);   // the shell, and its label
-    for (int k = 0; k < 32; k++) { const int x0 = x + 3 + k * (w - 6) / 32, x1 = x + 3 + (k + 1) * (w - 6) / 32; const float fx = (k + 0.5f) / 32;
-      const int h = std::max(0, std::min(2, (int)std::lround(std::sqrt(D(4 + k)) * 2.5f))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
-      for (int xx = x0; xx < x1; xx++) for (int j = -h; j <= h; j++) c.px(xx, y + 6 + j, col); }
-    { const int lx = x + 3 + (int)std::lround(hd * (w - 7)); c.px(lx, y + 3, rec ? 14 : 4); c.px(lx, y + 9, rec ? 14 : 4); }
-    const int cy = y + 10 + (H - 18) / 2 + 2, lxc = x + w * 28 / 100, rxc = x + w * 72 / 100, rmax = std::max(4, std::min((H - 16) / 2, w / 6));
-    c.rect(lxc, cy - 4, rxc - lxc, 9, 25);   // the window between the reels
-    const float ang = hd * 40.f;   // the reels turn with the tape (and backwards when it runs backwards)
-    for (int s2 = 0; s2 < 2; s2++) { const int rx = s2 ? rxc : lxc; const float fill = s2 ? hd : 1 - hd, rr = 2.5f + (rmax - 2.5f) * (0.25f + 0.75f * fill);
-      for (int yy = -rmax; yy <= rmax; yy++) for (int xx = -rmax; xx <= rmax; xx++) { const float d = std::sqrt((float)(xx * xx + yy * yy));
-        if (d <= rr && d > 2.5f) c.px(rx + xx, cy + yy, 44); else if (d <= 2.5f && d > 1.2f) c.px(rx + xx, cy + yy, 9); }
-      for (int sp = 0; sp < 3; sp++) { const float a = ang + sp * TAU / 3; c.px(rx + (int)std::lround(std::cos(a) * 2), cy + (int)std::lround(std::sin(a) * 2), 25); } }
-    const int ty = y + H - 4; c.line(lxc, cy + rmax - 1, x + w / 2 - 4, ty, 44); c.line(rxc, cy + rmax - 1, x + w / 2 + 4, ty, 44); c.line(x + w / 2 - 4, ty, x + w / 2 + 4, ty, 44);   // the tape, across the head
-    c.rect(x + w / 2 - 2, ty + 1, 5, 2, rec ? 14 : 12);   // the head: red while recording
+  } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
+    const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
+      const int h = std::max(0, std::min(5, (int)std::lround(std::sqrt(D(4 + k)) * 5))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
+      for (int xx = x0; xx < x1 - (w >= 64 ? 1 : 0); xx++) for (int j = -h; j <= h; j++) c.px(xx, y + 6 + j, col); }
+    const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, D(1) > 0.5f ? 14 : 12);
   } else if (ty == "listen") {   // what key and scale it hears, how sure it is, the runner-up, and the 12 notes it's hearing
     const int r = (int)D(0), sc = std::max(0, std::min((int)scales().size() - 1, (int)D(1))), r2 = (int)D(3), sc2 = std::max(0, std::min((int)scales().size() - 1, (int)D(4)));
     if (D(2) <= 0 && D(18) < 1e-6f) c.text("LISTENING...", x + 1, y + 1, 18);
@@ -304,10 +302,10 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
   } else if (ty == "keys") {
     const int root = keyOf(u, eng), sc = scaleOf(u, eng), n = (int)scales()[sc].steps.size();
     const int oct = (int)m->p[1].load(), rowStep = 8;   // each row carries on up the scale from the row below
-    for (int i = 0; i < 32; i++) { const int deg = (i / 8) * rowStep + (i % 8), note = (int)midiOf(degOf(oct, deg, sc), root, sc), cx = (i % 8) * 13, cy = (3 - i / 8) * 9;
+    for (int i = 0; i < 32; i++) { const int deg = (i / 8) * rowStep + (i % 8), note = (int)midiOf(degOf(oct, deg, sc), root, sc), cx = (i % 8) * 15, cy = (3 - i / 8) * 9;   // wide enough for C#4
       u.lit[i] = std::max(0.f, u.lit[i] - dt);
       const bool lit = u.lit[i] > 0, isRoot = deg % n == 0;
-      c.rect(x + cx, y + cy, 12, 8, lit ? 4 : isRoot ? 24 : 21); const std::string t = noteName(note); c.text(t, x + cx + 6 - Canvas::tw(t) / 2, y + cy + 2, lit || isRoot ? 15 : 9); }
+      c.rect(x + cx, y + cy, 14, 8, lit ? 4 : isRoot ? 24 : 21); const std::string t = noteName(note); c.text(t, x + cx + 7 - Canvas::tw(t) / 2, y + cy + 2, lit || isRoot ? 15 : 9); }
   } else if (ty == "mixer") {
     for (int k = 0; k < 4; k++) { const int cx = x + k * 13; const float v = clampf((20 * std::log10(D(k) + 1e-6f) + 48) / 48, 0, 1);
       const float vr = clampf((20 * std::log10(D(4 + k) + 1e-6f) + 48) / 48, 0, 1);   // each channel: L and R
@@ -400,7 +398,7 @@ static std::string statusLabel(const UiMod& u, const ParamDef& q) {
 int Ui::minusX(const UiMod& u, int j) const {   // after the name: normally at 39, further for a long name or an inside socket
   const ParamDef& q = u.m->def->params[j]; std::string lab = q.label;
   const int ins = jacksIn && modulatable(q) ? 7 : 0;   // a clear gap after the socket, so the name doesn't look like it starts with O
-  return std::max(39, 3 + Canvas::tw(lab.substr(0, 11)) + 2) + ins;
+  (void)lab; return u.m->def->labelEnd + ins;   // the same for every row of a module, so all its sliders are the same length
 }
 void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   if (u.m->seq) trackerWatch(u);
@@ -592,7 +590,7 @@ void Ui::keyEnter() { if (!ask) return; auto a = std::move(ask); std::string t =
 
 // ---------------- input ----------------
 void Ui::keysPress(UiMod& u, int x, int y) {
-  const int col = x / 13, row = 3 - y / 9; if (col < 0 || col > 7 || row < 0 || row > 3) return;
+  const int col = x / 15, row = 3 - y / 9; if (col < 0 || col > 7 || row < 0 || row > 3) return;
   const int i = row * 8 + col, sc = scaleOf(u, eng), n = (int)scales()[sc].steps.size(), rowStep = 8;
   Event ev; ev.note = midiOf(degOf((int)u.m->p[1].load(), row * rowStep + col, sc), keyOf(u, eng), sc); ev.vel = u.m->p[0].load();
   eng.trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;

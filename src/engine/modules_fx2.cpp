@@ -98,26 +98,14 @@ struct Tape : Module {
       for (int c = 0; c < 2; c++) { const float x = in[0][c][i]; dry[c].write(x); wet[c].write(std::tanh(x * k) * satN);
         out[0][c][i] = dry[c].read(0.012f * sr) * d + (lp.run(wet[c].read(std::max(1.f, dl)), c) + h) * w; }
     }
-    ph += (b - a) * dt * 0.55f; ph -= std::floor(ph); disp[0].store(ph);
+    ph += (b - a) * dt * 0.55f * (1 + std::cos(TAU * p1) * e[WOW] * 0.6f); ph -= std::floor(ph); disp[0].store(ph);   // the reels: wow makes them surge and lag
+    disp[1].store(e[SAT]); disp[2].store(std::sin(TAU * p2) * e[FLUTTER]);
   }
 };
 static Reg rTape(new ModuleDef{"tape", "TAPE", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {pct("wow", "WOW", 0.3f), pct("flutter", "FLUTTER", 0.2f), pct("sat", "SATURATE", 0.3f), prHz("tone", "TONE", 800, 16000, 6000), pct("hiss", "HISS", 0.1f), pct("mix", "MIX", 1)},
-  5, 68, false, [] { return new Tape(); }});
+  36, 68, false, [] { return new Tape(); }});
 
-// ---------------- BITCRUSH: fewer bits, a lower sample rate ----------------
-struct Crush : Module {
-  enum { BITS, RATE, MIX };
-  float ph = 0, hl = 0, hr = 0; DryWet dw;
-  void prepare() override { dw.init(sr, 1 - e[MIX], e[MIX]); }
-  void render(int a, int b) override {
-    dw.target(1 - e[MIX], e[MIX]); const float q = std::pow(2.f, e[BITS] - 1), step = std::min(1.f, e[RATE] / sr);
-    for (int i = a; i < b; i++) { ph += step; if (ph >= 1) { ph -= 1; hl = std::round(in[0][0][i] * q) / q; hr = std::round(in[0][1][i] * q) / q; }
-      const float d = dw.d.tick(), w = dw.w.tick(); out[0][0][i] = in[0][0][i] * d + hl * w; out[0][1][i] = in[0][1][i] * d + hr * w; }
-  }
-};
-static Reg rCrush(new ModuleDef{"crush", "BITCRUSH", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {ST("bits", "BITS", 1, 16, 8), prHz("rate", "RESAMPLE", 400, 44100, 11025), pct("mix", "MIX", 1)}, 0, 68, false, [] { return new Crush(); }});
 
 // ---------------- TRIG ENV: each trigger draws a rise and a fall ----------------
 struct TrigEnv : Module {

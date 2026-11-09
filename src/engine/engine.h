@@ -54,6 +54,7 @@ struct ModuleDef {
   std::vector<PortDef> ins, outs; std::vector<ParamDef> params;
   int vis = 0, width = 58; bool fixed = false;
   std::function<Module*()> make;
+  int labelEnd = 39;   // where its sliders start: after its longest name (the module is widened to keep its sliders full length)
   int keyIdx = -1, scaleIdx = -1;   // sequencers: their own KEY and SCALE (0 = GLOBAL, the session's)
   int panIdx = -1;   // PAN: every module with an audio output (but MIXER, which pans each channel) has one, added last
   int paramIndex(const std::string& k) const { for (size_t i = 0; i < params.size(); i++) if (params[i].key == k) return (int)i; return -1; }
