@@ -321,14 +321,7 @@ struct Listen : Module {
     const float k = 1 - std::exp(-(HOP / sr) / std::max(0.5f, e[TIME]));
     for (int i = 0; i < 12; i++) chroma[i] += (now[i] / tot - chroma[i]) * k;
     // match against every key and scale
-    float mean = 0; for (float c : chroma) mean += c; mean /= 12; float cv = 0; for (float c : chroma) cv += (c - mean) * (c - mean);
-    float best = -2, second = -2; int br = 0, bs = 0, sr2 = 0, ss = 0;
-    if (cv > 1e-9f) for (int sc = 0; sc < (int)scales().size(); sc++) { const auto& st = scales()[sc].steps; if (st.size() >= 12) continue;
-      for (int r = 0; r < 12; r++) { float t[12] = {0}; for (int d : st) t[(r + d) % 12] = 1; t[r] = 1.6f; t[(r + 7) % 12] *= (t[(r + 7) % 12] > 0 ? 1.15f : 1);
-        float tm = 0; for (float x : t) tm += x; tm /= 12; float num = 0, tv = 0; for (int i = 0; i < 12; i++) { num += (chroma[i] - mean) * (t[i] - tm); tv += (t[i] - tm) * (t[i] - tm); }
-        const float corr = num / std::sqrt(cv * tv) - 0.004f * st.size();   // a nudge towards the smaller scale when two explain it equally
-        if (corr > best) { if (!(r == br && sc == bs)) { second = best; sr2 = br; ss = bs; } best = corr; br = r; bs = sc; }
-        else if (corr > second && !(r == br && sc == bs)) { second = corr; sr2 = r; ss = sc; } } }
+    KeyMatch km = matchKey(chroma); const int br = km.root, bs = km.scale, sr2 = km.root2, ss = km.scale2; const float best = km.conf, second = km.conf2;
     disp[0].store((float)br); disp[1].store((float)bs); disp[2].store(clampf(best, 0, 1)); disp[3].store((float)sr2); disp[4].store((float)ss); disp[5].store(clampf(second, 0, 1));
   }
   void render(int a, int b) override {

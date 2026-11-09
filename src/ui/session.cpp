@@ -48,7 +48,7 @@ Json serializePatch(Ui& ui) {
         p.set("sounds", a); } }
     if (!u.dev.empty()) p.set("dev", Json::string(u.dev));
     m.set("p", p);
-    m.set("mute", Json::boolean(u.m->mute.load())); m.set("solo", Json::boolean(u.m->solo.load())); m.set("fold", Json::boolean(u.fold)); mods.push(m); }
+    m.set("mute", Json::boolean(u.m->mute.load())); m.set("solo", Json::boolean(u.m->solo.load())); m.set("fold", Json::boolean(u.fold)); if (u.m->bypass.load()) m.set("bypass", Json::boolean(true)); mods.push(m); }
   d.set("mods", mods);
   Json cs = Json::array();
   for (auto& c : ui.cables) { UiMod *a = ui.byId(c.from), *b = ui.byId(c.to); if (!a || !b) continue; Json j = Json::object();
@@ -88,7 +88,7 @@ void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& c
       else if (u->snd[k].root != want[k].root || u->snd[k].name != want[k].name) { u->snd[k].root = want[k].root; u->snd[k].name = want[k].name; } 
       u->m->roots[k].store(u->snd[k].root); }
     if (p) u->dev = p->str("dev");
-    u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold");
+    u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold"); u->m->bypass.store(m.truthy("bypass"));
   }
   // the same stacking order as then
   std::stable_sort(ui.mods.begin(), ui.mods.end(), [&](const std::unique_ptr<UiMod>& a, const std::unique_ptr<UiMod>& b) {
@@ -154,7 +154,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (const Json* p = m.get("p")) {   // older sessions: a RUN setting became the footer's ON/OFF; Orbits gained RANGE
       if ((ty == "clock" || ty == "tracker") && p->get("run") && p->get("run")->t == Json::NUM && p->get("run")->n < 0.5) stopped = true;
       if (ty == "orbits" && !p->get("range") && p->get("rings")) u->m->p[def->paramIndex("range")].store((float)p->num("rings", 5)); }
-    u->m->mute.store(m.truthy("mute") || stopped); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold");   // only voices solo now
+    u->m->mute.store(m.truthy("mute") || stopped); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold"); u->m->bypass.store(m.truthy("bypass"));   // only voices solo now
     idmap[(int)m.num("id")] = u; maxId = std::max(maxId, (int)m.num("id"));
   }
   if (!findDef("out") || std::none_of(ui.mods.begin(), ui.mods.end(), [](const std::unique_ptr<UiMod>& u) { return u->m->def->type == "out"; })) ui.add("out", 340, 60);

@@ -10,6 +10,8 @@ namespace tb {
 // any WAV, AIFF, FLAC or MP3, mixed to mono, at its own sample rate; at most maxSecs long
 AudioBuf* decodeAudio(const std::string& path, double maxSecs, std::string& err);
 bool writeWavMono16(const std::string& path, const AudioBuf& b);
+// a sound file's channels, rate and length, without reading it all
+bool soundFileInfo(const std::string& path, int& channels, float& rate, double& secs);
 std::vector<float> peaksOf(const AudioBuf& b, int n = 128);
 // a web export's packed audio: 16-bit mono as base64
 AudioBuf* fromBase64Pcm16(const std::string& b64, float sr);

@@ -24,6 +24,14 @@ AudioBuf* decodeAudio(const std::string& path, double maxSecs, std::string& err)
   return b;
 }
 
+bool soundFileInfo(const std::string& path, int& channels, float& rate, double& secs) {
+  ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, 0); ma_decoder dec;
+  if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS) return false;
+  channels = (int)dec.outputChannels; rate = (float)dec.outputSampleRate; ma_uint64 len = 0;
+  secs = (ma_decoder_get_length_in_pcm_frames(&dec, &len) == MA_SUCCESS && rate > 0) ? (double)len / rate : 0;
+  ma_decoder_uninit(&dec); return channels > 0;
+}
+
 static void u32(FILE* f, uint32_t v) { unsigned char b[4] = {(unsigned char)v, (unsigned char)(v >> 8), (unsigned char)(v >> 16), (unsigned char)(v >> 24)}; std::fwrite(b, 1, 4, f); }
 static void u16(FILE* f, uint16_t v) { unsigned char b[2] = {(unsigned char)v, (unsigned char)(v >> 8)}; std::fwrite(b, 1, 2, f); }
 static void wavHeader(FILE* f, int ch, int bits, uint32_t sr, uint32_t dataBytes) {

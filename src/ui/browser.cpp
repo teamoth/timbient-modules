@@ -5,6 +5,7 @@
 
 namespace tb {
 static const int TOP = 10;   // the top bar, as in ui.cpp
+static const int INFO_H = 33;  // about the picked sound, under the list
 
 static std::string upper(std::string s) { for (auto& ch : s) ch = (char)std::toupper((unsigned char)ch); return s; }
 static bool isSound(const std::string& n) {
@@ -50,6 +51,7 @@ void Ui::browserPick(int i) {   // a tap on a row: open a folder, or hear a soun
   if (e.folder) { if (e.name == "..") browseTo(parentOf(br.dir)); else browseTo(joinPath(br.dir, e.name)); return; }
   br.sel = i;   // a tap picks it and stops whatever was being heard; PREVIEW plays it
   if (br.playing >= 0 && onPreview) onPreview(""); br.playing = -1;
+  const std::string p = joinPath(br.dir, e.name); if (p != br.infoPath) { br.infoPath = p; br.infoReady = br.infoFailed = false; if (onInfo) onInfo(p); }
 }
 void Ui::browserLoad() {   // LOAD IT: stop the preview, and put the sound in the module
   if (br.sel < 0 || br.sel >= (int)br.items.size() || br.items[br.sel].folder) return;
@@ -72,7 +74,7 @@ void Ui::browserKey(int dir) {
 void Ui::drawBrowser(Canvas& c) {
   if (!br.open) return;
   if (br.playing >= 0 && eng.previewAt.load() < 0) br.playing = -1;   // it finished
-  brW = std::min(c.W - 8, 190); brH = std::min(c.H - TOP - 8, 170); brX = (c.W - brW) / 2; brY = TOP + std::max(2, (c.H - TOP - brH) / 3);
+  brW = std::min(c.W - 8, 190); brH = std::min(c.H - TOP - 8, 204); brX = (c.W - brW) / 2; brY = TOP + std::max(2, (c.H - TOP - brH) / 3);
   const int x = brX, y = brY, w = brW, h = brH;
   c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, 15); c.frame(x, y, w, h, 21);
   UiMod* t = byId(br.target);
@@ -81,7 +83,7 @@ void Ui::drawBrowser(Canvas& c) {
   std::string d = upper(br.dir); const int room = (w - 8) / 4; if ((int)d.size() > room) d = ".." + d.substr(d.size() - room + 2);
   c.text(d, x + 4, y + 11, 9);
   // the list
-  const int ly = y + 19, lh = h - 19 - 22; brRows = std::max(1, lh / 8);
+  const int ly = y + 19, lh = h - 19 - 22 - INFO_H; brRows = std::max(1, lh / 8);
   c.rect(x + 3, ly - 1, w - 6, lh + 1, 21);
   const int first = (int)br.scroll;
   for (int r = 0; r < brRows && first + r < (int)br.items.size(); r++) { const int i = first + r; const auto& e = br.items[i]; const int ry = ly + r * 8;
@@ -93,6 +95,29 @@ void Ui::drawBrowser(Canvas& c) {
   if ((int)br.items.size() > brRows) {   // where you are in a long list
     const int th = std::max(3, lh * brRows / (int)br.items.size()), ty = ly + (int)((lh - th) * br.scroll / std::max(1.f, (float)br.items.size() - brRows));
     c.rect(x + w - 5, ty, 1, th, 9); }
+  // about the picked sound: its shape, then length / rate / channels / loudness, then key, note and tempo
+  { const int iy = ly + lh + 3, iw = w - 8, ix = x + 4; const bool file = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
+    if (!file) c.text("TAP A SOUND TO SEE WHAT'S IN IT", ix, iy + 10, 21);
+    else if (br.infoFailed) c.text("COULDN'T READ THIS ONE", ix, iy + 10, 14);
+    else if (!br.infoReady) c.text("LISTENING TO IT...", ix, iy + 10, 18);
+    else { const SoundInfo& f = br.info;
+      for (int k = 0; k < iw; k++) { const float v = f.peaks.empty() ? 0 : f.peaks[std::min((int)f.peaks.size() - 1, k * (int)f.peaks.size() / iw)]; const int hh = std::max(0, (int)std::lround(v * 4));
+        for (int j = -hh; j <= hh; j++) c.px(ix + k, iy + 4 + j, 48); }
+      char b[96]; const int mins = (int)(br.secs / 60); const double sec = br.secs - mins * 60;
+      std::string len = mins > 0 ? std::to_string(mins) + "M " + std::to_string((int)sec) + "S" : (br.secs < 10 ? (std::snprintf(b, 16, "%.1fS", br.secs), std::string(b)) : std::to_string((int)br.secs) + "S");
+      std::snprintf(b, sizeof b, "%s  %.1fK %s  LOUDNESS %.0fDB", len.c_str(), br.fileRate / 1000, br.channels == 1 ? "MONO" : br.channels == 2 ? "STEREO" : (std::to_string(br.channels) + " CH").c_str(), f.rmsDb);
+      c.text(b, ix, iy + 11, 9);
+      std::string l3;
+      if (f.noteKnown) { const int nn = (int)std::lround(f.note), cents = (int)std::lround((f.note - nn) * 100); l3 += "NOTE " + noteName(nn) + (std::abs(cents) >= 8 ? (cents > 0 ? " +" : " ") + std::to_string(cents) : ""); }
+      if (f.keyKnown) { if (!l3.empty()) l3 += "  "; l3 += std::string("KEY ") + NOTE_NAMES[f.root] + " " + scales()[f.scale].name;
+        const bool fits = [&] { const auto& st = scales()[eng.key.scale.load()].steps; const int r0 = eng.key.root.load();
+          for (int dd : scales()[f.scale].steps) { const int pc = (f.root + dd) % 12; bool in = false; for (int q : st) if ((r0 + q) % 12 == pc) in = true; if (!in) return false; } return true; }();
+        if (fits) l3 += " *"; }
+      if (f.tempoKnown) { if (!l3.empty()) l3 += "  "; l3 += "ABOUT " + std::to_string((int)std::lround(f.bpm)) + " BPM"; }
+      if (l3.empty()) l3 = f.peakDb < -40 ? "VERY QUIET" : "NO CLEAR NOTE, KEY OR BEAT";
+      c.text(l3, ix, iy + 18, 18);
+      if (f.keyKnown && f.altClose) c.text(std::string("(OR ") + NOTE_NAMES[f.altRoot] + " " + scales()[f.altScale].name + ")", ix, iy + 25, 21);
+      else if (f.keyKnown) { bool fits = l3.find(" *") != std::string::npos; if (fits) c.text("* FITS THE SESSION'S KEY", ix, iy + 25, 21); } } }
   // the buttons
   const int by = y + h - 19; auto btn = [&](int bx, int bw, const std::string& l, int col) { c.frame(bx, by - 1, bw, 9, col); c.text(l, bx + (bw - Canvas::tw(l)) / 2, by + 1, col); };
   const bool can = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
@@ -105,7 +130,7 @@ void Ui::drawBrowser(Canvas& c) {
 bool Ui::browserDown(float sx, float sy) {   // true if the tap was inside the browser
   const int x = brX, y = brY, w = brW, h = brH; if (sx < x || sx >= x + w || sy < y || sy >= y + h) return false;
   if (sy < y + 10 && sx >= x + w - 9) { closeBrowser(); return true; }
-  const int ly = y + 19, lh = h - 19 - 22;
+  const int ly = y + 19, lh = h - 19 - 22 - INFO_H;
   if (sy >= ly && sy < ly + lh) { drag.kind = D_BROWSE; drag.n0 = br.scroll; drag.k = (int)br.scroll + (int)((sy - ly) / 8); return true; }   // a tap picks; a drag scrolls
   const int by = y + h - 19;
   if (sy >= by - 1 && sy < by + 8) {

@@ -20,6 +20,7 @@ option(TIMBIENT_TESTS "Build the offline test programs" OFF)
 # the engine and interface: plain C++, no libraries needed
 set(ENGINE_SOURCES
   src/engine/engine.cpp
+  src/engine/analyse.cpp
   src/engine/modules_trig.cpp
   src/engine/modules_voice.cpp
   src/engine/modules_voice2.cpp

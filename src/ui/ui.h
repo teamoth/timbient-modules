@@ -2,6 +2,7 @@
 // It never touches the running patch directly, only the values the engine publishes.
 #pragma once
 #include "../engine/engine.h"
+#include "../engine/analyse.h"
 #include "canvas.h"
 #include <functional>
 #include <memory>
@@ -43,6 +44,7 @@ public:
   // building a patch
   UiMod* add(const std::string& type, int x, int y, int id = 0);   // id: put back with the number it had (undo)
   void remove(UiMod* u);
+  void removeGently(UiMod* u);   // the × button: bridges an effect's chain, lets its sound ring out
   bool connect(UiMod* a, int outPort, UiMod* b, int inPort);
   bool connect(UiMod* a, const std::string& outPort, UiMod* b, const std::string& inPort);
   bool modulate(UiMod* src, UiMod* dst, int paramIndex);
@@ -64,7 +66,10 @@ public:
   void openTempo(int x, int y) { tp.open = true; tp.x = x; tp.y = y; dd.reset(); menuOpen = false; }
   // the sound browser: a folder's sound files; tap one to hear it, LOAD puts it in the module. Stays open until you tap away
   struct Browser { bool open = false; std::string dir; struct Entry { std::string name; bool folder; }; std::vector<Entry> items;
-    int target = 0, slot = 0, sel = -1, playing = -1; float scroll = 0; std::string err; } br;
+    int target = 0, slot = 0, sel = -1, playing = -1; float scroll = 0; std::string err;
+    // about the picked sound (worked out on another thread): how long, mono or stereo, its rate, and what analyseSound found
+    std::string infoPath; bool infoReady = false, infoFailed = false; SoundInfo info; int channels = 0; float fileRate = 0; double secs = 0; } br;
+  std::function<void(const std::string&)> onInfo;   // look into a sound file (the answer comes back into br)
   void openBrowser(int targetId, int slot, const std::string& dir);   // slot -1: the next empty place (KIT / MULTI)
   void browseTo(const std::string& dir);
   void browserScroll(float rows);

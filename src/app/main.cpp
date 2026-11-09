@@ -11,14 +11,17 @@
 #include "../ui/ui.h"
 #include "../ui/theme.h"
 #include "audio_files.h"
+#include "../engine/analyse.h"
 #include "midi.h"
 #include <cstdio>
 #include <ctime>
 #include <mutex>
+#include <condition_variable>
+#include <thread>
 
 using namespace tb;
 
-static const char* VERSION = "0.16.0";
+static const char* VERSION = "0.17.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -172,6 +175,17 @@ int main(int argc, char** argv) {
     std::string err; AudioBuf* b = decodeAudio(path, 1200, err); if (!b) { engine.preview(nullptr); ui.status(err, 4); return; }
     float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f && mx < 0.5f) for (auto& v : b->d) v *= 0.5f / mx;   // quiet files a little louder, so you can hear them
     engine.preview(b); };
+  // the sound browser's details: worked out on a thread of their own, so the screen never waits (only the newest ask matters)
+  struct InfoJob { std::mutex mx; std::condition_variable cv; std::string want; bool stop = false; bool ready = false; std::string path; SoundInfo info; int ch = 0; float rate = 0; double secs = 0; bool failed = false; };
+  static InfoJob job;
+  static std::thread infoThread([] {
+    for (;;) { std::string p; { std::unique_lock<std::mutex> l(job.mx); job.cv.wait(l, [] { return job.stop || !job.want.empty(); }); if (job.stop) return; p = job.want; job.want.clear(); }
+      int ch = 0; float rate = 0; double secs = 0; std::string err; const bool ok = soundFileInfo(p, ch, rate, secs); SoundInfo si; bool failed = !ok;
+      if (ok) { AudioBuf* b = decodeAudio(p, 90, err); if (b) { si = analyseSound(*b); if (secs <= 0) secs = b->d.size() / b->sr; delete b; } else failed = true; }
+      std::lock_guard<std::mutex> l(job.mx); job.ready = true; job.path = p; job.info = si; job.ch = ch; job.rate = rate; job.secs = secs; job.failed = failed; } });
+  ui.onInfo = [](const std::string& p) { std::lock_guard<std::mutex> l(job.mx); job.want = p; job.cv.notify_one(); };
+  auto pumpInfo = [&] { std::lock_guard<std::mutex> l(job.mx); if (!job.ready) return; job.ready = false;
+    if (job.path == ui.br.infoPath) { ui.br.info = job.info; ui.br.channels = job.ch; ui.br.fileRate = job.rate; ui.br.secs = job.secs; ui.br.infoFailed = job.failed; ui.br.infoReady = true; } };
   ui.onBrowseLoad = [&](int id, int slot, const std::string& path) {
     settings.set("browseDir", Json::string(ui.br.dir)); saveSettings();
     std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, path, id, slot}); };
@@ -423,6 +437,7 @@ int main(int argc, char** argv) {
           if (writeFile(p, sessionFile(serializePatch(ui)))) { curFile = p; ui.status("SAVED " + fileName(p), 4); } else ui.status("COULD NOT SAVE THE FILE", 5); }
       } }
     engine.collectGarbage();
+    pumpInfo();
     if (rec.on()) { rec.pump(engine); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }
     // MIDI: notice devices coming and going; give MIDI OUT modules their device
     { static float mt = 0; midi.poll(ldt); ui.midiState = midi.state(); mt -= ldt;
@@ -449,6 +464,7 @@ int main(int argc, char** argv) {
   store.writeAutosave(serializePatch(ui));
   if (rec.on()) rec.stop(engine);
   sound.stop();
+  { std::lock_guard<std::mutex> l(job.mx); job.stop = true; job.cv.notify_one(); } if (infoThread.joinable()) infoThread.join();
   SDL_DestroyTexture(tex); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
   return 0;
 }

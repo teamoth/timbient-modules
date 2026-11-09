@@ -37,7 +37,8 @@ void Ui::remove(UiMod* u) {
 bool Ui::connect(UiMod* a, int fp, UiMod* b, int tp) {
   if (!a || !b || a == b || fp < 0 || tp < 0) return false;
   for (auto& c : cables) if (c.from == a->m->id && c.fromPort == fp && c.to == b->m->id && c.toPort == tp) return false;
-  Cable c; c.from = a->m->id; c.fromPort = fp; c.to = b->m->id; c.toPort = tp; c.type = a->m->def->outs[fp].type; eng.connect(c);
+  Cable c; c.from = a->m->id; c.fromPort = fp; c.to = b->m->id; c.toPort = tp; c.type = a->m->def->outs[fp].type; if (c.type == PType::Audio) c.g = 0;   // audio fades in
+  eng.connect(c);
   cables.push_back({c.from, fp, c.to, tp, -1, c.type}); return true;
 }
 bool Ui::connect(UiMod* a, const std::string& op, UiMod* b, const std::string& ip) { return a && b && connect(a, a->m->def->outIndex(op), b, b->m->def->inIndex(ip)); }
@@ -48,8 +49,21 @@ bool Ui::modulate(UiMod* s, UiMod* d, int pk) {
   cables.push_back({c.from, op, c.to, -1, pk, PType::Mod}); return true;
 }
 void Ui::unplug(const UiCable& k) {
-  Cable c; c.from = k.from; c.fromPort = k.fromPort; c.to = k.to; c.toPort = k.toPort; c.toParam = k.toParam; c.type = k.type; eng.disconnect(c);
+  Cable c; c.from = k.from; c.fromPort = k.fromPort; c.to = k.to; c.toPort = k.toPort; c.toParam = k.toParam; c.type = k.type;
+  if (c.type == PType::Audio) eng.fade(c, 0, true); else eng.disconnect(c);   // audio fades out (no click)
   cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const UiCable& x) { return x.from == k.from && x.fromPort == k.fromPort && x.to == k.to && x.toPort == k.toPort && x.toParam == k.toParam && x.type == k.type; }), cables.end());
+}
+// the × on a module: it goes without a gap in the music. An effect in the middle of a chain is bridged (what fed it now
+// goes straight on to where it went, fading in), and anything that makes sound rings out before it's gone
+void Ui::removeGently(UiMod* u) {
+  const int id = u->m->id; const ModuleDef* d = u->m->def;
+  const bool fx = !d->ins.empty() && d->ins[0].type == PType::Audio && !d->outs.empty() && d->outs[0].type == PType::Audio;
+  if (fx) { std::vector<UiCable> ins, outs; for (auto& c : cables) { if (c.to == id && c.type == PType::Audio && c.toPort == 0) ins.push_back(c); if (c.from == id && c.type == PType::Audio && c.fromPort == 0) outs.push_back(c); }
+    for (auto& a : ins) for (auto& b : outs) { UiMod *s = byId(a.from), *t = byId(b.to); if (s && t) connect(s, a.fromPort, t, b.toPort); } }
+  cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const UiCable& c) { return c.from == id || c.to == id; }), cables.end());
+  eng.retire(id);
+  mods.erase(std::remove_if(mods.begin(), mods.end(), [&](const std::unique_ptr<UiMod>& p) { return p.get() == u; }), mods.end());
+  drag = Drag(); selOn = false;
 }
 void Ui::set(UiMod* m, const std::string& k, float v) { const int i = m->m->def->paramIndex(k); if (i >= 0) m->m->p[i].store(v); }
 void Ui::clearPatch() { for (auto& u : mods) eng.remove(u->m->id); mods.clear(); cables.clear(); drag = Drag(); dd.reset(); menuOpen = false; }
@@ -76,6 +90,8 @@ static int trRows(Module* m) { return std::min(16, trShown(m)); }   // the Track
 static int panRowAt(const ModuleDef* d) { if (d->panIdx < 0) return -1; int t = d->paramIndex("width"); if (t < 0) t = d->paramIndex("level"); return t < 0 ? d->panIdx : t; }
 static int rowOf(const ModuleDef* d, int j) { const int p = d->panIdx, t = panRowAt(d); if (p < 0 || t == p) return j; if (j == p) return t; return j >= t && j < p ? j + 1 : j; }
 static int paramOfRow(const ModuleDef* d, int r) { const int p = d->panIdx, t = panRowAt(d); if (p < 0 || t == p) return r; if (r == t) return p; return r > t && r <= p ? r - 1 : r; }
+// effects can be bypassed: a straight audio IN to an audio OUT (not MIXER, which has four)
+static bool bypassable(const ModuleDef* d) { return d->cat == Cat::Proc && d->type != "mixer" && !d->ins.empty() && d->ins[0].type == PType::Audio && !d->outs.empty() && d->outs[0].type == PType::Audio; }
 Ui::Geom Ui::geom(const UiMod& u) const {
   const ModuleDef* d = u.m->def; const int jr = (int)std::max(d->ins.size(), d->outs.size()), np = u.fold ? 0 : (int)d->params.size();
   const int vh = d->type == "tracker" && d->vis ? trRows(u.m) * 6 + 1 : d->vis;
@@ -374,7 +390,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     auto box = [&](int bx, bool on, const char* l, int col) { if (on) c.rect(bx, fy, 9, 7, col); else c.frame(bx, fy, 9, 7, 18); c.text(l, bx + 3, fy + 1, on ? 15 : 9); };
     if (d->cat == Cat::Trig || d->cat == Cat::Mod) {   // sequencers and mod sources: simply on or off
       const bool on = !mu; if (on) c.rect(x + 3, fy, 15, 7, 17); else c.frame(x + 3, fy, 15, 7, 18); c.text(on ? "ON" : "OFF", x + (on ? 7 : 5), fy + 1, on ? 15 : 9); }
-    else { box(x + 3, mu, "M", 14); if (d->cat == Cat::Voice) box(x + 14, u.m->solo.load(), "S", 4); }   // only sound makers can be soloed
+    else { box(x + 3, mu, "M", 14); if (d->cat == Cat::Voice) box(x + 14, u.m->solo.load(), "S", 4); else if (bypassable(d)) box(x + 14, u.m->bypass.load(), "B", 12); }   // only sound makers can be soloed; effects can be bypassed
     box(x + w - 12, false, u.fold ? "+" : "-", 9);
     if (clocked) c.text("CLOCKED", x + w - 15 - Canvas::tw("CLOCKED"), fy + 1, 24); }
   c.ink = nullptr;
@@ -575,12 +591,14 @@ void Ui::pointerDown(float sx, float sy) {
   if (ly < HEAD) {
     if (!d->fixed && lx >= g.w - 8) {   // delete, after asking
       Dropdown q; q.items = {"DELETE " + d->name + "?", "YES, DELETE", "NO, KEEP IT"}; q.title = 0; q.danger = 1; q.x = u->x - viewX + g.w - 40; q.y = u->y - viewY + HEAD;
-      q.pick = [this, u](int i) { if (i == 1) { status("REMOVED " + u->m->def->name); remove(u); changed(); } }; openDropdown(q); return; }
+      q.pick = [this, u](int i) { if (i == 1) { status("REMOVED " + u->m->def->name); removeGently(u); changed(); } }; openDropdown(q); return; }
     drag.kind = D_MOVE; drag.m = u; drag.ox = wx - u->x; drag.oy = wy - u->y; return; }
   if (!d->fixed && ly >= g.h - FOOT) {
     const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod;
     if (onOff && lx >= 3 && lx < 18) { u->m->mute.store(!u->m->mute.load()); status(d->name + (u->m->mute.load() ? " OFF" : " ON")); changed(); return; }
     if (!onOff && lx >= 3 && lx < 12) { u->m->mute.store(!u->m->mute.load()); status(std::string(u->m->mute.load() ? "MUTED " : "UNMUTED ") + d->name); changed(); return; }
+    if (bypassable(d) && lx >= 14 && lx < 23) { u->m->bypass.store(!u->m->bypass.load());
+      status(u->m->bypass.load() ? "BYPASS " + d->name + ": THE DRY SOUND GOES STRAIGHT THROUGH" : d->name + " BACK IN", 3); changed(); return; }
     if (d->cat == Cat::Voice && lx >= 14 && lx < 23) { u->m->solo.store(!u->m->solo.load());
       bool any = false; for (auto& up : mods) if (up->m->def->cat == Cat::Voice && up->m->solo.load()) any = true;
       status(u->m->solo.load() ? "SOLO " + d->name + ": OTHER VOICES SILENT, EFFECTS STILL WORKING" : any ? "UNSOLO " + d->name : "SOLO OFF: EVERY VOICE PLAYS", 3); changed(); return; }
@@ -679,11 +697,15 @@ void Ui::pointerUp(float sx, float sy) {
   if (d.kind == D_BROWSE) { if (!d.moved) browserPick(d.k); return; }
   if (d.kind == D_GRAB || d.kind == D_PULL) { selectCable(d.grab, sx, sy); return; }
   if (d.kind == D_MOVE && d.splice >= 0 && d.splice < (int)cables.size()) {   // drop an effect into a cable
-    const UiCable c0 = cables[d.splice]; UiMod *a = byId(c0.from), *b = byId(c0.to), *m = d.m;
-    if (a && b) { unplug(c0); connect(a, c0.fromPort, m, m->m->def->inIndex("IN")); connect(m, m->m->def->outIndex("OUT"), b, c0.toPort);
+    // only if you say so: dropping a module on a cable asks first. Then the cable crossfades over to the new route
+    const UiCable c0 = cables[d.splice]; const int mid = d.m->m->id; changed();
+    Dropdown q; q.items = {"INSERT INTO THIS CABLE?", "YES, INSERT IT", "NO, JUST PUT IT HERE"}; q.title = 0; q.x = (int)sx + 4; q.y = (int)sy + 4;
+    q.pick = [this, c0, mid](int i) { if (i != 1) return; UiMod *a = byId(c0.from), *b = byId(c0.to), *m = byId(mid); bool still = false; for (auto& cb : cables) if (sameCable(cb, c0)) still = true;
+      if (!a || !b || !m || !still) { status("THAT CABLE HAS GONE", 3); return; }
+      unplug(c0); connect(a, c0.fromPort, m, m->m->def->inIndex("IN")); connect(m, m->m->def->outIndex("OUT"), b, c0.toPort);
       const int mi = m->m->def->paramIndex("mix"); if (mi >= 0) m->m->p[mi].store(0);   // fully dry, as the web version does, so nothing jumps out
-      status("INSERTED " + m->m->def->name + (mi >= 0 ? " (FULLY DRY: RAISE ITS MIX)" : ""), 4); }
-    changed(); return; }
+      status("INSERTED " + m->m->def->name + (mi >= 0 ? " (FULLY DRY: RAISE ITS MIX)" : ""), 4); changed(); };
+    openDropdown(q); return; }
   if (d.kind == D_PARAM && !d.moved && !d.held && (d.m->m->def->params[d.k].key == "pitch" || (d.m->m->def->type == "midiout" && d.m->m->def->params[d.k].key == "trans"))) {
     // a tap on PITCH: jump by octaves (on Sample, pitch is speed, so the speeds are named too)
     const ModuleDef* df = d.m->m->def; const int k = d.k, id = d.m->m->id; const bool smp = df->type == "sample", grains = df->type == "looper";

@@ -81,7 +81,9 @@ public:
   std::atomic<bool> mute{false}, solo{false};
   std::atomic<float> flash{0};     // lights the header when it fires (shown on screen)
   std::atomic<unsigned> fires[8] = {};
-  float panNow = 0;   // PAN as last applied (the engine ramps from it)   // how many triggers each output has sent: the screen sends a pulse along its cables
+  float panNow = 0;   // PAN as last applied (the engine ramps from it)
+  std::atomic<bool> bypass{false}; float byNow = 0;   // BYPASS: an effect fades over to its dry input
+  bool retiring = false; float retireT = 0, quietT = 0;   // being taken away, letting its tail ring out   // how many triggers each output has sent: the screen sends a pulse along its cables
   std::atomic<float> disp[64];     // values the screen draws (playheads, meters, shapes), written by the audio thread
   std::atomic<bool> clockedIn{false};   // something is patched into a CLOCK input
   float sr = 48000; double t = 0;  // sample rate and running time in seconds
@@ -119,11 +121,13 @@ public:
 };
 
 // a cable: audio, trigger, or modulation (into a setting)
-struct Cable { int from = 0, fromPort = 0, to = 0, toPort = -1, toParam = -1; PType type = PType::Audio; bool open = true; };
+struct Cable { int from = 0, fromPort = 0, to = 0, toPort = -1, toParam = -1; PType type = PType::Audio; bool open = true;
+  float g = 1, gt = 1; bool dieAtZero = false;   // an audio cable's level: it glides to gt (so cables fade in and out), and can go when silent
+  bool same(const Cable& o) const { return from == o.from && fromPort == o.fromPort && to == o.to && toPort == o.toPort && toParam == o.toParam && type == o.type; } };
 
 // commands from the screen thread to the audio thread
 struct Command {
-  enum Kind { ADD, REMOVE, CONNECT, DISCONNECT, ACTION, CLEAR, TRIGGER, SETBUF, PREVIEW } kind;
+  enum Kind { ADD, REMOVE, CONNECT, DISCONNECT, ACTION, CLEAR, TRIGGER, SETBUF, PREVIEW, FADE, RETIRE } kind;
   Module* mod = nullptr; int id = 0; Cable cable; char key[24] = {0}; Event ev; int port = 0; AudioBuf* buf = nullptr;
 };
 
@@ -157,6 +161,9 @@ public:
   void remove(int id) { send({Command::REMOVE, nullptr, id}); }
   void connect(const Cable& c) { Command k{Command::CONNECT}; k.cable = c; send(k); }
   void disconnect(const Cable& c) { Command k{Command::DISCONNECT}; k.cable = c; send(k); }
+  void fade(const Cable& c, float to, bool thenRemove) { Command k{Command::FADE}; k.cable = c; k.cable.gt = to; k.cable.dieAtZero = thenRemove; send(k); }   // glide a cable in or out
+  // take a module away gently: it stops listening at once, but its sound rings out (tails) before it goes
+  void retire(int id) { Command k{Command::RETIRE}; k.id = id; send(k); }
   void action(int id, const std::string& key) { Command k{Command::ACTION}; k.id = id; std::strncpy(k.key, key.c_str(), sizeof(k.key) - 1); send(k); }
   void trigger(int id, int port, Event ev) { Command k{Command::TRIGGER}; k.id = id; k.port = port; k.ev = ev; send(k); }
   void clear() { send({Command::CLEAR}); }
@@ -205,6 +212,9 @@ private:
 struct ScaleDef { const char* name; std::vector<int> steps; };
 const std::vector<ScaleDef>& scales();
 float midiOf(int degree, int root, int scale);
+// which key and scale best explain how much of each of the 12 notes there is (LISTEN, and the sound browser)
+struct KeyMatch { int root = 0, scale = 0, root2 = 0, scale2 = 0; float conf = 0, conf2 = 0; };
+KeyMatch matchKey(const float chroma[12]);
 inline int degOf(int oct, int step, int scale) { return (oct - 2) * (int)scales()[scale].steps.size() + step; }
 inline int nearDeg(float note, int root, int scale) { int best = 0; float bd = 1e9f; for (int i = -12; i < 90; i++) { const float d = std::fabs(midiOf(i, root, scale) - note); if (d < bd) { bd = d; best = i; } } return best; }
 extern const char* NOTE_NAMES[12];
