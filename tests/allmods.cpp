@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
     else { UiMod* v = ui.add("pluck", 150, 20); ui.connect(m, d->outs[0].name, v, "TRIG"); ui.connect(v, "OUT", out, "A");
       if (d->ins.size()) ui.connect(clk, "PULSE", m, d->ins[0].name);
       if (d->type == "tracker") { for (int i = 0; i < 16; i += 2) { m->m->seq[i * 2].store(60.f + i); m->m->seq[i * 2 + 1].store(0.8f); } } }
-    if (d->type == "tloop") ui.set(m, "len", 1);   // a short loop, so it plays back within the test
+    if (d->type == "tloop") { ui.set(m, "len", 1); ui.set(m, "rec", 1); }   // record a short loop, so it plays back within the test
     if (d->type == "stretch") ui.set(m, "src", 1);  // stretch a file
     if (d->type == "sample" || d->type == "looper" || d->type == "stretch") {   // give it a sound: a few seconds of a gliding tone with some noise
       AudioBuf* b = new AudioBuf(); b->sr = 44100; b->d.resize(44100 * 3); float ph = 0; Rng rr(5);

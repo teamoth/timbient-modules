@@ -175,31 +175,31 @@ static Reg rDucker(new ModuleDef{"ducker", "DUCKER", Cat::Proc, {{"IN", PType::A
 
 // ---------------- AMP: up to +36 dB, with a soft limiter ----------------
 struct Amp : Module {
-  Smooth g; float peak = 0;
+  Smooth g; float peak[2] = {0, 0};
   void prepare() override { g.setTime(0.012f, sr); g.snap(dbToGain(e[0])); }
   void render(int a, int b) override {
     g.t = dbToGain(e[0]); const bool lim = e[1] > 0.5f;
     for (int i = a; i < b; i++) { const float k = g.tick();
-      for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i] * k; peak = std::max(peak * 0.9999f, std::fabs(x)); out[0][ch][i] = lim ? std::tanh(x * 0.25f * 4) * 0.9f : x; } }
-    disp[0].store(peak);
+      for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i] * k; out[0][ch][i] = lim ? std::tanh(x * 0.25f * 4) * 0.9f : x; peak[ch] = std::max(peak[ch] * 0.9999f, std::fabs(out[0][ch][i])); } }
+    disp[0].store(peak[0]); disp[1].store(peak[1]);   // L, R
   }
 };
 static Reg rAmp(new ModuleDef{"amp", "AMP", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::round(v)) + "DB"; }), OP("limit", "LIMIT", {"OFF", "ON"}, 1)}, 5, 68, false, [] { return new Amp(); }});
+  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::round(v)) + "DB"; }), OP("limit", "LIMIT", {"OFF", "ON"}, 1)}, 13, 68, false, [] { return new Amp(); }});
 
 // ---------------- MIXER: four channels, each with level, pan and a send ----------------
 struct Mixer : Module {
-  Smooth lv[4], pl[4], pr_[4], sd[4]; float pk[4] = {0, 0, 0, 0};
+  Smooth lv[4], pl[4], pr_[4], sd[4]; float pk[4] = {0, 0, 0, 0}, pkR[4] = {0, 0, 0, 0};
   void prepare() override { for (int k = 0; k < 4; k++) { for (Smooth* s : {&lv[k], &pl[k], &pr_[k], &sd[k]}) s->setTime(0.012f, sr); } }
   void render(int a, int b) override {
     for (int k = 0; k < 4; k++) { float l, r; panGains(e[k * 3 + 1], l, r); lv[k].t = e[k * 3]; pl[k].t = l * 1.414f; pr_[k].t = r * 1.414f; sd[k].t = e[k * 3 + 2]; }
     for (int i = a; i < b; i++) {
       float L = 0, R = 0, SL = 0, SR = 0;
       for (int k = 0; k < 4; k++) { const float g = lv[k].tick(), gl = pl[k].tick(), gr = pr_[k].tick(), s = sd[k].tick(), xl = in[k][0][i], xr = in[k][1][i];
-        L += xl * g * gl; R += xr * g * gr; SL += xl * s; SR += xr * s; pk[k] = std::max(pk[k] * 0.9999f, std::max(std::fabs(xl), std::fabs(xr)) * g); }
+        L += xl * g * gl; R += xr * g * gr; SL += xl * s; SR += xr * s; pk[k] = std::max(pk[k] * 0.9999f, std::fabs(xl * g * gl)); pkR[k] = std::max(pkR[k] * 0.9999f, std::fabs(xr * g * gr)); }   // after its pan
       out[0][0][i] = L; out[0][1][i] = R; out[1][0][i] = SL; out[1][1][i] = SR;
     }
-    for (int k = 0; k < 4; k++) disp[k].store(pk[k]);
+    for (int k = 0; k < 4; k++) { disp[k].store(pk[k]); disp[4 + k].store(pkR[k]); }
   }
 };
 static std::vector<ParamDef> mixerParams() { std::vector<ParamDef> p; for (int k = 1; k <= 4; k++) { std::string n = std::to_string(k);

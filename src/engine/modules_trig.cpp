@@ -175,6 +175,6 @@ struct Out : Module {
 };
 static ParamDef eqP(const char* k, const char* l) { auto p = pr(k, l, -12, 12, 0); p.fmt = [](float v) { char b[16]; std::snprintf(b, 16, "%+.1fDB", v); return std::string(std::fabs(v) < 0.05f ? "0DB" : b); }; return p; }
 static Reg rOut(new ModuleDef{"out", "OUTPUT", Cat::Out, {{"A", PType::Audio}, {"B", PType::Audio}}, {},
-  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), eqP("low", "LOW"), eqP("mid", "MID"), eqP("high", "HIGH")}, 27, 68, true, [] { return new Out(); }});
+  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), eqP("low", "LOW"), eqP("mid", "MID"), eqP("high", "HIGH")}, 30, 68, true, [] { return new Out(); }});
 
 }  // namespace tb

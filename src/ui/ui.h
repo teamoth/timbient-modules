@@ -70,7 +70,9 @@ public:
   void browserScroll(float rows);
   void browserKey(int dir);               // up / down arrows: the next sound, heard straight away
   void closeBrowser();
-  void browserPick(int i);             // a tap on a row: open a folder, or hear a sound (a second tap stops it)
+  void browserPick(int i);
+  void browserPreview();   // PREVIEW (and Space): hear the picked sound, or stop it
+  void browserLoad();      // LOAD IT (and Enter)             // a tap on a row: open a folder, or hear a sound (a second tap stops it)
   std::function<void(const std::string&)> onPreview;                     // play a file to the speakers (empty: stop)
   std::function<void(int, int, const std::string&)> onBrowseLoad;        // put a file in a module's place
   std::function<void()> onBrowseFolder;                                  // ask the system for a folder

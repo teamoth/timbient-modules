@@ -18,7 +18,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.15.1";
+static const char* VERSION = "0.16.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -362,7 +362,8 @@ int main(int argc, char** argv) {
           if (ui.br.open) {   // the sound browser: arrows step through, Enter loads, Escape closes
             if (ev.key.key == SDLK_DOWN) { ui.browserKey(1); break; } if (ev.key.key == SDLK_UP) { ui.browserKey(-1); break; }
             if (ev.key.key == SDLK_ESCAPE) { ui.closeBrowser(); break; }
-            if ((ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) && ui.br.sel >= 0 && !ui.br.items[ui.br.sel].folder && ui.onBrowseLoad) { ui.onBrowseLoad(ui.br.target, ui.br.slot, ui.br.dir + "/" + ui.br.items[ui.br.sel].name); break; } }
+            if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) { ui.browserLoad(); break; }
+            if (ev.key.key == SDLK_SPACE) { ui.browserPreview(); break; } }
           if (ev.key.key == SDLK_F11 || (ev.key.key == SDLK_F && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)))) ui.wantFullscreen = !ui.isFullscreen;
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
           if (ev.key.key == SDLK_S && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) {   // Cmd/Ctrl+S saves to the session's file (Shift: SAVE AS)
