@@ -87,6 +87,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: Which version this is
+        id: ver
+        run: |
+          echo "version=$(grep -o 'VERSION = "[^"]*"' src/app/main.cpp | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u '+%-d %B %Y, %H:%M UTC')" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -95,8 +101,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: Latest build
+          name: "Timbient Modules ${{ steps.ver.outputs.version }}"
           prerelease: true
           make_latest: true
-          body: "Built automatically from the newest code. Mac: unzip, move to Applications, then see the README for the one-time Terminal step."
+          body: |
+            **Version ${{ steps.ver.outputs.version }}**, built ${{ steps.ver.outputs.date }}.
+
+            Built automatically from the newest code. Mac: unzip, move to Applications, then see the README for the one-time Terminal step.
           files: dist/*
