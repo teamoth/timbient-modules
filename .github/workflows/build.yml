@@ -53,6 +53,9 @@ jobs:
           codesign --force --deep --sign - "build/Timbient Modules.app"
           mkdir -p pkg && cp -R "build/Timbient Modules.app" pkg/ && cp CREDITS.md pkg/
           ditto -c -k pkg Timbient-Modules-Mac.zip
+      - name: "Check it runs on Windows 7 (32-bit)"
+        if: matrix.name == 'windows32'
+        run: python tools/check_win7.py "build/Release/Timbient Modules.exe"
       - name: Package (Windows)
         if: matrix.name == 'windows' || matrix.name == 'windows32'
         shell: pwsh

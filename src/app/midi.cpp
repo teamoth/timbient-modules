@@ -1,5 +1,6 @@
 // Timbient native: MIDI devices (see midi.h)
 #include "midi.h"
+#include <SDL3/SDL_timer.h>
 #include "RtMidi.h"
 #include <algorithm>
 #include <chrono>
@@ -73,7 +74,7 @@ void Midi::sendLoop() {
       }
       pending.erase(pending.begin(), pending.begin() + k);
     }
-    std::this_thread::sleep_for(std::chrono::microseconds(800));
+    SDL_DelayNS(800000);   // (not std::this_thread::sleep_for: on Windows that needs Windows 8, and the 32-bit build runs on Windows 7)
   }
 }
 
