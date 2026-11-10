@@ -190,7 +190,8 @@ static Reg rTombola(new ModuleDef{"tombola", "TOMBOLA", Cat::Trig, {{"ADD", PTyp
 // The first take sets the loop (when RECORD goes off); after that, recording overdubs a new layer. START and LENGTH
 // choose which part of what's recorded plays round.
 struct NoteLooper : Module {
-  enum { REC, THRU, START, LEN, DIR, SPEED, TRANS, QUANT, VEL, CHANCE, UNDO, HALVE, DOUBLE, CLEAR };
+  enum { REC, THRU, START, LEN, DIR, SPEED, TRANS, QUANT, VEL, CHANCE, UNDO, HALVE, DOUBLE, CLEAR, DRIFT };
+  struct Late { float note, vel; double left; }; Late late[64]; int nLate = 0;   // DRIFT: notes held back a moment
   double pos = 0, recPos = 0; bool firstTake = false, wasRec = false, fwd = true; int layer = 0; double last = -1; float cp = 0, ppb = 1;
   NoteLooper() { allocEv(); }
   bool clocked() const { return clockedIn.load(std::memory_order_relaxed) && cp > 0; }
@@ -224,9 +225,14 @@ struct NoteLooper : Module {
   void play(double a0, double a1) {   // the notes between two positions (either way round)
     const double lo = std::min(a0, a1), hi = std::max(a0, a1); const int n = count();
     for (int i = 0; i < n; i++) { const double tt = ev[i * 4].load(std::memory_order_relaxed); if (tt <= lo || tt > hi) continue;
-      Event o; o.note = ev[i * 4 + 1].load() + e[TRANS]; o.vel = ev[i * 4 + 2].load() * e[VEL]; if (o.note >= 0 && o.note < 128) emit(0, o); }
+      Event o; o.note = ev[i * 4 + 1].load() + e[TRANS]; o.vel = ev[i * 4 + 2].load() * e[VEL]; if (o.note < 0 || o.note >= 128) continue;
+      if (e[DRIFT] > 0.001f && nLate < 64) {   // DRIFT: each note a little late, by a different amount each time round (up to a third of a beat), and a touch softer or louder
+        const double d = rng.uni() * rng.uni() * e[DRIFT] * 0.33 * beatSecs() * sr; o.vel = clampf(o.vel * (1 + (rng.uni() - 0.5f) * 0.3f * e[DRIFT]), 0.02f, 1);
+        late[nLate++] = {o.note, o.vel, d}; continue; }
+      emit(0, o); }
   }
   void render(int a, int b) override {
+    for (int k = 0; k < nLate; ) { late[k].left -= (b - a); if (late[k].left <= 0) { eng->pos = std::max(a, b + (int)late[k].left); Event o; o.note = late[k].note; o.vel = late[k].vel; emit(0, o); late[k] = late[--nLate]; } else k++; }
     const bool rec = e[REC] > 0.5f; eng->pos = a;
     if (rec && !wasRec) { if (count() == 0) { firstTake = true; recPos = 0; layer = 0; } else layer++; }   // RECORD on: the first take, or a new layer
     if (!rec && wasRec && firstTake) { firstTake = false; const double L = clocked() ? std::max(1.0, std::round(recPos)) : std::max(0.25, recPos);   // the first take ends: that's the loop
@@ -254,6 +260,6 @@ static Reg rNoteLooper(new ModuleDef{"nloop", "NOTE LOOPER", Cat::Trig, {{"NOTES
    fine(fmt(pr("start", "START", 0, 128, 0), beatsText)), fmt(prExp("lenb", "LENGTH", 0.25f, 128, 16), beatsText),
    OP("dir", "PLAYS", {"FORWARDS", "BACKWARDS", "PING-PONG"}, 0), OP("speed", "SPEED", {"HALF", "NORMAL", "DOUBLE"}, 1), ST("trans", "TRANSPOSE", -24, 24, 0),
    OP("quant", "QUANTISE", {"OFF", "1/16", "1/8", "1/4"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
-   ACT("undo", "UNDO LAYER"), ACT("halve", "HALVE"), ACT("double", "DOUBLE"), ACT("clear", "CLEAR")}, 30, 68, false, [] { return new NoteLooper(); }});
+   ACT("undo", "UNDO LAYER"), ACT("halve", "HALVE"), ACT("double", "DOUBLE"), ACT("clear", "CLEAR"), pct("drift", "DRIFT", 0)}, 30, 68, false, [] { return new NoteLooper(); }});
 
 }  // namespace tb

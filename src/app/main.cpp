@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.22.2";
+static const char* VERSION = "0.23.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
     giveSound(u, b, true); ui.status("CAUGHT " + std::to_string((int)std::lround(n / engine.sr)) + "S");
   };
   auto loadData = [&](const Json& data, const std::string& what) {
-    const std::string note = loadPatch(ui, data); ui.viewX = 0; ui.viewY = 0; dirty = true; saveT = 0.5f;
+    const std::string note = loadPatch(ui, data); ui.centrePending = true; dirty = true; saveT = 0.5f;   // the view: to the middle of the session
     ui.status(note.empty() ? "LOADED " + what : note, note.empty() ? 3 : 8);
     for (auto& up : ui.mods) restoreSound(up.get());
     histDirty = true; histT = 0.1f;

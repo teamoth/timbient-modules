@@ -298,8 +298,9 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int i = 0; i < n; i++) { const float tt = m->ev[i * 4].load(); const float nt = m->ev[i * 4 + 1].load(), vel = m->ev[i * 4 + 2].load(); const int ly = (int)m->ev[i * 4 + 3].load();
       const bool in = st == 1 || (tt >= S && tt < S + L); const int px0 = X(tt), py0 = y + H - 2 - (int)std::lround((nt - lo) / (hi - lo) * (H - 3));
       c.rect(px0, py0, 2, 2, !in ? 21 : ly == top ? (vel > 0.6f ? 4 : 9) : ly == top - 1 ? 24 : 44); }
-    if (st == 1) { char b[32]; std::snprintf(b, 32, "RECORDING %.1f BEATS", D(3)); c.text(b, x + 2, y + 1, 14); }
-    else if (n == 0) c.text("RECORD SOME NOTES", x + 2, y + 1, 18);
+    auto label = [&](const std::string& t, int col) { c.rect(x + 1, y + 1, Canvas::tw(t) + 3, 7, 26); c.text(t, x + 2, y + 2, col); };   // on its own patch, clear of the grid
+    if (st == 1) { char b[32]; std::snprintf(b, 32, "RECORDING %.1f BEATS", D(3)); label(b, 14); }
+    else if (n == 0) label("RECORD SOME NOTES", 18);
     else { const int hx = X(D(0)); for (int j = 0; j < H; j++) c.px(hx, y + j, st == 2 ? 14 : 9); }
   } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
     const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
@@ -472,7 +473,17 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   c.ink = nullptr;
 }
 
+// after loading: the view goes to the middle of the session (or its top-left corner, if it's bigger than the screen)
+void Ui::centreView() {
+  if (mods.empty() || lastW <= 0) { viewX = viewY = 0; return; }
+  int x0 = 1 << 30, y0 = 1 << 30, x1 = -(1 << 30), y1 = -(1 << 30);
+  for (auto& u : mods) { const Geom g = geom(*u); x0 = std::min(x0, u->x - 4); y0 = std::min(y0, u->y); x1 = std::max(x1, u->x + g.w + 4); y1 = std::max(y1, u->y + g.h); }
+  const int vw = lastW, vh = lastH - TOP;
+  viewX = x1 - x0 <= vw ? (x0 + x1) / 2 - vw / 2 : x0 - 4;
+  viewY = (y1 - y0 <= vh ? (y0 + y1) / 2 - vh / 2 : y0 - 4) - TOP;
+}
 void Ui::draw(Canvas& c, float dt) {
+  lastW = c.W; lastH = c.H; if (centrePending) { centrePending = false; centreView(); }
   blink += dt;
   lastW = c.W;
   c.rect(0, 0, c.W, c.H, 25);

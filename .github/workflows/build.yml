@@ -17,7 +17,7 @@ jobs:
             name: mac
           - os: windows-latest
             name: windows
-          - os: windows-latest
+          - os: ubuntu-22.04
             name: windows32
           - os: ubuntu-22.04
             name: linux
@@ -32,9 +32,14 @@ jobs:
       - name: "Configure (Mac, one app for both Intel and Apple Silicon)"
         if: matrix.name == 'mac'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64"
+      - name: "MinGW, for the 32-bit Windows version (it still supports Windows 7)"
+        if: matrix.name == 'windows32'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 zip
       - name: "Configure (Windows 32-bit, for older computers)"
         if: matrix.name == 'windows32'
-        run: cmake -B build -A Win32 -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/mingw32.cmake -DCMAKE_BUILD_TYPE=Release
       - name: Configure
         if: matrix.name != 'mac' && matrix.name != 'windows32'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -55,16 +60,20 @@ jobs:
           ditto -c -k pkg Timbient-Modules-Mac.zip
       - name: "Check it runs on Windows 7 (32-bit)"
         if: matrix.name == 'windows32'
-        run: python tools/check_win7.py "build/Release/Timbient Modules.exe"
+        run: python3 tools/check_win7.py "build/Timbient Modules.exe"
+      - name: Package (Windows 32-bit)
+        if: matrix.name == 'windows32'
+        run: |
+          mkdir -p "pkg/Timbient Modules" && cp "build/Timbient Modules.exe" CREDITS.md "pkg/Timbient Modules/"
+          (cd pkg && zip -r ../Timbient-Modules-Windows-32bit.zip "Timbient Modules")
       - name: Package (Windows)
-        if: matrix.name == 'windows' || matrix.name == 'windows32'
+        if: matrix.name == 'windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "pkg/Timbient Modules" | Out-Null
           Copy-Item "build/Release/Timbient Modules.exe" "pkg/Timbient Modules/"
           Copy-Item "CREDITS.md" "pkg/Timbient Modules/"
-          $zip = if ("${{ matrix.name }}" -eq "windows32") { "Timbient-Modules-Windows-32bit.zip" } else { "Timbient-Modules-Windows.zip" }
-          Compress-Archive -Path "pkg/Timbient Modules" -DestinationPath $zip
+          Compress-Archive -Path "pkg/Timbient Modules" -DestinationPath Timbient-Modules-Windows.zip
       - name: Package (Linux)
         if: matrix.name == 'linux'
         run: |

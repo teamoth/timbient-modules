@@ -126,6 +126,7 @@ private:
   int jackY(int k) const { return 8 + k * 7 + 3; }
 public:
   bool unplugSelected();   // Delete / Backspace, or the UNPLUG button
+  void centreView(); bool centrePending = false; int lastH = 0;   // the view to the middle of the session (done at the next frame, when the screen's size is known)
   int trFocus = 0;          // the Tracker last touched: the arrow keys and Delete work on it
   bool trackerKey(int key); // 1 up, 2 down, 3 left, 4 right, 5 delete
   static constexpr bool jacksIn = true;
