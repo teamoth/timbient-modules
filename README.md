@@ -7,13 +7,10 @@ I've had a lot of help from Claude to build this and the intention is that it's 
 
 **Status:** An early preview. Things are still being developed, but it does work. Improvements are onging. Testing is happening on:
 
-Windows 64bit (Surface Go 2)
-
-Windows 32bit (Panasonic CF-U1)
-
-Mac (2017 MBP)
-
-Currently untested on Linux.
+- Windows 64bit (Surface Go 2)
+- Windows 32bit (Panasonic CF-U1)
+- Mac (2017 MBP)
+- Linux - currently untested
 
 ## Download
 
