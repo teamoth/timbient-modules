@@ -184,4 +184,72 @@ static Reg rTombola(new ModuleDef{"tombola", "TOMBOLA", Cat::Trig, {{"ADD", PTyp
    pct("bounce", "BOUNCE", 0.6f), fmt(pct("dslv", "DISSOLVE", 0), [](float v) { return v < 0.01f ? std::string("OFF") : std::to_string((int)std::lround(v * 100)) + "%"; }),
    ST("maxb", "BALLS", 1, 12, 8), ST("sides", "SIDES", 3, 8, 6), OP("walls", "WALLS", {"ALL PLAY", "EVERY 2ND", "ONE WALL"}, 0), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), ACT("clear", "CLEAR NOTES")}, 40, 68, false, [] { return new Tombola(); }});
 
+// ---------------- NOTE LOOPER: records the notes that come in (from MIDI IN or any sequencer) and plays them round ----------------
+// The first take sets the loop's length (when RECORD goes off). After that, recording overdubs a new layer on top.
+// Times are kept in seconds, or in beats of a clock patched into CLOCK (so it follows the tempo).
+struct NoteLooper : Module {
+  enum { REC, THRU, LEN, BEATS, DIR, SPEED, TRANS, QUANT, VEL, CHANCE, UNDO, HALVE, DOUBLE, CLEAR };
+  double pos = 0, recPos = 0; bool firstTake = false, wasRec = false, fwd = true; int layer = 0; double last = -1; float cp = 0, ppb = 1;
+  NoteLooper() { allocEv(); }
+  bool clocked() const { return clockedIn.load(std::memory_order_relaxed) && cp > 0; }
+  double unitLen() const { return clocked() ? e[BEATS] : e[LEN]; }   // the loop: seconds, or beats
+  double perSample() const { return clocked() ? 1.0 / (sr * cp * ppb) : 1.0 / sr; }
+  int count() const { return evN.load(std::memory_order_relaxed); }
+  void add(double t, float note, float vel) { const int n = count(); if (n >= EV_MAX) return;
+    ev[n * 4].store((float)t); ev[n * 4 + 1].store(note); ev[n * 4 + 2].store(vel); ev[n * 4 + 3].store((float)layer); evN.store(n + 1); }
+  void blockStart(int) override { clockedIn.store(patched(1)); }
+  void trig(int port, const Event& in) override {
+    const double now = t + eng->pos / sr;
+    if (port == 1) { if (in.period > 0) cp = in.period; else if (last >= 0) { const float p0 = (float)(now - last); if (p0 > 0.01f && p0 < 8) cp = cp > 0 ? cp * 0.6f + p0 * 0.4f : p0; }
+      last = now; ppb = in.ppb > 0 ? in.ppb : (ppb > 0 ? ppb : 1); return; }
+    if (port == 2) { p[REC].store(p[REC].load() > 0.5f ? 0.f : 1.f); return; }   // REC in: each trigger starts or stops recording
+    if (port != 0) return;
+    if (e[THRU] > 0.5f) emit(0, in);   // THRU: you hear what comes in
+    if (e[REC] < 0.5f) return;
+    double tt = firstTake ? recPos : pos;
+    if (clocked() && e[QUANT] > 0.5f) { static const double G[4] = {0, 0.25, 0.5, 1}; const double g = G[(int)e[QUANT] & 3]; tt = std::round(tt / g) * g; if (!firstTake && tt >= unitLen()) tt -= unitLen(); }
+    add(tt, in.note, in.vel);
+  }
+  void action(const std::string& k) override {
+    const int n = count(); const double L = unitLen();
+    if (k == "clear") { evN.store(0); layer = 0; firstTake = false; pos = 0; }
+    else if (k == "undo") { int top = -1; for (int i = 0; i < n; i++) top = std::max(top, (int)ev[i * 4 + 3].load()); int w = 0;   // the last layer goes
+      for (int i = 0; i < n; i++) if ((int)ev[i * 4 + 3].load() != top) { for (int c = 0; c < 4; c++) ev[w * 4 + c].store(ev[i * 4 + c].load()); w++; } evN.store(w); layer = std::max(0, top); }
+    else if (k == "halve") { p[clocked() ? BEATS : LEN].store((float)std::max(clocked() ? 1.0 : 0.1, L / 2)); }   // the notes past the end stay, so DOUBLE or LENGTH can bring them back
+    else if (k == "double") { int m = n; for (int i = 0; i < n && m < EV_MAX; i++) { const double tt = ev[i * 4].load(); if (tt >= L) continue;
+        ev[m * 4].store((float)(tt + L)); for (int c = 1; c < 4; c++) ev[m * 4 + c].store(ev[i * 4 + c].load()); m++; } evN.store(m);
+      p[clocked() ? BEATS : LEN].store((float)std::min(clocked() ? 64.0 : 120.0, L * 2)); }
+  }
+  void play(double a0, double a1) {   // the notes between two positions (either way round)
+    const double lo = std::min(a0, a1), hi = std::max(a0, a1); const int n = count();
+    for (int i = 0; i < n; i++) { const double tt = ev[i * 4].load(std::memory_order_relaxed); if (tt <= lo || tt > hi) continue;
+      Event o; o.note = ev[i * 4 + 1].load() + e[TRANS]; o.vel = ev[i * 4 + 2].load() * e[VEL]; if (o.note >= 0 && o.note < 128) emit(0, o); }
+  }
+  void render(int a, int b) override {
+    const bool rec = e[REC] > 0.5f; eng->pos = a;
+    if (rec && !wasRec) { if (count() == 0) { firstTake = true; recPos = 0; layer = 0; } else layer++; }   // RECORD on: the first take, or a new layer
+    if (!rec && wasRec && firstTake) { firstTake = false; const double L = clocked() ? std::max(1.0, std::round(recPos)) : std::max(0.1, recPos);   // the first take ends: that's the loop
+      p[clocked() ? BEATS : LEN].store((float)L); e[clocked() ? BEATS : LEN] = (float)L; pos = 0; fwd = true; }
+    wasRec = rec;
+    const double step = perSample() * (b - a) * (e[SPEED] < 0.5f ? 0.5 : e[SPEED] < 1.5f ? 1.0 : 2.0);
+    if (firstTake) { recPos += step; disp[0].store(0); disp[1].store(1); disp[3].store((float)recPos); }
+    else if (count() > 0) {
+      const double L = std::max(1e-3, unitLen()); const int dir = (int)e[DIR];
+      if (dir == 0) fwd = true; else if (dir == 1) fwd = false;
+      double np = pos + (fwd ? step : -step);
+      if (np >= L) { if (dir == 2) { play(pos, L); fwd = false; np = L - (np - L); play(np, L); } else { play(pos, L + 1e-9); np -= L; play(-1e-9, np); } }
+      else if (np < 0) { if (dir == 2) { play(np, pos); fwd = true; np = -np; play(0, np); } else { play(-1e-9, pos); np += L; play(np, L + 1e-9); } }
+      else play(pos, np);
+      pos = std::max(0.0, std::min(L, np));
+      disp[0].store((float)(pos / L)); disp[1].store(rec ? 2.f : 0.f);
+    } else { disp[0].store(0); disp[1].store(0); }
+    disp[2].store((float)unitLen()); disp[4].store(clocked() ? 1.f : 0.f); disp[5].store((float)layer);
+  }
+};
+static Reg rNoteLooper(new ModuleDef{"nloop", "NOTE LOOPER", Cat::Trig, {{"NOTES", PType::Trig}, {"CLOCK", PType::Trig}, {"REC", PType::Trig}}, {{"NOTES", PType::Trig}},
+  {OP("rec", "RECORD", {"OFF", "ON"}, 0), OP("thru", "THRU", {"OFF", "ON"}, 1), only(T("len", "LENGTH", 0.1f, 120, 8), "free"), only(ST("beats", "BEATS", 1, 64, 16), "clock"),
+   OP("dir", "PLAYS", {"FORWARDS", "BACKWARDS", "PING-PONG"}, 0), OP("speed", "SPEED", {"HALF", "NORMAL", "DOUBLE"}, 1), ST("trans", "TRANSPOSE", -24, 24, 0),
+   only(OP("quant", "QUANTISE", {"OFF", "1/16", "1/8", "1/4"}, 0), "clock"), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
+   ACT("undo", "UNDO LAYER"), ACT("halve", "HALVE"), ACT("double", "DOUBLE"), ACT("clear", "CLEAR")}, 30, 68, false, [] { return new NoteLooper(); }});
+
 }  // namespace tb

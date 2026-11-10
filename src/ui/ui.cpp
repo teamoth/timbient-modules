@@ -16,7 +16,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
-  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "midi", "midiout"}},
+  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "midi", "midiout"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
   {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
@@ -105,10 +105,15 @@ static bool bypassable(const ModuleDef* d) { return d->cat == Cat::Proc && d->ty
 // a sequencer's own KEY and SCALE, or the session's when set to GLOBAL
 static int keyOf(const UiMod& u, const Engine& eng) { const int k = u.m->def->keyIdx; const int v = k >= 0 ? (int)u.m->p[k].load() : 0; return v >= 1 ? v - 1 : eng.key.root.load(); }
 static int scaleOf(const UiMod& u, const Engine& eng) { const int k = u.m->def->scaleIdx; const int v = k >= 0 ? (int)u.m->p[k].load() : 0; return v >= 1 && v <= (int)scales().size() ? v - 1 : eng.key.scale.load(); }
+// NOTE GRID's SIZE: bigger buttons (and a wider module) so long note names sit comfortably
+void keysCell(const UiMod& u, int& cw, int& ch) { cw = 15; ch = 9; if (u.m->def->type != "keys") return; const int k = u.m->def->paramIndex("size"); const int z = k >= 0 ? (int)u.m->p[k].load() : 0;
+  static const int W[3] = {15, 19, 24}, H[3] = {9, 11, 13}; cw = W[std::max(0, std::min(2, z))]; ch = H[std::max(0, std::min(2, z))]; }
 Ui::Geom Ui::geom(const UiMod& u) const {
   const ModuleDef* d = u.m->def; const int jr = (int)std::max(d->ins.size(), d->outs.size()), np = u.fold ? 0 : (int)rowOrder(u).size();
-  const int vh = d->type == "tracker" && d->vis ? trRows(u.m) * 6 + 1 + trHead(u.m) : d->vis;
-  Geom g; g.jr = jr; g.vh = vh; g.vy = HEAD + jr * ROW + (vh ? 1 : 0); g.py = HEAD + jr * ROW + (vh ? vh + 2 : 0); g.h = g.py + np * ROW + FOOT; g.w = d->width; return g;
+  int cw = 15, ch = 9; keysCell(u, cw, ch);
+  const int vh = d->type == "tracker" && d->vis ? trRows(u.m) * 6 + 1 + trHead(u.m) : d->type == "keys" ? ch * 4 : d->vis;
+  Geom g; g.jr = jr; g.vh = vh; g.vy = HEAD + jr * ROW + (vh ? 1 : 0); g.py = HEAD + jr * ROW + (vh ? vh + 2 : 0); g.h = g.py + np * ROW + FOOT;
+  g.w = d->width + (d->type == "keys" ? 8 * (cw - 15) : 0); return g;
 }
 UiMod* Ui::hit(int wx, int wy, int& lx, int& ly) {
   for (int i = (int)mods.size() - 1; i >= 0; i--) { UiMod& u = *mods[i]; const Geom g = geom(u);
@@ -282,6 +287,19 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     const float gr = clampf(-D(0) / 18, 0, 1); const int gy = y + 16;   // GR: how much it's turning down (red, from the right)
     c.text("GR", x, gy - 1, 18); c.rect(bx, gy, bw, 2, 21); if (gr > 0.003f) c.rect(bx + bw - (int)std::lround(gr * bw), gy, (int)std::lround(gr * bw), 2, 14);
     if (ty == "master") { const float gg = clampf(-D(2) / 12, 0, 1); if (gg > 0.003f) c.rect(bx + bw - (int)std::lround(gg * bw), gy + 1, (int)std::lround(gg * bw), 1, 12); }
+  } else if (ty == "nloop") {   // the loop's notes: time along, pitch up; newer layers brighter; the playhead; red while recording
+    const int H = vh, n = m->evN.load(); const float L = std::max(1e-3f, D(2)); const int st = (int)D(1);
+    c.rect(x, y, w, H, 25);
+    float lo = 200, hi = -1; for (int i = 0; i < n; i++) { const float nt = m->ev[i * 4 + 1].load(); lo = std::min(lo, nt); hi = std::max(hi, nt); }
+    if (hi < lo) { lo = 48; hi = 72; } if (hi - lo < 12) { const float mid = (hi + lo) / 2; lo = mid - 6; hi = mid + 6; }
+    const float span = st == 1 ? std::max(1.f, D(3)) : L; const int top = (int)D(5);
+    for (int k = 0; k <= 4; k++) { const int gx = x + k * (w - 1) / 4; for (int j = 0; j < H; j += 2) c.px(gx, y + j, 21); }   // quarters of the loop
+    for (int i = 0; i < n; i++) { const float tt = m->ev[i * 4].load(); if (tt > span) continue; const float nt = m->ev[i * 4 + 1].load(), vel = m->ev[i * 4 + 2].load(); const int ly = (int)m->ev[i * 4 + 3].load();
+      const int px0 = x + (int)std::lround(tt / span * (w - 2)), py0 = y + H - 2 - (int)std::lround((nt - lo) / (hi - lo) * (H - 3));
+      c.rect(px0, py0, 2, 2, ly == top ? (vel > 0.6f ? 4 : 9) : ly == top - 1 ? 24 : 44); }
+    if (st == 1) { char b[32]; std::snprintf(b, 32, D(4) > 0.5f ? "RECORDING %.1f BEATS" : "RECORDING %.1fS", D(3)); c.text(b, x + 2, y + 1, 14); }
+    else if (n == 0) c.text("RECORD SOME NOTES", x + 2, y + 1, 18);
+    else { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < H; j++) c.px(hx, y + j, st == 2 ? 14 : 9); }
   } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
     const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
       const int h = std::max(0, std::min(5, (int)std::lround(std::sqrt(D(4 + k)) * 5))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
@@ -302,10 +320,11 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
   } else if (ty == "keys") {
     const int root = keyOf(u, eng), sc = scaleOf(u, eng), n = (int)scales()[sc].steps.size();
     const int oct = (int)m->p[1].load(), rowStep = 8;   // each row carries on up the scale from the row below
-    for (int i = 0; i < 32; i++) { const int deg = (i / 8) * rowStep + (i % 8), note = (int)midiOf(degOf(oct, deg, sc), root, sc), cx = (i % 8) * 15, cy = (3 - i / 8) * 9;   // wide enough for C#4
+    int kcw, kch; keysCell(u, kcw, kch);
+    for (int i = 0; i < 32; i++) { const int deg = (i / 8) * rowStep + (i % 8), note = (int)midiOf(degOf(oct, deg, sc), root, sc), cx = (i % 8) * kcw, cy = (3 - i / 8) * kch;
       u.lit[i] = std::max(0.f, u.lit[i] - dt);
       const bool lit = u.lit[i] > 0, isRoot = deg % n == 0;
-      c.rect(x + cx, y + cy, 14, 8, lit ? 4 : isRoot ? 24 : 21); const std::string t = noteName(note); c.text(t, x + cx + 7 - Canvas::tw(t) / 2, y + cy + 2, lit || isRoot ? 15 : 9); }
+      c.rect(x + cx, y + cy, kcw - 1, kch - 1, lit ? 4 : isRoot ? 24 : 21); const std::string t = noteName(note); c.text(t, x + cx + kcw / 2 - Canvas::tw(t) / 2, y + cy + (kch - 5) / 2, lit || isRoot ? 15 : 9); }
   } else if (ty == "mixer") {
     for (int k = 0; k < 4; k++) { const int cx = x + k * 13; const float v = clampf((20 * std::log10(D(k) + 1e-6f) + 48) / 48, 0, 1);
       const float vr = clampf((20 * std::log10(D(4 + k) + 1e-6f) + 48) / 48, 0, 1);   // each channel: L and R
@@ -590,7 +609,7 @@ void Ui::keyEnter() { if (!ask) return; auto a = std::move(ask); std::string t =
 
 // ---------------- input ----------------
 void Ui::keysPress(UiMod& u, int x, int y) {
-  const int col = x / 15, row = 3 - y / 9; if (col < 0 || col > 7 || row < 0 || row > 3) return;
+  int kcw, kch; keysCell(u, kcw, kch); const int col = x / kcw, row = 3 - y / kch; if (col < 0 || col > 7 || row < 0 || row > 3) return;
   const int i = row * 8 + col, sc = scaleOf(u, eng), n = (int)scales()[sc].steps.size(), rowStep = 8;
   Event ev; ev.note = midiOf(degOf((int)u.m->p[1].load(), row * rowStep + col, sc), keyOf(u, eng), sc); ev.vel = u.m->p[0].load();
   eng.trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;

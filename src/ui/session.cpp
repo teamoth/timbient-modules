@@ -10,6 +10,12 @@
 
 namespace tb {
 
+// NOTE LOOPER: its notes as [when, note, velocity, layer]
+static Json evSave(Module* m) { Json a = Json::array(); const int n = m->evN.load(); for (int i = 0; i < n; i++) { Json e = Json::array(); for (int c = 0; c < 4; c++) e.push(Json::number(m->ev[i * 4 + c].load())); a.push(e); } return a; }
+static void evLoad(Module* m, const Json* p) { const Json* a = p ? p->get("notes") : nullptr; int n = 0;
+  if (a && a->t == Json::ARR) for (auto& e : a->a) { if (n >= Module::EV_MAX) break; if (e.t != Json::ARR || e.a.size() < 4) continue; for (int c = 0; c < 4; c++) m->ev[n * 4 + c].store(e.a[c].t == Json::NUM ? (float)e.a[c].n : 0); n++; }
+  m->evN.store(n); }
+
 // the Tracker's steps, a column at a time: [note, velocity] or null, up to the last one used (column 1 is "seq", as the web version keeps it)
 static Json seqCol(Module* m, int col) {
   int last = -1; for (int i = 0; i < Module::SEQ_MAX; i++) if (m->seq[Module::si(i, col)].load() >= 0) last = i;
@@ -56,6 +62,7 @@ Json serializePatch(Ui& ui) {
   for (auto& up : ui.mods) { UiMod& u = *up; const ModuleDef* def = u.m->def; Json m = Json::object();
     m.set("id", Json::number(u.m->id)); m.set("type", Json::string(def->type)); m.set("x", Json::number(u.x)); m.set("y", Json::number(u.y));
     Json p = Json::object(); for (size_t k = 0; k < def->params.size(); k++) if (!def->params[k].act) p.set(def->params[k].key, Json::number(u.m->p[k].load()));
+    if (u.m->ev && u.m->evN.load() > 0) p.set("notes", evSave(u.m));
     if (u.m->seq) { p.set("seq", seqCol(u.m, 0)); bool more = false; Json mc = Json::array();   // the Tracker's steps; columns 2 to 8 in "seqc"
       for (int c = 1; c < Module::SEQ_COLS; c++) { Json sq = seqCol(u.m, c); if (!sq.a.empty()) more = true; mc.push(sq); } if (more) p.set("seqc", mc); }
     if (!u.snd[0].id.empty()) p.set("audio", Json::string(u.snd[0].id));   // the first sound, as the web version keeps it
@@ -94,6 +101,7 @@ void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& c
     const Json* p = m.get("p");
     for (size_t k = 0; k < def->params.size(); k++) { if (def->params[k].act) continue; const Json* v = p ? p->get(def->params[k].key) : nullptr; if (v && v->t == Json::NUM && u->m->p[k].load() != (float)v->n) u->m->p[k].store((float)v->n); }
     if (u->m->seq) readSeq(u->m, p);   // the Tracker's steps (the playhead carries on)
+    if (u->m->ev) evLoad(u->m, p);
     UiMod::Snd want[UiMod::SLOTS]; if (p) { const std::string aid = p->str("audio"); if (!aid.empty()) want[0].id = aid;
       if (const Json* a = p->get("sounds")) if (a->t == Json::ARR) for (size_t k = 0; k < a->a.size() && k < (size_t)UiMod::SLOTS; k++) { const Json& e = a->a[k];
         if (e.t == Json::ARR && !e.a.empty() && e.a[0].t == Json::STR) { want[k].id = e.a[0].s; if (e.a.size() > 1 && e.a[1].t == Json::NUM) want[k].root = (float)e.a[1].n; if (e.a.size() > 2 && e.a[2].t == Json::STR) want[k].name = e.a[2].s; } } }
@@ -158,6 +166,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (!u) { skipped.insert(ty); continue; }
     if (const Json* p = m.get("p")) for (size_t k = 0; k < def->params.size(); k++) { const Json* v = p->get(def->params[k].key); if (v && v->t == Json::NUM) u->m->p[k].store((float)v->n); }
     if (u->m->seq) readSeq(u->m, m.get("p"));
+    if (u->m->ev) evLoad(u->m, m.get("p"));
     if (const Json* p = m.get("p")) { const std::string aid = p->str("audio"); if (!aid.empty()) u->snd[0].id = aid;
       if (const Json* a = p->get("sounds")) if (a->t == Json::ARR) for (size_t k = 0; k < a->a.size() && k < (size_t)UiMod::SLOTS; k++) { const Json& e = a->a[k];
         if (e.t == Json::ARR && e.a.size() >= 1 && e.a[0].t == Json::STR) { u->snd[k].id = e.a[0].s; if (e.a.size() > 1 && e.a[1].t == Json::NUM) u->snd[k].root = (float)e.a[1].n; if (e.a.size() > 2 && e.a[2].t == Json::STR) u->snd[k].name = e.a[2].s;

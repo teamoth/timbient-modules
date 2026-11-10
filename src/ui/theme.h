@@ -34,7 +34,14 @@ inline const std::vector<std::pair<const char*, Theme>>& presets() { static cons
   {"SANDSTONE", {"#d8ccb2", "#bcae90", "#4f6b52", "#9c5a3c", "#6f7f96"}},
   {"PAPER", {"#ebe6da", "#d9d3c3", "#4f6b52", "#8f84a8", "#9a4a3a"}},
   {"NIGHT", {"#11141b", "#272c36", "#7d8ea0", "#c39a69", "#9aab8c"}},
-  {"MONO", {"#141414", "#2e2e2e", "#d8cfbb", "#8a8a84", "#a39e92"}}}; return v; }
+  {"MONO", {"#141414", "#2e2e2e", "#d8cfbb", "#8a8a84", "#a39e92"}},
+  // light and pastel, still earthy
+  {"CHALK", {"#ece6da", "#d9cfbc", "#6f7f4a", "#a4703f", "#9a4a3a"}},
+  {"MEADOW", {"#e1e6d6", "#c8d1b9", "#4f6b52", "#b86f50", "#7d6f96"}},
+  {"SHELL", {"#f0e4da", "#e2ccbe", "#6f7f96", "#a8786c", "#6f8a5a"}},
+  {"DUNE", {"#e8d8b6", "#d2bd93", "#6d5a46", "#9c5a3c", "#4f6b52"}},
+  {"MIST", {"#e0e4e3", "#c6cdcc", "#5f8f8a", "#a4703f", "#8f84a8"}},
+  {"BLOSSOM", {"#efe2e4", "#dcc6cb", "#6f8a5a", "#9c8aa0", "#b86f50"}}}; return v; }
 inline bool sameTheme(const Theme& a, const Theme& b) { return a.bg == b.bg && a.mod == b.mod && a.audio == b.audio && a.trig == b.trig && a.modc == b.modc; }
 
 inline void rgbOf(const std::string& h, float c[3]) { for (int i = 0; i < 3; i++) c[i] = h.size() >= 7 ? (float)std::strtoul(h.substr(1 + i * 2, 2).c_str(), 0, 16) : 0; }

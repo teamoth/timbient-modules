@@ -97,6 +97,9 @@ public:
   // Written by either thread, one value at a time; seqVer counts changes so the screen can save them.
   static constexpr int SEQ_MAX = 128;
   std::unique_ptr<std::atomic<float>[]> seq;
+  // NOTE LOOPER: its recorded notes, four numbers each (when, note, velocity, layer); evN of them
+  static constexpr int EV_MAX = 1024; std::unique_ptr<std::atomic<float>[]> ev; std::atomic<int> evN{0};
+  void allocEv() { ev.reset(new std::atomic<float>[EV_MAX * 4]); for (int i = 0; i < EV_MAX * 4; i++) ev[i].store(0); }
   std::atomic<int> cursor{0}, seqVer{0};
   std::atomic<int> devSlot{-1};    // MIDI OUT: which opened device it sends to
   std::atomic<float> roots[8];      // SAMPLE in MULTI mode: the note each of its sounds was recorded at

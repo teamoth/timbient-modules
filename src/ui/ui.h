@@ -11,6 +11,8 @@
 
 namespace tb {
 
+struct UiMod;
+void keysCell(const UiMod& u, int& cw, int& ch);   // NOTE GRID: how big its buttons are
 struct UiMod {
   int colScroll = 0;   // TRACKER: the first of the two columns on show
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
@@ -129,7 +131,7 @@ public:
   static constexpr bool jacksIn = true;
   bool cableMotion = true; float flowT = 0;   // SETTINGS: pulses travel along trigger cables, audio cables flow (off: the old header flash)
   int inJackX(const UiMod& u) const { return u.x + (jacksIn ? 4 : 0); }
-  int outJackX(const UiMod& u) const { return u.x + u.m->def->width - 1 - (jacksIn ? 4 : 0); }
+  int outJackX(const UiMod& u) const { return u.x + geom(u).w - 1 - (jacksIn ? 4 : 0); }
   int sockX(const UiMod& u) const { return u.x + (jacksIn ? 4 : -2); }
   int minusX(const UiMod& u, int j) const;   // where a slider row's "-" sits, from the module's left
 private:

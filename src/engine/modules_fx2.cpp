@@ -32,29 +32,38 @@ static Reg rVca(new ModuleDef{"vca", "ENVELOPE VCA", Cat::Proc, {{"IN", PType::A
   {T("atk", "ATTACK", 0.002f, 4, 0.02f), T("dec", "DECAY", 0.01f, 4, 0.3f), pct("sus", "SUSTAIN", 0.6f), T("hold", "HOLD", 0.01f, 8, 0.6f), T("rel", "RELEASE", 0.01f, 8, 1.5f), pct("mix", "MIX", 1)},
   0, 68, false, [] { return new Vca(); }});
 
-// ---------------- RESONATOR: eight tuned bands, like striking a string or plate with the incoming sound ----------------
+// ---------------- RESONATOR: sympathetic strings. Tuned strings (feedback delays, like Karplus-Strong) that ring when the
+// incoming sound excites them, like the open strings of a sitar or a harp. They're tuned to notes of the chord on the key
 struct Resonator : Module {
-  enum { STRUCT, BRIGHT, DAMP, POS, OCT, MIX };
-  Biquad br, rf[8]; float rg[8]; DryWet dw; float sig[6] = {-1, -1, -1, -1, -1, -1}; int lastRoot = -1, lastScale = -1;
-  void prepare() override { dw.init(sr, 1 - e[MIX] * 0.8f, e[MIX] * 1.4f); }
+  enum { NOTES, OCT, DECAY, DAMP, INHARM, SPREAD, MIX };
+  static constexpr int NS = 6;
+  struct Str { DelayLine d; float len = 100, lp = 0, ap = 0, g = 0.99f, apc = 0; };
+  Str st[NS][2]; DryWet dw; float sig[8] = {-1}; int lastRoot = -1, lastScale = -1; Biquad hp[2];
+  void prepare() override { for (auto& sc : st) for (auto& s : sc) s.d.init(0.06f, sr); dw.init(sr, 1 - e[MIX], e[MIX]); for (auto& h : hp) h.set(Biquad::HP, 30, 0.707f, sr); }
   void tune() {
-    const float s[6] = {e[STRUCT], e[BRIGHT], e[DAMP], e[POS], e[OCT], 0}; bool same = root() == lastRoot && scale() == lastScale;
-    for (int k = 0; k < 5; k++) if (s[k] != sig[k]) same = false;
-    if (same) return; for (int k = 0; k < 5; k++) sig[k] = s[k]; lastRoot = root(); lastScale = scale();
-    const float base = mtof(note((int)e[OCT], 0)), Q = 6 + std::pow(1 - e[DAMP], 2.f) * 420;
-    br.set(Biquad::LP, 250 * std::pow(48.f, e[BRIGHT]), 0.707f, sr);
-    for (int k = 0; k < 8; k++) { const int n = k + 1; rf[k].set(Biquad::BP, std::min(16000.f, base * n * (1 + e[STRUCT] * 0.22f * (n - 1))), Q, sr);
-      rg[k] = (0.15f + std::fabs(std::sin(PI * n * (0.05f + e[POS] * 0.9f)))) * std::pow(0.45f + e[BRIGHT] * 0.5f, (float)k) * std::sqrt(Q) * 0.22f; }
+    const float sg[6] = {e[NOTES], e[OCT], e[DECAY], e[DAMP], e[INHARM], e[SPREAD]}; bool same = root() == lastRoot && scale() == lastScale;
+    for (int k = 0; k < 6; k++) if (sg[k] != sig[k]) same = false; if (same) return; for (int k = 0; k < 6; k++) sig[k] = sg[k]; lastRoot = root(); lastScale = scale();
+    static const int DEG[NS] = {0, 4, 2, 7, 9, 11};   // root, fifth, third, octave, octave+third, octave+fifth (as steps along the scale)
+    for (int k = 0; k < NS; k++) { const float f = mtof(note((int)e[OCT], DEG[k])); const float sp = 1 + e[SPREAD] * 0.004f;
+      for (int c = 0; c < 2; c++) { Str& s = st[k][c]; const float fc = f * (c ? sp : 1 / sp);
+        s.len = std::max(2.f, std::min(0.055f * sr, sr / fc - 0.5f));   // (the loop's filters add about half a sample)
+        s.g = std::pow(10.f, -3.f / (e[DECAY] * fc));   // DECAY: the time to fall by 60 dB
+        s.apc = e[INHARM] * 0.6f; } }   // INHARM: an allpass in the loop bends the partials out of line, string to bell
   }
   void render(int a, int b) override {
-    tune(); dw.target(1 - e[MIX] * 0.8f, e[MIX] * 1.4f);
+    tune(); dw.target(1 - e[MIX], e[MIX]); const int n = std::max(1, std::min(NS, (int)e[NOTES])); const float damp = 0.05f + e[DAMP] * 0.9f, gain = 0.6f / std::sqrt((float)n);
     for (int i = a; i < b; i++) { const float d = dw.d.tick(), w = dw.w.tick();
-      for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i], y = br.run(x, ch); float acc = 0; for (int k = 0; k < 8; k++) acc += rf[k].run(y, ch) * rg[k];
-        out[0][ch][i] = x * d + sane(acc) * w; } }
+      for (int c = 0; c < 2; c++) { const float x = hp[c].run(in[0][c][i], 0) * 0.25f; float acc = 0;
+        for (int k = 0; k < n; k++) { Str& s = st[k][c]; float y = s.d.read(s.len - 1);
+          s.lp += (1 - damp) * (y - s.lp); y = s.lp;   // DAMP: darker strings lose their brightness quicker
+          const float ap = s.apc * y + s.ap; s.ap = y - s.apc * ap; y = ap;
+          s.d.write(sane(x + y * s.g)); acc += y; }
+        out[0][c][i] = in[0][c][i] * d + std::tanh(acc * gain) * w; } }
   }
 };
 static Reg rResonator(new ModuleDef{"resonator", "RESONATOR", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {pct("struct", "STRUCT", 0.25f), pct("bright", "BRIGHT", 0.5f), pct("damp", "DAMP", 0.5f), pct("pos", "POSITION", 0.3f), OCTP("oct", 1, 5, 3), pct("mix", "MIX", 0.7f)}, 0, 68, false, [] { return new Resonator(); }});
+  {ST("notes", "STRINGS", 1, 6, 4), OCTP("oct", 1, 5, 3), fmt(prExp("decay", "DECAY", 0.2f, 12, 3), [](float v) { char b[16]; std::snprintf(b, 16, "%.1fS", v); return std::string(b); }),
+   pct("damp", "DAMP", 0.4f), pct("inharm", "INHARM", 0), pct("spread", "WIDTH", 0.4f), pct("mix", "MIX", 0.5f)}, 0, 68, false, [] { return new Resonator(); }});
 
 // ---------------- PHASER: two chains of allpass filters swept by one LFO; STEREO sweeps the right side the opposite way ----------------
 struct Phaser : Module {
