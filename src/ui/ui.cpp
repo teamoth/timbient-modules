@@ -287,19 +287,20 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     const float gr = clampf(-D(0) / 18, 0, 1); const int gy = y + 16;   // GR: how much it's turning down (red, from the right)
     c.text("GR", x, gy - 1, 18); c.rect(bx, gy, bw, 2, 21); if (gr > 0.003f) c.rect(bx + bw - (int)std::lround(gr * bw), gy, (int)std::lround(gr * bw), 2, 14);
     if (ty == "master") { const float gg = clampf(-D(2) / 12, 0, 1); if (gg > 0.003f) c.rect(bx + bw - (int)std::lround(gg * bw), gy + 1, (int)std::lround(gg * bw), 1, 12); }
-  } else if (ty == "nloop") {   // the loop's notes: time along, pitch up; newer layers brighter; the playhead; red while recording
-    const int H = vh, n = m->evN.load(); const float L = std::max(1e-3f, D(2)); const int st = (int)D(1);
-    c.rect(x, y, w, H, 25);
-    float lo = 200, hi = -1; for (int i = 0; i < n; i++) { const float nt = m->ev[i * 4 + 1].load(); lo = std::min(lo, nt); hi = std::max(hi, nt); }
+  } else if (ty == "nloop") {   // everything recorded (time along, pitch up), the part that plays round (START to its LENGTH) lit, the playhead
+    const int H = vh, n = m->evN.load(); const int st = (int)D(1); const float S = D(6), L = std::max(0.01f, D(2));
+    float lo = 200, hi = -1, tmax = 0; for (int i = 0; i < n; i++) { const float nt = m->ev[i * 4 + 1].load(); lo = std::min(lo, nt); hi = std::max(hi, nt); tmax = std::max(tmax, m->ev[i * 4].load()); }
     if (hi < lo) { lo = 48; hi = 72; } if (hi - lo < 12) { const float mid = (hi + lo) / 2; lo = mid - 6; hi = mid + 6; }
-    const float span = st == 1 ? std::max(1.f, D(3)) : L; const int top = (int)D(5);
-    for (int k = 0; k <= 4; k++) { const int gx = x + k * (w - 1) / 4; for (int j = 0; j < H; j += 2) c.px(gx, y + j, 21); }   // quarters of the loop
-    for (int i = 0; i < n; i++) { const float tt = m->ev[i * 4].load(); if (tt > span) continue; const float nt = m->ev[i * 4 + 1].load(), vel = m->ev[i * 4 + 2].load(); const int ly = (int)m->ev[i * 4 + 3].load();
-      const int px0 = x + (int)std::lround(tt / span * (w - 2)), py0 = y + H - 2 - (int)std::lround((nt - lo) / (hi - lo) * (H - 3));
-      c.rect(px0, py0, 2, 2, ly == top ? (vel > 0.6f ? 4 : 9) : ly == top - 1 ? 24 : 44); }
-    if (st == 1) { char b[32]; std::snprintf(b, 32, D(4) > 0.5f ? "RECORDING %.1f BEATS" : "RECORDING %.1fS", D(3)); c.text(b, x + 2, y + 1, 14); }
+    const float span = st == 1 ? std::max(1.f, D(3)) : std::max(S + L, tmax + 0.25f); const int top = (int)D(5);
+    auto X = [&](float tt) { return x + (int)std::lround(tt / span * (w - 2)); };
+    c.rect(x, y, w, H, 26); if (st != 1) c.rect(X(S), y, std::max(1, X(S + L) - X(S)), H, 25);   // the part that plays
+    for (float bt = 0; bt <= span && span / std::max(1.f, 1.f) < 600; bt += span > 32 ? 4 : 1) { const int gx = X(bt); for (int j = 0; j < H; j += (std::fmod(bt, 4.f) < 0.01f ? 1 : 3)) c.px(gx, y + j, 21); }   // beats (bars brighter)
+    for (int i = 0; i < n; i++) { const float tt = m->ev[i * 4].load(); const float nt = m->ev[i * 4 + 1].load(), vel = m->ev[i * 4 + 2].load(); const int ly = (int)m->ev[i * 4 + 3].load();
+      const bool in = st == 1 || (tt >= S && tt < S + L); const int px0 = X(tt), py0 = y + H - 2 - (int)std::lround((nt - lo) / (hi - lo) * (H - 3));
+      c.rect(px0, py0, 2, 2, !in ? 21 : ly == top ? (vel > 0.6f ? 4 : 9) : ly == top - 1 ? 24 : 44); }
+    if (st == 1) { char b[32]; std::snprintf(b, 32, "RECORDING %.1f BEATS", D(3)); c.text(b, x + 2, y + 1, 14); }
     else if (n == 0) c.text("RECORD SOME NOTES", x + 2, y + 1, 18);
-    else { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < H; j++) c.px(hx, y + j, st == 2 ? 14 : 9); }
+    else { const int hx = X(D(0)); for (int j = 0; j < H; j++) c.px(hx, y + j, st == 2 ? 14 : 9); }
   } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
     const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
       const int h = std::max(0, std::min(5, (int)std::lround(std::sqrt(D(4 + k)) * 5))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
@@ -406,6 +407,7 @@ static std::string valueText(const UiMod& u, int j, float v, int root) {
       if (q.key == "start") return timeText(v * dur);
       if (slices) { const int n = std::max(1, (int)u.m->p[2].load()); return timeText(dur / n * v); }
       return timeText(std::max(0.05, v * (dur - st * dur))); } }
+  if (u.m->def->type == "nloop" && (q.key == "lenb" || q.key == "start")) { const float bs = u.m->disp[7].load(); if (bs > 0) return fmtParam(q, v, root) + " (" + timeText(v * bs) + ")"; }   // beats, and how long that is now
   return fmtParam(q, v, root);
 }
 static std::string statusLabel(const UiMod& u, const ParamDef& q) {
