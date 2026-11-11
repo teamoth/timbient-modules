@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.24.0";
+static const char* VERSION = "0.25.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -47,7 +47,9 @@ static void audioCallback(ma_device*, void* output, const void*, ma_uint32 frame
 }
 static const int BUFFERS[5] = {128, 256, 512, 1024, 2048};
 // QUALITY: samples per second (0: the sound output's own rate). Lower rates cost less and lose the very highest treble
-static const unsigned RATES[5] = {0, 48000, 44100, 32000, 24000};
+// 96K and 88.2K (about twice the work of 48K) only in the 64-bit versions; the 32-bit one is for older, slower computers
+static const unsigned RATES[7] = {0, 48000, 44100, 32000, 24000, 96000, 88200};
+static const int NRATES = sizeof(void*) == 8 ? 7 : 5;
 struct Sound {
   ma_device dev; bool open = false; int bufIdx = 2;
   bool start(Engine& e, unsigned rate) {
@@ -109,7 +111,7 @@ int main(int argc, char** argv) {
   // ---- sound first, so the engine knows the sample rate before any module is built ----
   static Engine engine; gEngine = &engine;
   static Sound sound; sound.bufIdx = std::max(0, std::min(4, (int)settings.num("buffer", 2)));
-  int rateIdx = std::max(0, std::min(4, (int)settings.num("rate", 0)));
+  int rateIdx = std::max(0, std::min(NRATES - 1, (int)settings.num("rate", 0)));
   if (!sound.start(engine, RATES[rateIdx]) && !(rateIdx != 0 && sound.start(engine, 0))) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
 
   Ui ui(engine);
@@ -323,12 +325,14 @@ int main(int argc, char** argv) {
   static const int FPS[3] = {60, 30, 20};
   int fpsIdx = std::max(0, std::min(2, (int)settings.num("fps", 1)));
   ui.cableMotion = settings.num("cableMotion", 1) > 0.5;
+  int letters = std::max(0, std::min(2, (int)settings.num("letters", 0)));   // 0 fine lowercase, 1 fine capitals, 2 the classic small capitals
+  static const char* LETTERS[3] = {"LOWERCASE", "CAPITALS", "CLASSIC"};
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), std::string("LETTERS  ") + LETTERS[letters], "THEME", "ABOUT AND CREDITS"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -340,7 +344,8 @@ int main(int argc, char** argv) {
       else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / engine.sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
         q.pick = [&](int j) { if (j == sound.bufIdx) return; sound.stop(); sound.bufIdx = j; settings.set("buffer", Json::number(j)); saveSettings();
           if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j])); }; }
-      else if (i == 4) { q.items = {"AUTO  (YOUR SOUND OUTPUT'S OWN RATE)", "48K", "44.1K", "32K  LIGHTER", "24K  LIGHTEST, LESS TREBLE"}; q.cur = rateIdx;
+      else if (i == 4) { q.items = {"AUTO  (YOUR SOUND OUTPUT'S OWN RATE)", "48K", "44.1K", "32K  LIGHTER", "24K  LIGHTEST, LESS TREBLE"};
+        if (NRATES > 5) { q.items.push_back("96K  HEAVIER: ABOUT TWICE THE WORK"); q.items.push_back("88.2K  HEAVIER"); } q.cur = rateIdx;
         q.pick = [&](int j) { if (j == rateIdx) return;
           if (rec.on()) { rec.stop(engine); if (Module* o = outMod()) o->disp[1].store(0); }   // a recording can't change rate halfway
           const std::string snap = serializePatch(ui).dump(); const int vx = ui.viewX, vy = ui.viewY;
@@ -352,8 +357,11 @@ int main(int argc, char** argv) {
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
       else if (i == 6) { ui.cableMotion = !ui.cableMotion; settings.set("cableMotion", Json::number(ui.cableMotion ? 1 : 0)); saveSettings();
         ui.status(ui.cableMotion ? "CABLE MOTION ON: PULSES AND FLOW ALONG THE CABLES" : "CABLE MOTION OFF: A LITTLE LIGHTER ON OLDER COMPUTERS", 4); return; }
-      else if (i == 7) { openTheme(x0); return; }
-      else if (i == 8) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+      else if (i == 7) { q.items = {"LOWERCASE  (FINER LETTERS)", "CAPITALS  (FINER LETTERS)", "CLASSIC  (THE ORIGINAL SMALL CAPITALS)"}; q.cur = letters;
+        q.pick = [&](int j) { letters = j; settings.set("letters", Json::number(j)); saveSettings();
+          ui.status(j == 2 ? "THE CLASSIC LETTERS" : "FINER LETTERS (ON A SMALL SCREEN, ZOOM IN WITH CTRL + IF THEY DON'T SHOW)", 4); }; }
+      else if (i == 8) { openTheme(x0); return; }
+      else if (i == 9) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);
@@ -377,6 +385,11 @@ int main(int argc, char** argv) {
   SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
   SDL_SetRenderVSync(ren, 1);
   SDL_Texture* tex = nullptr; int texW = 0, texH = 0; float scale = 3;
+  // FINER LETTERS: a texture of the 5 x 7 letters, drawn over the scaled canvas, tinted, at two thirds of an art pixel
+  int atlasW = 0, atlasH = 0; SDL_Texture* atlas = nullptr;
+  { const std::vector<uint32_t> a = Canvas::fontAtlas(atlasW, atlasH); atlas = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, atlasW, atlasH);
+    if (atlas) { SDL_UpdateTexture(atlas, nullptr, a.data(), atlasW * 4); SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(atlas, SDL_SCALEMODE_NEAREST); } }
+  std::vector<Canvas::Quad> quads; std::vector<SDL_Vertex> verts; std::vector<int> vidx;
   bool texting = false;
   // ZOOM: small steps of about 8%, remembered between launches. The pixels are scaled up sharply at any size.
   int zoom = std::max(-18, std::min(18, (int)settings.num("zoom", 0)));
@@ -502,11 +515,21 @@ int main(int argc, char** argv) {
       if (since < every) { SDL_WaitEventTimeout(nullptr, (Sint32)std::max(1.f, std::min(100.f, (every - since) * 1000))); continue; } }
     const Uint64 now = SDL_GetTicksNS(); const float dt = std::min(0.1f, (now - last) / 1e9f); last = now;
     if (W != canvas.W || H != canvas.H) canvas.resize(W, H);
+    canvas.fine = atlas && letters < 2 && Canvas::fineDot(scale) >= 2; canvas.letterCase = letters;   // too small a scale for them: the classic ones
+    canvas.beginFrame();
     ui.draw(canvas, dt);
     if (!tex || texW != W || texH != H) { if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W, H); SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_PIXELART); texW = W; texH = H; }
     SDL_UpdateTexture(tex, nullptr, canvas.rgba.data(), W * 4);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
     SDL_FRect dst{0, 0, (float)(W * scale), (float)(H * scale)}; SDL_RenderTexture(ren, tex, nullptr, &dst);
+    if (canvas.fine) { canvas.fineQuads(scale, quads); verts.clear(); vidx.clear();
+      const float iu = 1.f / atlasW, iv = 1.f / atlasH; const int sc = FONT57_N, su = (sc % Canvas::ATLAS_COLS) * Canvas::CELL_W, sv = (sc / Canvas::ATLAS_COLS) * Canvas::CELL_H;
+      for (auto& q : quads) { const SDL_FColor col{(q.rgba & 255) / 255.f, ((q.rgba >> 8) & 255) / 255.f, ((q.rgba >> 16) & 255) / 255.f, 1.f};
+        float u0, v0, u1, v1; if (q.u >= 0) { u0 = q.u * iu; v0 = q.v * iv; u1 = (q.u + 5) * iu; v1 = (q.v + 9) * iv; } else { u0 = (su + 1) * iu; v0 = (sv + 1) * iv; u1 = (su + 2) * iu; v1 = (sv + 2) * iv; }
+        const int b = (int)verts.size(); const float x0 = (float)q.x, y0 = (float)q.y, x1 = (float)(q.x + q.w), y1 = (float)(q.y + q.h);
+        verts.push_back({{x0, y0}, col, {u0, v0}}); verts.push_back({{x1, y0}, col, {u1, v0}}); verts.push_back({{x1, y1}, col, {u1, v1}}); verts.push_back({{x0, y1}, col, {u0, v1}});
+        for (int k : {0, 1, 2, 0, 2, 3}) vidx.push_back(b + k); }
+      if (!verts.empty()) SDL_RenderGeometry(ren, atlas, verts.data(), (int)verts.size(), vidx.data(), (int)vidx.size()); }
     SDL_RenderPresent(ren);
   }
   store.writeAutosave(serializePatch(ui));

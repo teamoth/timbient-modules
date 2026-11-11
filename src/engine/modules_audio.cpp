@@ -170,22 +170,22 @@ struct FFT {
 // read. Here it can stretch what comes in (LIVE) or a loaded file (FILE), shift the pitch and add an octave shimmer.
 struct Stretch : Module {
   enum { SRC, LOAD, AMT, WIN, POS, PITCHK, SHIM, FREEZE, MIX };
-  static constexpr int NMAX = 32768, R = 1 << 19;
-  static constexpr int SIZES[5] = {2048, 4096, 8192, 16384, 32768};
-  FFT* ffts[5] = {}; int N = 4096, HOP = 2048, cur = -1;
+  static constexpr int NMAX = 65536, R = 1 << 20;
+  static constexpr int SIZES[6] = {2048, 4096, 8192, 16384, 32768, 65536};   // at 88.2K and up each WINDOW is one size bigger: the same length of time
+  FFT* ffts[6] = {}; int N = 4096, HOP = 2048, cur = -1;
   std::vector<float> rg, win, re, im, mag, mag2, r2, i2, acc[2], q[2]; long wpos = 0; double rpos = -4096, trav = 0; int qpos = 1 << 30;
   Biquad hp; Smooth dry, wet; AudioBuf* buf = nullptr; bool lastFz = false;
   ~Stretch() override { for (auto* f : ffts) delete f; }
   AudioBuf* swapBuf(AudioBuf* b, int) override { AudioBuf* old = buf; buf = b; trav = 0; return old; }
   void prepare() override {
-    for (int k = 0; k < 5; k++) if (!ffts[k]) ffts[k] = new FFT(SIZES[k]);
+    for (int k = 0; k < 6; k++) if (!ffts[k]) ffts[k] = new FFT(SIZES[k]);
     rg.assign(R, 0.f); win.assign(NMAX, 0); re.assign(NMAX, 0); im.assign(NMAX, 0); mag.assign(NMAX / 2 + 1, 0); mag2.assign(NMAX / 2 + 1, 0); r2.assign(NMAX, 0); i2.assign(NMAX, 0);
     for (int c = 0; c < 2; c++) { acc[c].assign(NMAX, 0); q[c].assign(NMAX / 2, 0); }
     hp.set(Biquad::HP, 60, 0.707f, sr); dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX] * 0.9f); setSize();
   }
-  void setSize() { const int k = std::max(0, std::min(4, (int)e[WIN])); if (k == cur) return; cur = k; N = SIZES[k]; HOP = N / 2;
+  void setSize() { const int k = std::max(0, std::min(4, (int)e[WIN])) + (sr > 70000 ? 1 : 0); if (k == cur) return; cur = k; N = SIZES[k]; HOP = N / 2;
     for (int i = 0; i < N; i++) win[i] = std::sin(PI * (i + 0.5f) / N); for (int c = 0; c < 2; c++) std::fill(acc[c].begin(), acc[c].end(), 0.f); qpos = HOP; }
-  bool fileMode() const { return e[SRC] > 0.5f && buf && buf->d.size() > (size_t)NMAX; }
+  bool fileMode() const { return e[SRC] > 0.5f && buf && buf->d.size() > (size_t)32768; }
   bool frozen() const { return e[FREEZE] > 0.5f || eng->freeze.load(std::memory_order_relaxed); }
   void trig(int port, const Event&) override { if (port == 1) p[FREEZE].store(p[FREEZE].load() > 0.5f ? 0.f : 1.f); }   // FREEZE in: each trigger flips it
   void frame() {
