@@ -15,6 +15,7 @@ struct UiMod;
 void keysCell(const UiMod& u, int& cw, int& ch);   // NOTE GRID: how big its buttons are
 struct UiMod {
   int colScroll = 0;   // TRACKER: the first of the two columns on show
+  int tlSel = -1;      // TIMELINE: the event picked (its place in the list), or -1
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
   float hist[48] = {0}; int hi = 0; float ht = 0;   // recent values, for drawing the LFO's line
@@ -42,7 +43,11 @@ public:
   std::string midiState = "MIDI OFF";                 // shown on MIDI modules
   std::function<void()> onChange;                     // called after anything that should be saved
   std::function<void(int)> onZoom;                    // the zoom buttons: -1 out, +1 in
-  std::function<bool(UiMod*, const std::string&)> onAction;   // the app's own handling of some buttons (LOAD FILE, RECORD...); true if it took it
+  std::function<bool(UiMod*, const std::string&)> onAction;
+  // QWERTY MIDI: the key on each of the 36 notes (C-0 to B-2), named by the app; the note waiting for a key, or -1
+  std::string qwKeys[36]; int qwLearn = -1;
+  bool hasQwerty() const;      // a QWERTY MIDI that's on: the computer keys play it
+  void qwertyPlay(int i);      // note i (0 = C-0) on every QWERTY MIDI   // the app's own handling of some buttons (LOAD FILE, RECORD...); true if it took it
 
   // building a patch
   UiMod* add(const std::string& type, int x, int y, int id = 0);   // id: put back with the number it had (undo)
@@ -134,15 +139,25 @@ public:
   int inJackX(const UiMod& u) const { return u.x + (jacksIn ? 4 : 0); }
   int outJackX(const UiMod& u) const { return u.x + geom(u).w - 1 - (jacksIn ? 4 : 0); }
   int sockX(const UiMod& u) const { return u.x + (jacksIn ? 4 : -2); }
+  // the SWITCH socket in the footer, beside the ON / M buttons: a trigger turns the module on, off or over (a Timeline lane, say)
+  bool hasSwitch(const UiMod& u) const;
+  int swX(const UiMod& u) const;
+  int swY(const UiMod& u) const;
   int minusX(const UiMod& u, int j) const;   // where a slider row's "-" sits, from the module's left
 private:
   void keysPress(UiMod& u, int x, int y);
+  // TIMELINE
+  void drawTimeline(Canvas& c, UiMod& u, int x, int y, int w);
+  void timelineDown(UiMod& u, int vx, int vy, int w);
+  void timelineDrag(UiMod& u, int vx, int vy, int w);
+  void timelineUp(UiMod& u, bool moved, int dir);
+  std::string tlEventText(UiMod& u, int i);
   void drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt);
   void trackerWatch(UiMod& u);
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_TLINE };
   // cables as curves you can touch
   bool cableEnds(const UiCable& c, float& ax, float& ay, float& bx, float& by);
   int cableAt(int wx, int wy, float maxD, bool audioOnly = false);

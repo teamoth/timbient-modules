@@ -204,7 +204,9 @@ void Engine::block(float* L, float* R, int n) {
     int at = 0;
     for (int ii = 0; ii < q.n; ii++) { const int i = idx[ii]; const int off = std::min(std::max(q.ev[i].offset, 0), n - 1);
       if (off > at) { pos = at; m->render(at, off); at = off; }
-      pos = at; m->trig(q.port[i], q.ev[i]); }
+      pos = at;
+      if (q.port[i] == SWITCH_PORT) { const int a = q.ev[i].sw >= 0 ? q.ev[i].sw : 2; m->mute.store(a == 0 ? true : a == 1 ? false : !m->mute.load()); continue; }   // the SWITCH socket: a Timeline says ON (1) or OFF (0); any other trigger turns it over
+      m->trig(q.port[i], q.ev[i]); }
     if (at < n) { pos = at; m->render(at, n); }
     { const float b1 = m->bypass.load(std::memory_order_relaxed) ? 1.f : 0.f, b0 = m->byNow;   // BYPASS: fade over to the dry sound
       if ((b0 > 0 || b1 > 0) && !d->ins.empty() && d->ins[0].type == PType::Audio && !m->out.empty()) { const float step = n / sr / 0.08f, bb = b1 > b0 ? std::min(b1, b0 + step) : std::max(b1, b0 - step); m->byNow = bb;

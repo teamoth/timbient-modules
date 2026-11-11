@@ -204,7 +204,8 @@ struct Mixer : Module {
 };
 static std::vector<ParamDef> mixerParams() { std::vector<ParamDef> p; for (int k = 1; k <= 4; k++) { std::string n = std::to_string(k);
     ParamDef l = pct("", "", 0.8f); l.key = "l" + n; l.label = "LEVEL " + n; p.push_back(l);
-    ParamDef q = pr("", "", -1, 1, 0); q.key = "p" + n; q.label = "PAN " + n; q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };   // as every PAN p.push_back(q);
+    ParamDef q = pr("", "", -1, 1, 0); q.key = "p" + n; q.label = "PAN " + n; q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };;   // as every PAN
+    p.push_back(q);
     ParamDef s = pct("", "", 0); s.key = "s" + n; s.label = "SEND " + n; p.push_back(s); } return p; }
 static Reg rMixer(new ModuleDef{"mixer", "MIXER", Cat::Proc, {{"1", PType::Audio}, {"2", PType::Audio}, {"3", PType::Audio}, {"4", PType::Audio}}, {{"OUT", PType::Audio}, {"SEND", PType::Audio}},
   mixerParams(), 8, 68, false, [] { return new Mixer(); }});

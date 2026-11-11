@@ -262,4 +262,48 @@ static Reg rNoteLooper(new ModuleDef{"nloop", "NOTE LOOPER", Cat::Trig, {{"NOTES
    OP("quant", "QUANTISE", {"OFF", "1/16", "1/8", "1/4"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("undo", "UNDO LAYER"), ACT("halve", "HALVE"), ACT("double", "DOUBLE"), ACT("clear", "CLEAR"), pct("drift", "DRIFT", 0)}, 30, 68, false, [] { return new NoteLooper(); }});
 
+
+// ---------------- TIMELINE: a stretch of time (5 minutes, say) with events placed along it ----------------
+// Each of its six lanes is an output: patch one into the SWITCH socket of any module (beside its ON or M button) and the
+// lane's events turn that module on, off or over at their times. Patched into an ordinary trigger input, an event simply fires it.
+// Events are kept as (seconds, lane, what): what is 0 OFF, 1 ON, 2 OVER. The screen adds, moves and removes them.
+struct Timeline : Module {
+  enum { RUN, LEN, END, SNAP, CLEAR };
+  double pos = 0; bool wasRun = false;
+  Timeline() { allocEv(); }
+  void trig(int port, const Event&) override {
+    if (port == 0) { pos = 0; p[RUN].store(1); wasRun = true; }   // START: from the beginning
+    else if (port == 1) p[RUN].store(0);                          // STOP
+  }
+  void action(const std::string& k) override {
+    if (k == "clear") evN.store(0);
+    else if (k == "rewind") pos = 0;
+    else if (k.rfind("seek:", 0) == 0) pos = std::max(0.0, std::min((double)e[LEN], std::atof(k.c_str() + 5)));
+  }
+  void fire(double lo, double hi, int a, double rate) {   // the events from lo (included) up to hi
+    const int n = evN.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; i++) { const double tt = ev[i * 4].load(std::memory_order_relaxed); if (tt < lo || tt >= hi) continue;
+      const int lane = (int)ev[i * 4 + 1].load(std::memory_order_relaxed); if (lane < 0 || lane >= 6) continue;
+      eng->pos = a + (int)((tt - lo) * rate); Event o; o.sw = (int)ev[i * 4 + 2].load(std::memory_order_relaxed); emit(lane, o); }
+  }
+  void render(int a, int b) override {
+    const bool run = e[RUN] > 0.5f; const double L = std::max(1.f, e[LEN]);
+    if (run && !wasRun && pos >= L - 1e-6) pos = 0;   // RUN again after it stopped at the end: from the beginning
+    wasRun = run;
+    if (pos > L) pos = L;
+    if (run) { const double dt = (b - a) / sr, np = pos + dt;
+      if (np < L) { fire(pos, np, a, sr); pos = np; }
+      else { fire(pos, L, a, sr);
+        if (e[END] > 0.5f) { const double r = np - L; fire(0, r, a + (int)((L - pos) * sr), sr); pos = r; }   // LOOP: round again
+        else { pos = L; p[RUN].store(0); wasRun = false; } } }   // STOP at the end
+    eng->pos = a;
+    disp[0].store((float)pos); disp[1].store(run ? 1.f : 0.f); disp[2].store((float)L);
+  }
+};
+static std::string mmss(float v) { const int s = (int)std::lround(v); char b[16]; std::snprintf(b, 16, "%d:%02d", s / 60, s % 60); return b; }
+static Reg rTimeline(new ModuleDef{"timeline", "TIMELINE", Cat::Trig, {{"START", PType::Trig}, {"STOP", PType::Trig}},
+  {{"1", PType::Trig}, {"2", PType::Trig}, {"3", PType::Trig}, {"4", PType::Trig}, {"5", PType::Trig}, {"6", PType::Trig}},
+  {playBtn(OP("run", "RUN", {"OFF", "ON"}, 0)), [] { auto q = fmt(pr("len", "LENGTH", 10, 1800, 300), mmss); q.step = 5; return q; }(),
+   OP("end", "AT THE END", {"STOP", "LOOP"}, 1), OP("snap", "SNAP", {"OFF", "1 S", "5 S", "10 S", "30 S"}, 1), ACT("clear", "CLEAR EVENTS")}, 58, 150, false, [] { return new Timeline(); }});
+
 }  // namespace tb

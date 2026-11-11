@@ -33,7 +33,7 @@ static void readSeq(Module* m, const Json* p) {
   for (int c = 1; c < Module::SEQ_COLS; c++) readCol(m, c, more && more->t == Json::ARR && c - 1 < (int)more->a.size() ? &more->a[c - 1] : nullptr);
 }
 
-static int inIdx(const ModuleDef* d, const std::string& n) { const int i = d->inIndex(n); if (i >= 0) return i; return n == "ENTER" ? d->inIndex("STEP ENTER") : -1; }   // (renamed inputs)
+static int inIdx(const ModuleDef* d, const std::string& n) { if (n == "SWITCH") return SWITCH_PORT; const int i = d->inIndex(n); if (i >= 0) return i; return n == "ENTER" ? d->inIndex("STEP ENTER") : -1; }   // (renamed inputs)
 
 
 std::string readFile(const std::string& path) { std::ifstream f(path, std::ios::binary); if (!f) return ""; std::stringstream ss; ss << f.rdbuf(); return ss.str(); }
@@ -77,7 +77,7 @@ Json serializePatch(Ui& ui) {
   Json cs = Json::array();
   for (auto& c : ui.cables) { UiMod *a = ui.byId(c.from), *b = ui.byId(c.to); if (!a || !b) continue; Json j = Json::object();
     j.set("f", Json::number(c.from)); j.set("fp", Json::string(a->m->def->outs[c.fromPort].name)); j.set("t", Json::number(c.to));
-    if (c.type == PType::Mod) { j.set("tq", Json::string(b->m->def->params[c.toParam].key)); } else j.set("tp", Json::string(b->m->def->ins[c.toPort].name));
+    if (c.type == PType::Mod) { j.set("tq", Json::string(b->m->def->params[c.toParam].key)); } else j.set("tp", Json::string(c.toPort == SWITCH_PORT ? std::string("SWITCH") : b->m->def->ins[c.toPort].name));
     j.set("ty", Json::string(tyName(c.type))); cs.push(j); }
   d.set("cables", cs);
   return d;

@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
   Engine eng; eng.setSampleRate(48000); Ui ui(eng);
   int fails = 0;
   for (const ModuleDef* d : allDefs()) {
-    if (d->type == "out" || d->type == "keys" || d->type == "midi" || d->type == "midiout") continue;   // these need a device or a hand
+    if (d->type == "out" || d->type == "keys" || d->type == "qwerty" || d->type == "midi" || d->type == "midiout") continue;   // these need a device or a hand
     ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); ui.set(clk, "sync", 0); ui.set(clk, "bpm", 100);
     UiMod* m = ui.add(d->type, 100, 20);
     if (d->cat == Cat::Voice) { ui.connect(clk, "PULSE", m, "TRIG"); ui.connect(m, "OUT", out, "A"); }
@@ -31,6 +31,7 @@ int main(int argc, char** argv) {
     else { UiMod* v = ui.add("pluck", 150, 20); ui.connect(m, d->outs[0].name, v, "TRIG"); ui.connect(v, "OUT", out, "A");
       if (d->ins.size()) ui.connect(clk, "PULSE", m, d->ins[0].name);
       if (d->type == "tracker") { for (int i = 0; i < 16; i += 2) { m->m->seq[i * 2].store(60.f + i); m->m->seq[i * 2 + 1].store(0.8f); } } }
+    if (d->type == "timeline") { ui.set(m, "len", 10); ui.set(m, "run", 1); for (int i = 0; i < 6; i++) { m->m->ev[i * 4].store(i * 0.5f); m->m->ev[i * 4 + 1].store(0); m->m->ev[i * 4 + 2].store(1); m->m->ev[i * 4 + 3].store(0); } m->m->evN.store(6); }
     if (d->type == "tloop") { ui.set(m, "len", 1); ui.set(m, "rec", 1); }   // record a short loop, so it plays back within the test
     if (d->type == "stretch") ui.set(m, "src", 1);  // stretch a file
     if (d->type == "sample" || d->type == "looper" || d->type == "stretch") {   // give it a sound: a few seconds of a gliding tone with some noise
@@ -62,6 +63,17 @@ int main(int argc, char** argv) {
   { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* h = ui.add("hops", 0, 0); ui.set(h, "rate", 20);
     for (const ModuleDef* d : allDefs()) if (d->cat == Cat::Voice) { UiMod* v = ui.add(d->type, 0, 0); ui.connect(h, "TRIG", v, "TRIG"); ui.connect(v, "OUT", out, "A"); }
     const Result r = run(eng, 6); std::printf("ALL VOICES, 20 NOTES/S: peak %.3f cost %.1f%%%s\n", r.peak, r.cost, r.bad ? " NOT FINITE" : ""); }
+  // TIMELINE into a SWITCH socket: an OFF at 1 s mutes the clock, an ON at 2 s turns it back on; and it survives saving
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); UiMod* tl = ui.add("timeline", 0, 100); ui.set(tl, "len", 10); ui.set(tl, "run", 1);
+    UiMod* v = ui.add("pluck", 100, 20); ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", out, "A");
+    const bool plugged = ui.connect(tl, 0, clk, SWITCH_PORT);
+    const float E[2][3] = {{1, 0, 0}, {2, 0, 1}}; for (int i = 0; i < 2; i++) { for (int c = 0; c < 3; c++) tl->m->ev[i * 4 + c].store(E[i][c]); tl->m->ev[i * 4 + 3].store(0); } tl->m->evN.store(2);
+    run(eng, 0.5f); const bool a = !clk->m->mute.load(); run(eng, 1.0f); const bool b = clk->m->mute.load(); run(eng, 1.0f); const bool c2 = !clk->m->mute.load();
+    const std::string S = serializePatch(ui).dump(); const bool saved = S.find("\"SWITCH\"") != std::string::npos;
+    Json j; Json::parse(S, j); ui.clearPatch(); loadPatch(ui, j); bool back = false; for (auto& cb : ui.cables) if (cb.toPort == SWITCH_PORT) back = true;
+    int evs = 0; for (auto& um : ui.mods) if (um->m->def->type == "timeline") evs = um->m->evN.load();
+    const bool ok = plugged && a && b && c2 && saved && back && evs == 2; if (!ok) fails++;
+    std::printf("timeline switch: plugged %d, on %d, off at 1s %d, on at 2s %d, saved %d, loaded %d, events %d%s\n", plugged, a, b, c2, saved, back, evs, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

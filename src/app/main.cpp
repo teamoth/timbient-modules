@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.23.0";
+static const char* VERSION = "0.24.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -205,8 +205,21 @@ int main(int argc, char** argv) {
   ui.onBrowseFolder = [&]() { const std::string d = ui.br.dir; SDL_ShowOpenFolderDialog(onFolderDialog, nullptr, win, d.empty() ? nullptr : d.c_str(), false); };
   ui.onBrowseFile = [&](int id, int slot) { const UiMod* u = ui.byId(id); const bool many = slot < 0 && u && u->m->def->type == "sample";
     SDL_ShowOpenFileDialog(onAudioDialog, (void*)(((intptr_t)id << 8) | (intptr_t)(slot + 1)), win, AUDIO_FILTER, 1, nullptr, many); };
+  // QWERTY MIDI: which computer key plays each of its 36 notes (C-0 to B-2), kept in the settings by name.
+  // The default is SunVox's: Z S X D C V G B H N J M, then Q 2 W 3 E R 5 T 6 Y 7 U, then I 9 O 0 P [ = ]
+  static const char* QW_DEFAULT[36] = {"Z", "S", "X", "D", "C", "V", "G", "B", "H", "N", "J", "M",
+                                       "Q", "2", "W", "3", "E", "R", "5", "T", "6", "Y", "7", "U",
+                                       "I", "9", "O", "0", "P", "[", "=", "]", "", "", "", ""};
+  SDL_Keycode qwMap[36];
+  auto qwNames = [&] { for (int i = 0; i < 36; i++) { std::string s = qwMap[i] ? SDL_GetKeyName(qwMap[i]) : ""; for (auto& ch : s) ch = (char)std::toupper((unsigned char)ch); ui.qwKeys[i] = s; } };
+  auto qwDefault = [&] { for (int i = 0; i < 36; i++) qwMap[i] = QW_DEFAULT[i][0] ? SDL_GetKeyFromName(QW_DEFAULT[i]) : 0; };
+  auto qwSave = [&] { Json a = Json::array(); for (int i = 0; i < 36; i++) a.push(Json::string(qwMap[i] ? SDL_GetKeyName(qwMap[i]) : "")); settings.set("qwertyMap", a); saveSettings(); qwNames(); };
+  qwDefault();
+  if (const Json* a = settings.get("qwertyMap")) if (a->t == Json::ARR && a->a.size() == 36) for (int i = 0; i < 36; i++) qwMap[i] = a->a[i].t == Json::STR && !a->a[i].s.empty() ? SDL_GetKeyFromName(a->a[i].s.c_str()) : 0;
+  qwNames();
   ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
     const std::string& ty = u->m->def->type;
+    if (ty == "qwerty" && k == "reset") { qwDefault(); qwSave(); ui.qwLearn = -1; ui.status("QWERTY MIDI: THE DEFAULT KEYS (AS SUNVOX)", 3); return true; }
     if ((ty == "sample" || ty == "looper" || ty == "stretch") && k == "edit") {   // EDIT SOUND: the editor, with this module's sound (for SAMPLE, the place on show)
       const int slot = ty == "sample" ? std::max(0, std::min(UiMod::SLOTS - 1, u->shown)) : 0; const UiMod::Snd& sd = u->snd[slot];
       if (sd.id.empty()) { ui.status("THERE'S NO SOUND TO EDIT YET: LOAD ONE FIRST", 4); return true; }
@@ -353,7 +366,14 @@ int main(int argc, char** argv) {
   ui.bar.push_back({"REDO", [&](int) { restoreStep(hpos + 1); }});
 
   // ---- the window ----
-  win = SDL_CreateWindow("Timbient Modules", 1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+  // as big as 1280 x 800, but never bigger than the screen it opens on (a 1024 x 600 netbook, say): on a small screen it opens maximised
+  int winW = 1280, winH = 800; bool small = false;
+  { SDL_Rect ub; const SDL_DisplayID dsp = SDL_GetPrimaryDisplay();
+    if (dsp && SDL_GetDisplayUsableBounds(dsp, &ub) && ub.w > 0 && ub.h > 0) {
+      small = ub.w < 1340 || ub.h < 860;
+      winW = std::min(winW, std::max(480, ub.w - 40)); winH = std::min(winH, std::max(320, ub.h - 60)); } }
+  win = SDL_CreateWindow("Timbient Modules", winW, winH, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (small ? SDL_WINDOW_MAXIMIZED : 0));
+  SDL_SetWindowMinimumSize(win, 480, 320);
   SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
   SDL_SetRenderVSync(ren, 1);
   SDL_Texture* tex = nullptr; int texW = 0, texH = 0; float scale = 3;
@@ -385,6 +405,16 @@ int main(int argc, char** argv) {
         case SDL_EVENT_TEXT_INPUT: ui.typed(ev.text.text); break;
         case SDL_EVENT_KEY_DOWN:
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
+          if (ui.qwLearn >= 0) {   // QWERTY MIDI: the key for the note picked
+            const int i = ui.qwLearn; ui.qwLearn = -1; static const char* NM[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
+            const std::string nn = std::string(NM[i % 12]) + std::to_string(i / 12);
+            if (ev.key.key == SDLK_ESCAPE) { ui.status("NO CHANGE", 1); break; }
+            if (ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) { qwMap[i] = 0; qwSave(); ui.status(nn + " HAS NO KEY NOW", 2); break; }
+            std::string was; for (int j = 0; j < 36; j++) if (j != i && qwMap[j] == ev.key.key) { qwMap[j] = 0; was = std::string(NM[j % 12]) + std::to_string(j / 12); }   // a key plays one note
+            qwMap[i] = ev.key.key; qwSave(); ui.status(ui.qwKeys[i] + " PLAYS " + nn + (was.empty() ? "" : "  (IT WAS " + was + ")"), 3); break; }
+          if (!(ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL | SDL_KMOD_ALT)) && !ui.br.open && !ui.ed.open && ui.hasQwerty()) {   // QWERTY MIDI: its keys play notes (before any shortcut)
+            int i = -1; for (int j = 0; j < 36; j++) if (qwMap[j] && qwMap[j] == ev.key.key) i = j;
+            if (i >= 0) { if (!ev.key.repeat) ui.qwertyPlay(i); break; } }
           if ((ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) && !ui.ask && ui.unplugSelected()) break;   // a picked cable
           if (!ui.ask && !ui.br.open && !ui.ed.open) {   // the Tracker last touched: arrows move its cursor, Delete empties the step
             const int tk = ev.key.key == SDLK_UP ? 1 : ev.key.key == SDLK_DOWN ? 2 : ev.key.key == SDLK_LEFT ? 3 : ev.key.key == SDLK_RIGHT ? 4 : (ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) ? 5 : 0;
