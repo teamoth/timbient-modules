@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.25.0";
+static const char* VERSION = "0.26.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -296,14 +296,22 @@ int main(int argc, char** argv) {
   if (theme.bg == "pond" && !pondReady) theme.bg = "#000000";
   applyTheme(canvas, theme);
   auto setTheme = [&](const Theme& t) { theme = t; applyTheme(canvas, theme); settings.set("theme", themeJson(theme)); saveSettings(); };
+  int letters = std::max(0, std::min(2, (int)settings.num("letters", 0)));   // 0 fine lowercase, 1 fine capitals, 2 the classic small capitals
+  static const char* LETTERS[3] = {"LOWERCASE", "CAPITALS", "CLASSIC"};
+  ui.shadows = settings.num("shadows", 0) > 0.5;
   std::function<void(int)> openTheme = [&](int x0) {
     auto nameOf = [](const std::vector<Choice>& list, const std::string& v) { for (auto& c : list) if (v == c.second) return std::string(c.first); return std::string("CUSTOM"); };
     std::string preset = "CUSTOM"; for (auto& p : presets()) if (sameTheme(p.second, theme)) preset = p.first;
     const char* labels[6] = {"PRESET", "BACKGROUND", "MODULES", "AUDIO CABLES", "TRIG CABLES", "MOD CABLES"};
     Dropdown d; d.x = x0; d.y = 11;
     d.items = {std::string("PRESET  ") + preset, "BACKGROUND  " + nameOf(bgChoices(), theme.bg), "MODULES  " + nameOf(modChoices(), theme.mod), "AUDIO CABLES  " + nameOf(cableChoices(), theme.audio),
-      "TRIG CABLES  " + nameOf(cableChoices(), theme.trig), "MOD CABLES  " + nameOf(cableChoices(), theme.modc), "RANDOMISE", "RESET THEME"};
+      "TRIG CABLES  " + nameOf(cableChoices(), theme.trig), "MOD CABLES  " + nameOf(cableChoices(), theme.modc), std::string("LETTERS  ") + LETTERS[letters], std::string("SHADOWS  ") + (ui.shadows ? "ON" : "OFF"), "RANDOMISE", "RESET THEME"};
     d.pick = [&, x0, labels](int i) {
+      if (i == 6) { Dropdown q; q.x = x0; q.y = 11 + i * 8; q.items = {"LOWERCASE  (FINER LETTERS)", "CAPITALS  (FINER LETTERS)", "CLASSIC  (THE ORIGINAL SMALL CAPITALS)"}; q.cur = letters;
+        q.pick = [&](int j) { letters = j; settings.set("letters", Json::number(j)); saveSettings();
+          ui.status(j == 2 ? "THE CLASSIC LETTERS" : "FINER LETTERS (ON A SMALL SCREEN, ZOOM IN WITH CTRL + IF THEY DON'T SHOW)", 4); }; ui.openDropdown(q); return; }
+      if (i == 7) { ui.shadows = !ui.shadows; settings.set("shadows", Json::number(ui.shadows ? 1 : 0)); saveSettings(); ui.status(ui.shadows ? "SHADOWS UNDER THE MODULES" : "NO SHADOWS", 2); openTheme(x0); return; }
+      i -= 2; if (i < 6) i += 2;   // RANDOMISE and RESET come after LETTERS and SHADOWS
       if (i == 6) { setTheme(randomTheme([](int n) { return (int)SDL_rand(n); })); ui.status("RANDOM THEME: TAP RANDOMISE AGAIN FOR ANOTHER", 3); openTheme(x0); return; }   // stays open, to roll again
       if (i == 7) { setTheme(Theme{}); ui.status("THEME RESET"); return; }
       Dropdown q; q.x = x0; q.y = 11 + (i ? i * 8 : 0); const int SW = 64;
@@ -325,14 +333,12 @@ int main(int argc, char** argv) {
   static const int FPS[3] = {60, 30, 20};
   int fpsIdx = std::max(0, std::min(2, (int)settings.num("fps", 1)));
   ui.cableMotion = settings.num("cableMotion", 1) > 0.5;
-  int letters = std::max(0, std::min(2, (int)settings.num("letters", 0)));   // 0 fine lowercase, 1 fine capitals, 2 the classic small capitals
-  static const char* LETTERS[3] = {"LOWERCASE", "CAPITALS", "CLASSIC"};
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), std::string("LETTERS  ") + LETTERS[letters], "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -357,11 +363,8 @@ int main(int argc, char** argv) {
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
       else if (i == 6) { ui.cableMotion = !ui.cableMotion; settings.set("cableMotion", Json::number(ui.cableMotion ? 1 : 0)); saveSettings();
         ui.status(ui.cableMotion ? "CABLE MOTION ON: PULSES AND FLOW ALONG THE CABLES" : "CABLE MOTION OFF: A LITTLE LIGHTER ON OLDER COMPUTERS", 4); return; }
-      else if (i == 7) { q.items = {"LOWERCASE  (FINER LETTERS)", "CAPITALS  (FINER LETTERS)", "CLASSIC  (THE ORIGINAL SMALL CAPITALS)"}; q.cur = letters;
-        q.pick = [&](int j) { letters = j; settings.set("letters", Json::number(j)); saveSettings();
-          ui.status(j == 2 ? "THE CLASSIC LETTERS" : "FINER LETTERS (ON A SMALL SCREEN, ZOOM IN WITH CTRL + IF THEY DON'T SHOW)", 4); }; }
-      else if (i == 8) { openTheme(x0); return; }
-      else if (i == 9) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+      else if (i == 7) { openTheme(x0); return; }
+      else if (i == 8) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);

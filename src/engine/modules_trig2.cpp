@@ -93,7 +93,7 @@ struct Tracker : Module {
     Event p; p.note = note(4, 0); p.vel = e[VEL]; p.period = per; p.ppb = ppb; emit(1, p);
     for (int c = 0; c < cols(); c++) {   // every column's note on this step, together
       const float nt = seq[si(pos, c)].load(std::memory_order_relaxed);
-      if (nt >= 0) { Event ev; ev.note = nt; ev.vel = seq[si(pos, c) + 1].load(std::memory_order_relaxed) * e[VEL]; ev.period = per; ev.ppb = ppb; emit(0, ev); } }
+      if (nt >= 0) { Event ev; ev.note = nt; ev.vel = e[VEL]; /* every step at VELOCITY: patch into its socket to move it */ ev.period = per; ev.ppb = ppb; emit(0, ev); } }
   }
   void blockStart(int) override { clockedIn.store(patched(0)); int c = cursor.load(); if (c >= len()) cursor.store(len() - 1); if (cursorCol.load() >= cols()) cursorCol.store(cols() - 1); }
   void trig(int port, const Event& ev) override {
@@ -122,7 +122,7 @@ static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PT
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float v) { return std::to_string((int)v); }), "own"),
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), ST("estep", "ADVANCE", 0, 8, 1), OP("rec", "STEP RECORD", {"OFF", "ON"}, 1), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL"), ST("cols", "COLUMNS", 1, 8, 1)},
-  85, 84, false, [] { return new Tracker(); }});
+  85, 92, false, [] { return new Tracker(); }});
 
 }  // namespace tb
 

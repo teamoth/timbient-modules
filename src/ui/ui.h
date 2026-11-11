@@ -14,7 +14,7 @@ namespace tb {
 struct UiMod;
 void keysCell(const UiMod& u, int& cw, int& ch);   // NOTE GRID: how big its buttons are
 struct UiMod {
-  int colScroll = 0;   // TRACKER: the first of the two columns on show
+  int colScroll = 0;   // TRACKER: the first of the columns on show
   int tlSel = -1;      // TIMELINE: the event picked (its place in the list), or -1
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
@@ -45,6 +45,7 @@ public:
   std::function<void(int)> onZoom;                    // the zoom buttons: -1 out, +1 in
   std::function<bool(UiMod*, const std::string&)> onAction;
   // QWERTY MIDI: the key on each of the 36 notes (C-0 to B-2), named by the app; the note waiting for a key, or -1
+  bool shadows = false;   // THEME > SHADOWS: a drop shadow under each module
   std::string qwKeys[36]; int qwLearn = -1;
   bool hasQwerty() const;      // a QWERTY MIDI that's on: the computer keys play it
   void qwertyPlay(int i);      // note i (0 = C-0) on every QWERTY MIDI   // the app's own handling of some buttons (LOAD FILE, RECORD...); true if it took it

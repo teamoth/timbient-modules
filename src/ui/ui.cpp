@@ -87,7 +87,8 @@ void Ui::demoPatch() {
 static int trLen(Module* m) { return std::max(1, std::min(Module::SEQ_MAX, (int)m->p[3].load())); }
 static int trCols(Module* m) { return std::max(1, std::min(Module::SEQ_COLS, (int)m->p[m->def->paramIndex("cols")].load())); }
 static int trShown(Module* m) { int last = -1; const int nc = trCols(m); for (int i = Module::SEQ_MAX - 1; i >= 0 && last < 0; i--) for (int c = 0; c < nc; c++) if (m->seq[Module::si(i, c)].load() >= 0) { last = i; break; } return std::max(trLen(m), last + 1); }
-static int trHead(Module* m) { return trCols(m) > 1 ? 7 : 0; }   // with more than one column: a strip naming the two on show, with < and > to move along
+static constexpr int TR_VIS = 4;   // columns on show at once
+static int trHead(Module* m) { return trCols(m) > 1 ? 7 : 0; }   // with more than one column: a strip numbering those on show, with < and > to move along
 static int trRows(Module* m) { return std::min(16, trShown(m)); }   // the Tracker grows with the rows in use, up to 16; beyond that it scrolls
 // PAN is added as a module's last setting, but shown just above WIDTH (or LEVEL), where it belongs
 static int panRowAt(const ModuleDef* d) { if (d->panIdx < 0) return -1; int t = d->paramIndex("width"); if (t < 0) t = d->paramIndex("level"); return t < 0 ? d->panIdx : t; }
@@ -449,26 +450,26 @@ void Ui::timelineUp(UiMod& u, bool moved, int dir) {   // a picked event tapped 
 void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y0, int w, float dt) {
   Module* m = u.m; const int TR_ROWS = trRows(m), len = trLen(m), shown = trShown(m), pos = (int)m->disp[0].load(), div = std::max(1, (int)m->disp[1].load()), cur = m->cursor.load();
   const int nc = trCols(m), curC = std::min(nc - 1, m->cursorCol.load()), head = trHead(m), y = y0 + head;
-  u.colScroll = std::max(0, std::min(std::max(0, nc - 2), u.colScroll)); const int vis = std::min(2, nc), cw = (w - 14) / vis;
+  u.colScroll = std::max(0, std::min(std::max(0, nc - TR_VIS), u.colScroll)); const int vis = std::min(TR_VIS, nc), cw = (w - 16) / vis;
   u.hold = std::max(0.f, u.hold - dt);
   if (u.hold <= 0 && pos >= 0 && (pos < u.scroll || pos >= u.scroll + TR_ROWS)) u.scroll = (float)pos;   // follows the playhead, except for a few seconds after you touch it
   trClamp(u); const int sc = (int)u.scroll;
   if (head) {   // which columns are on show, and < > to move along
     if (u.colScroll > 0) c.text("<", x + 1, y0, 9);
-    if (u.colScroll + 2 < nc) c.text(">", x + w - 4, y0, 9);
-    for (int k = 0; k < vis; k++) { const int col = u.colScroll + k; const std::string t = "COL " + std::to_string(col + 1); c.text(t, x + 14 + k * cw, y0, col == curC ? 4 : 18); } }
+    if (u.colScroll + TR_VIS < nc) c.text(">", x + w - 4, y0, 9);
+    for (int k = 0; k < vis; k++) { const int col = u.colScroll + k; const std::string t = std::to_string(col + 1); c.text(t, x + 16 + k * cw, y0, col == curC ? 4 : 18); } }
   auto num = [](int r) { char b[16]; std::snprintf(b, 16, "%03d", r + 1); return std::string(b); };
   for (int i = 0; i < TR_ROWS; i++) { const int r = sc + i, ry = y + 1 + i * 6; if (r >= shown) break;
     if (r >= len) { if (r == len) { for (int k = 0; k < w; k += 2) c.px(x + k, ry - 1, 18); c.text("OFF", x + w - 13, ry, 18); }
       c.text(num(r), x + 1, ry, 21);
-      for (int k = 0; k < vis; k++) { const float nt = m->seq[Module::si(r, u.colScroll + k)].load(); c.text(nt >= 0 ? noteName((int)nt) : "---", x + 14 + k * cw, ry, 21); } continue; }
+      for (int k = 0; k < vis; k++) { const float nt = m->seq[Module::si(r, u.colScroll + k)].load(); c.text(nt >= 0 ? noteName((int)nt) : "---", x + 16 + k * cw, ry, 21); } continue; }
     const bool play = r == pos, isCur = r == cur, beat = r % div == 0;
     if (play) c.rect(x, ry - 1, w, 7, 17);
     c.text(num(r), x + 1, ry, play ? 15 : beat ? 9 : 18);
-    for (int k = 0; k < vis; k++) { const int col = u.colScroll + k, cx = x + 14 + k * cw; const float nt = m->seq[Module::si(r, col)].load(), vel = m->seq[Module::si(r, col) + 1].load(); const bool has = nt >= 0;
+    for (int k = 0; k < vis; k++) { const int col = u.colScroll + k, cx = x + 16 + k * cw; const float nt = m->seq[Module::si(r, col)].load(); const bool has = nt >= 0;
       if (isCur && col == curC && !play) c.rect(cx - 1, ry - 1, cw, 7, 21);   // the cursor: this step, this column
       c.text(has ? noteName((int)nt) : "---", cx, ry, has ? (play ? 15 : 9) : play ? 15 : 18);
-      if (has) { const int vw = (int)std::lround(vel * std::max(2, cw - 15)); for (int q = 0; q < vw; q++) c.px(cx + 13 + q, ry + 2, play ? 15 : 7); } }
+    }
     if (isCur) { c.px(x - 2, ry + 1, 4); c.px(x - 2, ry + 2, 4); c.px(x - 2, ry + 3, 4); c.px(x - 1, ry + 2, 4); }
   }
   if (shown > TR_ROWS) {   // where the view is, along the right edge
@@ -484,7 +485,7 @@ bool Ui::trackerKey(int key) {
   if (key == 1) r = (r + len - 1) % len; else if (key == 2) r = (r + 1) % len; else if (key == 3) c = std::max(0, c - 1); else if (key == 4) c = std::min(nc - 1, c + 1);
   else if (key == 5) { eng.action(m->id, "del"); status("CLEARED THE STEP", 1); u->hold = 6; return true; } else return false;
   m->cursor.store(r); m->cursorCol.store(c); u->hold = 6; trShow(*u, r);
-  if (c < u->colScroll) u->colScroll = c; else if (c >= u->colScroll + 2) u->colScroll = c - 1;
+  if (c < u->colScroll) u->colScroll = c; else if (c >= u->colScroll + TR_VIS) u->colScroll = c - TR_VIS + 1;
   char b[40]; std::snprintf(b, 40, "STEP %03d  COLUMN %d", r + 1, c + 1); status(b, 1); return true;
 }
 void Ui::trackerWatch(UiMod& u) {   // notes typed in through ENTER arrive from the audio side: show and save them
@@ -524,6 +525,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   const ModuleDef* d = u.m->def; const Geom g = geom(u); const int x = u.x - viewX, y = u.y - viewY, w = g.w;
   if (x > c.W || y > c.H || x + w < 0 || y + g.h < 0) return;
   static uint8_t inkTbl[128]; static bool init = false; if (!init) { for (int i = 0; i < 128; i++) inkTbl[i] = (uint8_t)i; inkTbl[9] = 28; inkTbl[18] = 29; inkTbl[21] = 30; inkTbl[4] = 47; init = true; }
+  if (shadows) c.rect(x + 2, y + 2, w, g.h, 26);   // THEME > SHADOWS
   c.ink = inkTbl; c.rect(x, y, w, g.h, 27); c.frame(x, y, w, g.h, 21);
   c.ink = nullptr; const bool fl = false, mu = u.m->mute.load();
   c.rect(x, y, w, HEAD, fl ? 4 : mu ? 18 : catCol(d->cat)); c.text(d->name, x + 2, y + 2, 15); if (!d->fixed) c.text("x", x + w - 6, y + 2, 15);
@@ -840,9 +842,9 @@ void Ui::pointerDown(float sx, float sy) {
         if (has) { eng.setBuffer(id, nullptr, k); t->snd[k] = UiMod::Snd(); status("REMOVED SOUND " + std::to_string(k + 1)); changed(); } };
       openDropdown(z); return; }
     if (d->type == "tracker") {   // tap a step (and column) to put the cursor there; drag up and down to scroll. < > move along the columns
-      u->hold = 6; trFocus = u->m->id; const int head = trHead(u->m), nc = trCols(u->m), vis = std::min(2, nc), cw = (g.w - 6 - 14) / vis;
-      if (head && vy < head) { if (vx < 8) u->colScroll = std::max(0, u->colScroll - 1); else if (vx >= g.w - 6 - 8) u->colScroll = std::min(std::max(0, nc - 2), u->colScroll + 1); return; }
-      const int r = (int)u->scroll + std::max(0, (vy - head - 1) / 6), col = vx >= 14 ? std::min(nc - 1, u->colScroll + std::min(vis - 1, (vx - 14) / std::max(1, cw))) : u->m->cursorCol.load();
+      u->hold = 6; trFocus = u->m->id; const int head = trHead(u->m), nc = trCols(u->m), vis = std::min(TR_VIS, nc), cw = (g.w - 6 - 16) / vis;
+      if (head && vy < head) { if (vx < 8) u->colScroll = std::max(0, u->colScroll - 1); else if (vx >= g.w - 6 - 8) u->colScroll = std::min(std::max(0, nc - TR_VIS), u->colScroll + 1); return; }
+      const int r = (int)u->scroll + std::max(0, (vy - head - 1) / 6), col = vx >= 16 ? std::min(nc - 1, u->colScroll + std::min(vis - 1, (vx - 16) / std::max(1, cw))) : u->m->cursorCol.load();
       if (r < trLen(u->m)) { u->m->cursor.store(r); u->m->cursorCol.store(col); char b[40]; std::snprintf(b, 40, "CURSOR AT STEP %03d  COLUMN %d", r + 1, col + 1); status(b, 1.2f); }
       drag.kind = D_SCROLL; drag.m = u; drag.n0 = u->scroll; return; }
   }
@@ -879,6 +881,7 @@ void Ui::nudge(UiMod* u, int k, int dir) {
   const ParamDef& q = u->m->def->params[k]; const float v0 = u->m->p[k].load();
   float v = q.step > 0 ? clampf(v0 + dir * q.step, std::min(q.min, q.max), std::max(q.min, q.max)) : q.fromNorm(q.toNorm(v0) + dir * q.nudge);
   if (q.step > 0 && q.rev) v = clampf(v0 - dir * q.step, q.min, q.max);
+  if (q.step > 0) v = std::round(v / q.step) * q.step;   // onto the steps (a value from an older session may sit between them)
   u->m->p[k].store(v); clockToTempo(u, k, eng); status(u->m->def->name + "  " + statusLabel(*u, q) + "  " + valueText(*u, k, v, eng.key.root.load()), 1.5f);
 }
 void Ui::selectCable(const UiCable& c, float sx, float sy) {
@@ -904,7 +907,7 @@ void Ui::pointerMove(float sx, float sy) {
         status("DROP IT ON ANOTHER " + std::string(c0.type == PType::Mod ? "SETTING" : "INPUT") + " TO MOVE IT", 2); } else drag.kind = D_NONE; } }
   else if (drag.kind == D_PARAM && !drag.moved && !drag.held && std::fabs(sx - drag.sx) < 2) {}   // not moved far enough to count as a drag yet
   else if (drag.kind == D_PARAM && drag.held) {}
-  else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 ? 40.f : 70.f));
+  else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 && !q.exp ? 40.f : 70.f));
     drag.m->m->p[drag.k].store(v); clockToTempo(drag.m, drag.k, eng); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + valueText(*drag.m, drag.k, v, eng.key.root.load()), 1.5f); }
   else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng.tempo.bpm.load())) { eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
