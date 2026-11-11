@@ -239,12 +239,16 @@ struct NoteLooper : Module {
     std::vector<std::vector<int>> groups; std::vector<double> times; double gt = -1e9;   // chords: notes within a fiftieth of a beat
     for (auto& nt : in) { if (nt.t - gt > 0.02) { groups.push_back({}); times.push_back(nt.t); gt = nt.t; } groups.back().push_back(nt.i); }
     const int G = (int)groups.size(); std::vector<double> to(G);
-    if (rhythm) { static const double GR[4] = {0.25, 0.25, 0.5, 1}; const double g = GR[(int)e[QUANT] & 3]; const int slots = std::max(1, (int)std::floor(L / g + 1e-6));
-      std::vector<int> pick; if (G >= slots) { for (int k = 0; k < G; k++) pick.push_back(k * slots / G); }   // more notes than places: spread them evenly
-      else { std::vector<int> rest; for (int k = 1; k < slots; k++) rest.push_back(k);
-        for (int k = (int)rest.size() - 1; k > 0; k--) std::swap(rest[k], rest[(int)(rng.uni() * (k + 1)) % (k + 1)]);
-        pick.push_back(0); for (int k = 0; k < G - 1; k++) pick.push_back(rest[k]); std::sort(pick.begin(), pick.end()); }
-      for (int k = 0; k < G; k++) to[k] = S + pick[k] * g; }
+    if (rhythm) { static const double GR[4] = {0.25, 0.25, 0.5, 1}; double g = GR[(int)e[QUANT] & 3];
+      while (g > 1.0 / 32 && std::floor(L / g + 1e-6) < G * 1.5) g /= 2;   // lots of notes for the loop: a finer grid, so there's room to move them
+      const int slots = std::max(1, (int)std::floor(L / g + 1e-6));
+      for (int tries = 0; tries < 8; tries++) {   // a rhythm that's different from the one there now
+        std::vector<int> pick; if (G >= slots) { for (int k = 0; k < G; k++) pick.push_back(k * slots / G); }   // still more notes than places: spread them evenly
+        else { std::vector<int> rest; for (int k = 1; k < slots; k++) rest.push_back(k);
+          for (int k = (int)rest.size() - 1; k > 0; k--) std::swap(rest[k], rest[(int)(rng.uni() * (k + 1)) % (k + 1)]);
+          pick.push_back(0); for (int k = 0; k < G - 1; k++) pick.push_back(rest[k]); std::sort(pick.begin(), pick.end()); }
+        bool same = true; for (int k = 0; k < G; k++) { to[k] = S + pick[k] * g; if (std::fabs(to[k] - times[k]) > 1e-4) same = false; }
+        if (!same || G >= slots) break; } }
     else { std::vector<int> ord(G); for (int k = 0; k < G; k++) ord[k] = k; for (int k = G - 1; k > 0; k--) std::swap(ord[k], ord[(int)(rng.uni() * (k + 1)) % (k + 1)]);
       for (int k = 0; k < G; k++) to[ord[k]] = times[k]; }
     for (int k = 0; k < G; k++) for (int i : groups[k]) ev[i * 4].store((float)to[k]);

@@ -103,6 +103,12 @@ int main(int argc, char** argv) {
     eng.action(m->id, "urand"); run(eng, 0.05f); bool back = true; for (int i = 0; i < 6; i++) if (std::fabs(m->ev[i * 4].load() - T[i]) > 1e-4f) back = false;
     const bool ok = f0 == 0 && f1 > 0 && grid && first == 0 && chordSame && back; if (!ok) fails++;
     std::printf("note looper: chance 0 -> %d, 1 -> %d, random rhythm on grid %d, first %.2f, chord kept %d, undo %d%s\n", f0, f1, grid, first, chordSame, back, ok ? "" : "  WRONG"); }
+  // NOTE LOOPER: RANDOM RHYTHM moves dense, already-even notes too (20 notes on the 1/16s of 4 beats)
+  { ui.clearPatch(); ui.add("out", 300, 20); UiMod* nl = ui.add("nloop", 0, 20); Module* m = nl->m; ui.set(nl, "lenb", 4); ui.set(nl, "quant", 1);
+    for (int i = 0; i < 20; i++) { m->ev[i * 4].store(i * 0.2f); m->ev[i * 4 + 1].store(60.f + i % 7); m->ev[i * 4 + 2].store(0.8f); m->ev[i * 4 + 3].store(0); } m->evN.store(20);
+    int moved = 0; for (int r = 0; r < 3; r++) { float before[20]; for (int i = 0; i < 20; i++) before[i] = m->ev[i * 4].load(); eng.action(m->id, "rrhythm"); run(eng, 0.02f);
+      int ch = 0; for (int i = 0; i < 20; i++) if (std::fabs(m->ev[i * 4].load() - before[i]) > 1e-4f) ch++; if (ch > 0) moved++; }
+    const bool ok = moved == 3; if (!ok) fails++; std::printf("random rhythm, dense: changed %d of 3 presses%s\n", moved, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);
