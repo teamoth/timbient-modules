@@ -7,7 +7,7 @@
 #include <cstdio>
 
 namespace tb {
-static inline bool modulatable(const ParamDef& q) { return q.opts.empty() && !q.act; }   // levels can be moved by mod cables; choices and buttons cannot
+static inline bool modulatable(const ParamDef& q) { return q.opts.empty() && !q.act && !q.noMod; }   // levels can be moved by mod cables; choices and buttons cannot
 
 
 static const int HEAD = 8, ROW = 7, FOOT = 9, TOP = 10;
@@ -44,7 +44,7 @@ bool Ui::connect(UiMod* a, int fp, UiMod* b, int tp) {
 }
 bool Ui::connect(UiMod* a, const std::string& op, UiMod* b, const std::string& ip) { return a && b && connect(a, a->m->def->outIndex(op), b, b->m->def->inIndex(ip)); }
 bool Ui::modulate(UiMod* s, UiMod* d, int pk) {
-  const int op = s->m->def->outIndex("MOD") >= 0 ? s->m->def->outIndex("MOD") : s->m->def->outIndex("CC"); if (pk < 0 || op < 0 || s == d) return false;
+  const int op = s->m->def->outIndex("MOD") >= 0 ? s->m->def->outIndex("MOD") : s->m->def->outIndex("CC"); if (pk < 0 || op < 0 || s == d || !modulatable(d->m->def->params[pk])) return false;
   for (auto& c : cables) if (c.type == PType::Mod && c.from == s->m->id && c.to == d->m->id && c.toParam == pk) return false;
   Cable c; c.from = s->m->id; c.fromPort = op; c.to = d->m->id; c.toParam = pk; c.type = PType::Mod; eng.connect(c);
   cables.push_back({c.from, op, c.to, -1, pk, PType::Mod}); return true;
@@ -85,7 +85,7 @@ void Ui::demoPatch() {
 
 // ---------------- geometry and hit testing ----------------
 static int trLen(Module* m) { return std::max(1, std::min(Module::SEQ_MAX, (int)m->p[3].load())); }
-static int trCols(Module* m) { return std::max(1, std::min(Module::SEQ_COLS, (int)m->p[m->def->paramIndex("cols")].load())); }
+static int trCols(Module*) { return 4; }   // the TRACKER always has four
 static int trShown(Module* m) { int last = -1; const int nc = trCols(m); for (int i = Module::SEQ_MAX - 1; i >= 0 && last < 0; i--) for (int c = 0; c < nc; c++) if (m->seq[Module::si(i, c)].load() >= 0) { last = i; break; } return std::max(trLen(m), last + 1); }
 static constexpr int TR_VIS = 4;   // columns on show at once
 static int trHead(Module* m) { return trCols(m) > 1 ? 7 : 0; }   // with more than one column: a strip numbering those on show, with < and > to move along
@@ -517,7 +517,7 @@ static std::string statusLabel(const UiMod& u, const ParamDef& q) {
 }
 int Ui::minusX(const UiMod& u, int j) const {   // after the name: normally at 39, further for a long name or an inside socket
   const ParamDef& q = u.m->def->params[j]; std::string lab = q.label;
-  const int ins = jacksIn && modulatable(q) ? 7 : 0;   // a clear gap after the socket, so the name doesn't look like it starts with O
+  const int ins = jacksIn && (modulatable(q) || q.noMod) ? 7 : 0;   // a clear gap after the socket (kept on a row without one, so its slider lines up), so the name doesn't look like it starts with O
   (void)lab; return u.m->def->labelEnd + ins;   // the same for every row of a module, so all its sliders are the same length
 }
 void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
@@ -956,7 +956,7 @@ void Ui::pointerUp(float sx, float sy) {
   if (!d.rev && d.from.type == PType::Mod) {   // a mod cable goes onto a setting
     int lx, ly; UiMod* u = hit(wx, wy, lx, ly); int pj = u ? paramAt(u, ly) : -1;
     { const JackHit sk = jackAt(wx, wy, 4); if (sk.u && sk.param >= 0) { u = sk.u; pj = sk.param; } }   // dropped on a socket
-    if (u && pj >= 0 && !modulatable(u->m->def->params[pj])) { status(u->m->def->params[pj].label + " IS A CHOICE, NOT A LEVEL: IT CAN'T BE MODULATED"); return; }
+    if (u && pj >= 0 && !modulatable(u->m->def->params[pj])) { status(u->m->def->params[pj].label + (u->m->def->params[pj].noMod ? " IS A SETTING: IT CAN'T BE MODULATED" : " IS A CHOICE, NOT A LEVEL: IT CAN'T BE MODULATED")); return; }
     if (u && pj >= 0 && u != d.from.u) { if (modulate(d.from.u, u, pj)) { status(d.from.u->m->def->name + " NOW MOVES " + u->m->def->name + " " + u->m->def->params[pj].label); made = true; } }
     else status("DROP A MOD CABLE ON A SETTING");
     return;

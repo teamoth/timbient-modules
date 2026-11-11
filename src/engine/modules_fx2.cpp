@@ -199,9 +199,9 @@ struct CompModule : Module {
   }
 };
 static Reg rComp(new ModuleDef{"comp", "COMPRESSOR", Cat::Proc, {{"IN", PType::Audio}, {"KEY", PType::Audio}}, {{"OUT", PType::Audio}},
-  {fmt(pr("thr", "THRESHOLD", -48, 0, -18), dbText), fmt(prExp("ratio", "RATIO", 1, 20, 4), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f:1", v); return std::string(b); }),
+  {fmt(pr("thr", "THRESHOLD", -48, 0, -18), dbText), noMod(fmt(prExp("ratio", "RATIO", 1, 20, 4), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f:1", v); return std::string(b); })),
    fmt(prExp("atk", "ATTACK", 0.0001f, 0.2f, 0.01f), msText), fmt(prExp("rel", "RELEASE", 0.01f, 2, 0.2f), msText),
-   fmt(pr("knee", "KNEE", 0, 18, 6), [](float v) { char b[16]; std::snprintf(b, 16, "%.0fDB", v); return std::string(b); }), fmt(pr("makeup", "MAKEUP", 0, 24, 0), dbText), pct("mix", "MIX", 1)},
+   noMod(fmt(pr("knee", "KNEE", 0, 18, 6), [](float v) { char b[16]; std::snprintf(b, 16, "%.0fDB", v); return std::string(b); })), noMod(fmt(pr("makeup", "MAKEUP", 0, 24, 0), dbText)), pct("mix", "MIX", 1)},
   20, 68, false, [] { return new CompModule(); }});
 
 // a look-ahead peak limiter: the sound is held back a moment so the gain can come down before a peak arrives
@@ -227,7 +227,7 @@ struct Limiter : Module {
   }
 };
 static Reg rLimiter(new ModuleDef{"limit", "LIMITER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {fmt(pr("drive", "DRIVE", 0, 24, 0), dbText), fmt(pr("ceil", "CEILING", -12, 0, -0.3f), dbText), fmt(prExp("rel", "RELEASE", 0.01f, 1, 0.1f), msText)},
+  {fmt(pr("drive", "DRIVE", 0, 24, 0), dbText), noMod(fmt(pr("ceil", "CEILING", -12, 0, -0.3f), dbText)), fmt(prExp("rel", "RELEASE", 0.01f, 1, 0.1f), msText)},
   20, 68, false, [] { return new Limiter(); }});
 
 // MASTER: a light finishing chain for just before OUTPUT: rumble out, a gentle tone tilt, a little warmth,
@@ -257,9 +257,9 @@ struct Master : Module {
   }
 };
 static Reg rMaster(new ModuleDef{"master", "MASTER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {fmt(prExp("lowcut", "LOW CUT", 15, 200, 30), [](float v) { return std::to_string((int)std::lround(v)) + "HZ"; }),
+  {noMod(fmt(prExp("lowcut", "LOW CUT", 15, 200, 30), [](float v) { return std::to_string((int)std::lround(v)) + "HZ"; })),
    fmt(pr("tilt", "TILT", -1, 1, 0), [](float v) { if (std::fabs(v) < 0.02f) return std::string("FLAT"); char b[16]; std::snprintf(b, 16, "%s %.0f%%", v < 0 ? "DARKER" : "BRIGHTER", std::fabs(v) * 100); return std::string(b); }),
    pct("warmth", "WARMTH", 0.2f), pct("glue", "GLUE", 0.3f),
-   fmt(pr("width", "WIDTH", 0, 2, 1), [](float v) { return std::to_string((int)std::lround(v * 100)) + "%"; }), fmt(pr("ceil", "CEILING", -6, 0, -0.5f), dbText)},
+   fmt(pr("width", "WIDTH", 0, 2, 1), [](float v) { return std::to_string((int)std::lround(v * 100)) + "%"; }), noMod(fmt(pr("ceil", "CEILING", -6, 0, -0.5f), dbText))},
   20, 68, false, [] { return new Master(); }});
 }  // namespace tb

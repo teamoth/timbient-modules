@@ -76,6 +76,16 @@ int main(int argc, char** argv) {
     int evs = 0; for (auto& um : ui.mods) if (um->m->def->type == "timeline") evs = um->m->evN.load();
     const bool ok = plugged && a && b && c2 && saved && back && evs == 2; if (!ok) fails++;
     std::printf("timeline switch: plugged %d, on %d, off at 1s %d, on at 2s %d, saved %d, loaded %d, events %d%s\n", plugged, a, b, c2, saved, back, evs, ok ? "" : "  WRONG"); }
+  // TRACKER: output 2 plays only column 2; TRIG plays all four; no socket on STEP JUMP
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* tr = ui.add("tracker", 0, 20); UiMod* a = ui.add("pluck", 100, 20); UiMod* b = ui.add("pluck", 100, 120); UiMod* lfo = ui.add("lfo", 0, 200);
+    ui.set(tr, "sync", 0); ui.set(tr, "bpm", 120); ui.set(tr, "len", 4);
+    for (int r = 0; r < 4; r++) tr->m->seq[Module::si(r, 1)].store(60.f); tr->m->seq[Module::si(0, 0)].store(48.f);
+    ui.connect(tr, tr->m->def->outIndex("2"), a, a->m->def->inIndex("TRIG")); ui.connect(tr, tr->m->def->outIndex("TRIG"), b, b->m->def->inIndex("TRIG"));
+    ui.connect(a, "OUT", out, "A"); ui.connect(b, "OUT", out, "B");
+    run(eng, 2.1f); const int f2 = tr->m->fires[tr->m->def->outIndex("2")].load(), ft = tr->m->fires[0].load();
+    const bool nm = !ui.modulate(lfo, tr, tr->m->def->paramIndex("estep"));
+    const bool ok = f2 >= 6 && ft >= f2 + 1 && nm; if (!ok) fails++;
+    std::printf("tracker columns: out 2 %d, trig %d, step jump unmodulatable %d%s\n", f2, ft, nm, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

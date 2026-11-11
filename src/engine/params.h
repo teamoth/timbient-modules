@@ -15,6 +15,7 @@ inline ParamDef ST(const char* k, const char* l, float mn, float mx, float v) { 
 inline ParamDef OP(const char* k, const char* l, std::vector<std::string> opts, int v) { auto p = pr(k, l, 0, (float)opts.size() - 1, (float)v); p.step = 1; p.opts = opts; return p; }
 inline ParamDef ACT(const char* k, const char* l) { ParamDef p; p.key = k; p.label = l; p.act = true; return p; }
 inline ParamDef rev(ParamDef p) { p.rev = true; return p; }
+inline ParamDef noMod(ParamDef p) { p.noMod = true; return p; }   // no mod socket: a setting
 inline ParamDef fine(ParamDef p) { p.nudge = 0.001f; return p; }   // - and + move it a thousandth (SAMPLE START on a long sound)
 inline ParamDef only(ParamDef p, const char* o) { p.only = o; return p; }
 inline ParamDef fmt(ParamDef p, std::function<std::string(float)> f) { p.fmt = f; return p; }

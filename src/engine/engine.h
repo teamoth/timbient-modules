@@ -28,6 +28,7 @@ struct ParamDef {
   std::vector<std::string> opts;   // a list of named choices (stored as an index)
   std::string only;                // 'free', 'clock', 'own': greyed out depending on the module's state
   bool act = false;                // an action button rather than a value
+  bool noMod = false;              // a setting rather than a level: no mod socket (its name takes the socket's room)
   std::function<std::string(float)> fmt;
   float toNorm(float v) const {   // rev: the slider runs the other way (a time shown as a rate: longer times sit at the left)
     const float n = exp ? std::log(std::max(v, min) / min) / std::log(max / min) : (v - min) / (max - min);

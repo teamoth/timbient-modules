@@ -51,7 +51,7 @@ void registerDef(ModuleDef* d) {
   if (audio && d->type != "mixer" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {
     ParamDef q = pr("pan", "PAN", -1, 1, 0); q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };
     d->panIdx = (int)d->params.size(); d->params.push_back(q); }
-  { int end = 39; for (auto& q : d->params) if (q.opts.empty() && !q.act) end = std::max(end, 3 + (int)std::min<size_t>(11, q.label.size()) * 4 - 1 + 2);
+  { int end = 39; for (auto& q : d->params) if (q.opts.empty() && !q.act) end = std::max(end, 3 + (int)std::min<size_t>(11, q.label.size()) * 4 - 1 + 2 - (q.noMod ? 7 : 0));
     d->labelEnd = end; d->width += end - 39; }   // a long name widens the module rather than shortening its sliders
   allDefs().push_back(d);
 }   // +8: room for the - and + beside every slider
@@ -81,7 +81,7 @@ float Module::note(int oct, int step) const { return midiOf(degOf(oct, step, sca
 void Module::emit(int port, Event ev) {
   if (mute.load(std::memory_order_relaxed)) return;
   // CHANCE: each note a sequencer plays has this chance of sounding (clock pulses always pass)
-  if (def->cat == Cat::Trig && def->outs[port].name == "TRIG" && def->type != "tools") { const int ci = def->paramIndex("chance"); if (ci >= 0 && rng.uni() >= e[ci]) return; }
+  if (def->cat == Cat::Trig && def->outs[port].name == "TRIG" && def->type != "tools" && def->type != "tracker") { const int ci = def->paramIndex("chance"); if (ci >= 0 && rng.uni() >= e[ci]) return; }
   flash.store(0.12f, std::memory_order_relaxed); if (port >= 0 && port < 8) fires[port].fetch_add(1, std::memory_order_relaxed);
   ev.offset = eng->pos;
   for (auto& c : eng->cables) {

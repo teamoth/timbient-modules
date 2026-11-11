@@ -10,7 +10,8 @@ int main(int argc, char** argv) {
   const float S = argc > 1 ? (float)std::atof(argv[1]) : 3; const int lc = argc > 2 ? std::atoi(argv[2]) : 0;
   Engine eng; eng.setSampleRate(48000); Ui ui(eng); ui.demoPatch();
   ui.bar.push_back({"SESSIONS", [](int) {}}); ui.bar.push_back({"SETTINGS", [](int) {}});
-  ui.shadows = std::getenv("TB_SHADOWS") != nullptr; UiMod* tr = ui.add("tracker", 330, 330); ui.set(tr, "cols", 5); for (int r = 0; r < 8; r++) for (int k = 0; k < 5; k++) if ((r + k) % 3 == 0) tr->m->seq[Module::si(r, k)].store(48.f + r + k * 3);
+  ui.shadows = std::getenv("TB_SHADOWS") != nullptr; UiMod* tr = ui.add("tracker", 330, 330); for (int r = 0; r < 8; r++) for (int k = 0; k < 4; k++) if ((r + k) % 3 == 0) tr->m->seq[Module::si(r, k)].store(48.f + r + k * 3);
+  ui.add("comp", 110, 330); ui.add("keys", 110, 420);
   UiMod* tl = ui.add("timeline", 10, 330); ui.add("qwerty", 180, 330); for (int i = 0; i < 4; i++) { tl->m->ev[i * 4].store(30.f + i * 50); tl->m->ev[i * 4 + 1].store((float)i); tl->m->ev[i * 4 + 2].store(1); } tl->m->evN.store(4); tl->tlSel = 1;
   run(eng, 1);
   Canvas c; c.fine = true; c.letterCase = lc; c.resize(460, 460); c.beginFrame(); ui.draw(c, 0.016f);

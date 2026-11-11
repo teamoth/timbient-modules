@@ -81,8 +81,9 @@ static Reg rTools(new ModuleDef{"tools", "TRIG TOOLS", Cat::Trig, {{"IN", PType:
 // ---------------- TRACKER: notes typed in step by step ----------------
 static const int TRK_DIV[3] = {1, 2, 4};
 struct Tracker : Module {
-  enum { SYNC, BPM, DIV, LEN, ESTEP, REC, VEL, CHANCE, DEL, CLEAR, COLS };
-  int cols() const { return std::max(1, std::min(SEQ_COLS, (int)e[COLS])); }
+  enum { SYNC, BPM, DIV, LEN, ESTEP, REC, VEL, CHANCE, DEL, CLEAR };
+  static constexpr int COLS = 4;   // always four columns
+  int cols() const { return COLS; }
   int pos = -1; double next = -1; ClockIn2 ck;
   Tracker() { allocSeq(); }
   int len() const { return std::max(1, std::min(SEQ_MAX, (int)e[LEN])); }
@@ -93,7 +94,8 @@ struct Tracker : Module {
     Event p; p.note = note(4, 0); p.vel = e[VEL]; p.period = per; p.ppb = ppb; emit(1, p);
     for (int c = 0; c < cols(); c++) {   // every column's note on this step, together
       const float nt = seq[si(pos, c)].load(std::memory_order_relaxed);
-      if (nt >= 0) { Event ev; ev.note = nt; ev.vel = e[VEL]; /* every step at VELOCITY: patch into its socket to move it */ ev.period = per; ev.ppb = ppb; emit(0, ev); } }
+      if (nt >= 0 && rng.uni() < e[CHANCE]) { Event ev; ev.note = nt; ev.vel = e[VEL]; /* every step at VELOCITY: patch into its socket to move it */ ev.period = per; ev.ppb = ppb;
+        emit(0, ev); emit(2 + c, ev); } }   // TRIG has every column; outputs 1 to 4 one each (CHANCE rolled once, for both)
   }
   void blockStart(int) override { clockedIn.store(patched(0)); int c = cursor.load(); if (c >= len()) cursor.store(len() - 1); if (cursorCol.load() >= cols()) cursorCol.store(cols() - 1); }
   void trig(int port, const Event& ev) override {
@@ -118,10 +120,11 @@ struct Tracker : Module {
     disp[0].store((float)pos); disp[1].store((float)TRK_DIV[(int)e[DIV]]);
   }
 };
-static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PType::Trig}, {"STEP ENTER", PType::Trig}}, {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}},
+static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PType::Trig}, {"STEP ENTER", PType::Trig}},
+  {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}, {"1", PType::Trig}, {"2", PType::Trig}, {"3", PType::Trig}, {"4", PType::Trig}},
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float v) { return std::to_string((int)v); }), "own"),
-   only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), ST("estep", "ADVANCE", 0, 8, 1), OP("rec", "STEP RECORD", {"OFF", "ON"}, 1), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
-   ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL"), ST("cols", "COLUMNS", 1, 8, 1)},
+   only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), noMod(ST("estep", "STEP JUMP", 0, 8, 1)), OP("rec", "STEP RECORD", {"OFF", "ON"}, 1), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
+   ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL")},
   85, 92, false, [] { return new Tracker(); }});
 
 }  // namespace tb
@@ -303,7 +306,7 @@ struct Timeline : Module {
 static std::string mmss(float v) { const int s = (int)std::lround(v); char b[16]; std::snprintf(b, 16, "%d:%02d", s / 60, s % 60); return b; }
 static Reg rTimeline(new ModuleDef{"timeline", "TIMELINE", Cat::Trig, {{"START", PType::Trig}, {"STOP", PType::Trig}},
   {{"1", PType::Trig}, {"2", PType::Trig}, {"3", PType::Trig}, {"4", PType::Trig}, {"5", PType::Trig}, {"6", PType::Trig}},
-  {playBtn(OP("run", "RUN", {"OFF", "ON"}, 0)), [] { auto q = fmt(pr("len", "LENGTH", 10, 1800, 300), mmss); q.step = 5; return q; }(),
+  {playBtn(OP("run", "RUN", {"OFF", "ON"}, 0)), [] { auto q = noMod(fmt(pr("len", "LENGTH", 10, 1800, 300), mmss)); q.step = 5; return q; }(),
    OP("end", "AT THE END", {"STOP", "LOOP"}, 1), OP("snap", "SNAP", {"OFF", "1 S", "5 S", "10 S", "30 S"}, 1), ACT("clear", "CLEAR EVENTS")}, 58, 150, false, [] { return new Timeline(); }});
 
 }  // namespace tb

@@ -127,13 +127,13 @@ struct Keys : Module {
   void trig(int port, const Event& ev) override { if (port == -1) emit(0, ev); }
 };
 static Reg rKeys(new ModuleDef{"keys", "NOTE GRID", Cat::Trig, {}, {{"NOTE", PType::Trig}},
-  {pct("vel", "VELOCITY", 0.8f), OCTP("oct", 1, 7, 3), OP("size", "SIZE", {"SMALL", "MEDIUM", "LARGE"}, 1)}, 36, 118, false, [] { return new Keys(); }});
+  {noMod(pct("vel", "VELOCITY", 0.8f)), noMod(OCTP("oct", 1, 7, 3)), OP("size", "SIZE", {"SMALL", "MEDIUM", "LARGE"}, 1)}, 36, 118, false, [] { return new Keys(); }});
 
 // ---------------- QWERTY MIDI: the computer keyboard plays notes, three octaves of them (C-0 to B-2), on keys you choose ----------------
 // The screen sends each key press in (port -1) as a note; OCTAVE says where C-0 sits
 struct Qwerty : Module { void trig(int port, const Event& ev) override { if (port == -1) emit(0, ev); } };
 static Reg rQwerty(new ModuleDef{"qwerty", "QWERTY MIDI", Cat::Trig, {}, {{"NOTE", PType::Trig}},
-  {pct("vel", "VELOCITY", 0.8f), fmt(ST("oct", "OCTAVE", 0, 7, 3), [](float v) { return "C-0 = C" + std::to_string((int)std::lround(v)); }), ACT("reset", "DEFAULT KEYS")}, 32, 118, false, [] { return new Qwerty(); }});
+  {noMod(pct("vel", "VELOCITY", 0.8f)), noMod(fmt(ST("oct", "OCTAVE", 0, 7, 3), [](float v) { return "C-0 = C" + std::to_string((int)std::lround(v)); })), ACT("reset", "DEFAULT KEYS")}, 32, 118, false, [] { return new Qwerty(); }});
 
 // ---------------- LFO ----------------
 struct Lfo : Module {
@@ -181,6 +181,6 @@ struct Out : Module {
 };
 static ParamDef eqP(const char* k, const char* l) { auto p = pr(k, l, -12, 12, 0); p.fmt = [](float v) { char b[16]; std::snprintf(b, 16, "%+.1fDB", v); return std::string(std::fabs(v) < 0.05f ? "0DB" : b); }; return p; }
 static Reg rOut(new ModuleDef{"out", "OUTPUT", Cat::Out, {{"A", PType::Audio}, {"B", PType::Audio}}, {},
-  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), eqP("low", "LOW"), eqP("mid", "MID"), eqP("high", "HIGH")}, 30, 68, true, [] { return new Out(); }});
+  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), noMod(eqP("low", "LOW")), noMod(eqP("mid", "MID")), noMod(eqP("high", "HIGH"))}, 30, 68, true, [] { return new Out(); }});
 
 }  // namespace tb
