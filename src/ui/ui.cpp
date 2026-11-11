@@ -19,7 +19,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
-  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "midi", "midiout", "qwerty"}},
+  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
   {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
@@ -306,6 +306,15 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
         if (lit || learn) c.rect(cx, ry, cw - 1, 7, learn ? 12 : 4); else c.rect(cx, ry, cw - 1, 7, sharp ? 26 : 21);
         std::string s = qwKeys[i]; if (s.size() > 2) s = s.substr(0, 2); if (qwLearn == i) s = "?";
         if (!s.empty()) c.text(s, cx + (cw - 1 - Canvas::tw(s)) / 2, ry + 1, lit || learn ? 15 : 9); } }
+  } else if (ty == "mutes") {   // four lanes of steps (lit: ON), where each has got to, and the HOLD TO PLAY button
+    int ml = 1; int lens[4]; for (int l = 0; l < 4; l++) { lens[l] = std::max(1, std::min(32, (int)std::lround(m->p[3 + l].load()))); ml = std::max(ml, lens[l]); }
+    const int cw = std::max(2, (w - 6) / ml), running = D(10) > 0.5f, rec = (int)D(8), rl = rec > 0 ? (int)D(11) : (int)std::lround(m->p[9].load());
+    for (int l = 0; l < 4; l++) { const int ry = y + l * 7; c.text(std::to_string(l + 1), x, ry + 1, D(4 + l) > 0.5f ? 9 : 21);
+      for (int k = 0; k < lens[l]; k++) { const bool on = m->seq[Module::si(k, l)].load() >= 0, here = running && (int)D(l) == k; const int cx = x + 6 + k * cw;
+        c.rect(cx, ry, cw - 1, 6, on ? (here ? 4 : 7) : (here ? 18 : 21)); if (k % 4 == 0 && cw >= 4) c.px(cx, ry + 6, 18); } }
+    const int by = y + 29; const bool hold = D(9) > 0.5f; c.rect(x, by, w, 8, hold ? 12 : rec > 0 ? 14 : 21);
+    const std::string t = rec > 0 ? "RECORDING LANE " + std::to_string(rl + 1) + "  " + std::to_string(rec) : "HOLD TO PLAY LANE " + std::to_string(rl + 1);
+    c.text(t, x + (w - Canvas::tw(t)) / 2, by + 2, hold || rec > 0 ? 15 : 9);
   } else if (ty == "timeline") { drawTimeline(c, u, x, y, w);
   } else if (ty == "nloop") {   // everything recorded (time along, pitch up), the part that plays round (START to its LENGTH) lit, the playhead
     const int H = vh, n = m->evN.load(); const int st = (int)D(1); const float S = D(6), L = std::max(0.01f, D(2));
@@ -840,6 +849,13 @@ void Ui::pointerDown(float sx, float sy) {
     const int vx = lx - 3, vy = ly - g.vy;
     if (d->type == "keys") { keysPress(*u, vx, vy); return; }
     if (d->type == "timeline") { timelineDown(*u, vx, vy, g.w - 6); return; }
+    if (d->type == "mutes") {   // tap a step to light or darken it; hold the bar to play a lane in
+      Module* m = u->m; const int w = g.w - 6;
+      if (vy >= 29) { eng.action(m->id, "hold:1"); drag.kind = D_HOLD; drag.k = m->id; return; }
+      int ml = 1; int lens[4]; for (int l = 0; l < 4; l++) { lens[l] = std::max(1, std::min(32, (int)std::lround(m->p[3 + l].load()))); ml = std::max(ml, lens[l]); }
+      const int cw = std::max(2, (w - 6) / ml), l = vy / 7, k = (vx - 6) / cw; if (l < 0 || l > 3 || vx < 6 || k >= lens[l]) return;
+      const int i = Module::si(k, l); const bool on = m->seq[i].load() >= 0; m->seq[i].store(on ? -1.f : 1.f); m->seqVer.fetch_add(1);
+      status("LANE " + std::to_string(l + 1) + "  STEP " + std::to_string(k + 1) + (on ? "  OFF" : "  ON"), 1.2f); changed(); return; }
     if (d->type == "nloop") {   // grab the start or end line (whichever is nearer, within a few pixels)
       Module* m = u->m; const int n = m->evN.load(); if ((int)m->disp[1].load() == 1 || n == 0) return; const float S = m->disp[6].load(), L = std::max(0.01f, m->disp[2].load());
       float tmax = 0; for (int i = 0; i < n; i++) tmax = std::max(tmax, m->ev[i * 4].load()); const float span = std::max(S + L, tmax + 0.25f); const int w = g.w - 6;
@@ -953,6 +969,7 @@ void Ui::pointerMove(float sx, float sy) {
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
   if (d.kind == D_TEMPO) { changed(); return; }
+  if (d.kind == D_HOLD) { eng.action(d.k, "hold:0"); changed(); return; }
   if (d.kind == D_NLOOP) { changed(); return; }
   if (d.kind == D_TLINE) { if (byId(d.k)) timelineUp(*byId(d.k), d.moved, d.dir); changed(); return; }
   if (d.kind == D_BROWSE) { if (!d.moved) browserPick(d.k); return; }

@@ -164,7 +164,7 @@ private:
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_TLINE, D_NLOOP };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_TLINE, D_NLOOP, D_HOLD };
   // cables as curves you can touch
   bool cableEnds(const UiCable& c, float& ax, float& ay, float& bx, float& by);
   int cableAt(int wx, int wy, float maxD, bool audioOnly = false);

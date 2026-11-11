@@ -341,4 +341,51 @@ static Reg rTimeline(new ModuleDef{"timeline", "TIMELINE", Cat::Trig, {{"START",
   {playBtn(OP("run", "RUN", {"OFF", "ON"}, 0)), [] { auto q = noMod(fmt(pr("len", "LENGTH", 10, 1800, 300), mmss)); q.step = 5; return q; }(),
    OP("end", "AT THE END", {"STOP", "LOOP"}, 1), OP("snap", "SNAP", {"OFF", "1 S", "5 S", "10 S", "30 S"}, 1), ACT("clear", "CLEAR EVENTS")}, 58, 150, false, [] { return new Timeline(); }});
 
+
+// ---------------- MUTE SEQUENCER: four lanes of steps that switch modules on and off ----------------
+// Each lane is an output: patch it into a module's SWITCH socket. A lit step is ON (playing), a dark one OFF; the lane only
+// sends when it changes, and says exactly ON or OFF, so a module can't end up the wrong way round. Each lane has its own
+// LENGTH, so they can run in different time signatures against each other. HOLD TO PLAY: hold the button for ON and let go
+// for OFF while it plays; one time round the lane is written from that, onto its steps.
+struct MuteSeq : Module {
+  enum { SYNC, BPM, DIV, L1, L2, L3, L4, CHANCE, SWING, RLANE, CLEAR };
+  static constexpr int LANES = 4;
+  long n = -1; double next = -1, lastStep = -1, per = 0.5; int last[LANES] = {-1, -1, -1, -1}; ClockIn2 ck;
+  bool held = false; int recLeft = 0, recLane = 0;
+  MuteSeq() { allocSeq(); for (int l = 0; l < LANES; l++) for (int k = 0; k < SEQ_MAX; k++) seq[si(k, l)].store(l == 0 && k % 8 >= 5 ? -1.f : 1.f); }   // lanes start all ON (lane 1: five on, three off, to show how)
+  int len(int l) const { return std::max(1, std::min(32, (int)e[L1 + l])); }
+  int laneStep(int l) const { return n < 0 ? 0 : (int)(n % len(l)); }
+  void step() {
+    n++;
+    if (recLeft > 0) { seq[si(laneStep(recLane), recLane)].store(held ? 1.f : -1.f); recLeft--; seqVer.fetch_add(1); }   // HOLD TO PLAY: this step, as you're holding it
+    lastStep = t + eng->pos / sr;
+    for (int l = 0; l < LANES; l++) { const bool on = seq[si(laneStep(l), l)].load(std::memory_order_relaxed) >= 0 && (rng.uni() < e[CHANCE]);
+      if ((int)on != last[l]) { last[l] = on; Event ev; ev.sw = on ? 1 : 0; emit(l, ev); } }
+  }
+  void blockStart(int) override { clockedIn.store(patched(0)); }
+  void trig(int port, const Event& ev) override { if (port == 0) { ck.tick(t + eng->pos / sr, ev); if (!mute.load(std::memory_order_relaxed)) { if (ck.cp > 0) per = ck.cp; step(); } } }
+  void action(const std::string& k) override {
+    const int rl = std::max(0, std::min(LANES - 1, (int)e[RLANE])); const double now = t, into = lastStep < 0 ? 1 : (now - lastStep) / std::max(0.01, per);
+    if (k == "hold:1") { held = true; if (recLeft == 0) { recLane = rl; recLeft = len(rl); } if (into < 0.5) seq[si(laneStep(recLane), recLane)].store(1); }   // pressed a little late: this step counts
+    else if (k == "hold:0") { held = false; if (recLeft > 0 && into < 0.5) seq[si(laneStep(recLane), recLane)].store(-1); }
+    else if (k == "clear") { for (int i = 0; i < SEQ_MAX * SEQ_COLS; i++) seq[i * 2].store(-1); seqVer.fetch_add(1); }
+  }
+  void render(int a, int b) override {
+    if (mute.load(std::memory_order_relaxed)) { n = -1; next = -1; for (auto& l : last) l = -1; recLeft = 0; }   // the footer's ON/OFF starts and stops it
+    else if (!clockedIn.load()) {
+      const double base = 60.0 / (e[SYNC] > 0.5f ? eng->tempo.bpm.load(std::memory_order_relaxed) : e[BPM]) / TRK_DIV[(int)e[DIV]];
+      for (int i = a; i < b; i++) { const double now = t + i / sr; if (next < 0 || now - next > 1) next = now;
+        while (now >= next) { eng->pos = i; step(); per = base * ((n % 2 == 0) ? 1 + e[SWING] * 0.5 : 1 - e[SWING] * 0.5); next += per; } }   // SWING: long, short, long, short
+    }
+    for (int l = 0; l < LANES; l++) { disp[l].store((float)laneStep(l)); disp[4 + l].store((float)last[l]); }
+    disp[8].store((float)recLeft); disp[11].store((float)recLane); disp[9].store(held ? 1.f : 0.f); disp[10].store(n < 0 ? 0.f : 1.f);
+  }
+};
+static Reg rMuteSeq(new ModuleDef{"mutes", "MUTE SEQUENCER", Cat::Trig, {{"CLOCK", PType::Trig}},
+  {{"LANE 1", PType::Trig}, {"LANE 2", PType::Trig}, {"LANE 3", PType::Trig}, {"LANE 4", PType::Trig}},
+  {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float v) { return std::to_string((int)v); }), "own"),
+   only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"),
+   stepper(noMod(ST("len1", "LENGTH 1", 1, 32, 16))), stepper(noMod(ST("len2", "LENGTH 2", 1, 32, 16))), stepper(noMod(ST("len3", "LENGTH 3", 1, 32, 16))), stepper(noMod(ST("len4", "LENGTH 4", 1, 32, 16))),
+   pct("chance", "CHANCE", 1), only(pct("swing", "SWING", 0), "free"), OP("rlane", "HOLD LANE", {"1", "2", "3", "4"}, 0), ACT("clear", "CLEAR ALL")}, 40, 130, false, [] { return new MuteSeq(); }});
+
 }  // namespace tb

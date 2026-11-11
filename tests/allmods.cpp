@@ -109,6 +109,14 @@ int main(int argc, char** argv) {
     int moved = 0; for (int r = 0; r < 3; r++) { float before[20]; for (int i = 0; i < 20; i++) before[i] = m->ev[i * 4].load(); eng.action(m->id, "rrhythm"); run(eng, 0.02f);
       int ch = 0; for (int i = 0; i < 20; i++) if (std::fabs(m->ev[i * 4].load() - before[i]) > 1e-4f) ch++; if (ch > 0) moved++; }
     const bool ok = moved == 3; if (!ok) fails++; std::printf("random rhythm, dense: changed %d of 3 presses%s\n", moved, ok ? "" : "  WRONG"); }
+  // MUTE SEQUENCER: lane 1 (five on, three off) switches a module; HOLD TO PLAY writes lane 2 from the button
+  { ui.clearPatch(); ui.add("out", 300, 20); UiMod* ms = ui.add("mutes", 0, 20); UiMod* v = ui.add("pluck", 200, 20); ui.set(ms, "sync", 0); ui.set(ms, "bpm", 120); ui.set(ms, "div", 1);   // 1/8 at 120: a step each 0.25 s
+    ui.connect(ms, 0, v, SWITCH_PORT); int onSteps = 0, offSteps = 0;
+    for (int k = 0; k < 16; k++) { run(eng, 0.25f); if (v->m->mute.load()) offSteps++; else onSteps++; }
+    ui.set(ms, "rlane", 1); ui.set(ms, "len2", 8); run(eng, 0.01f); eng.action(ms->m->id, "hold:1"); run(eng, 0.5f); eng.action(ms->m->id, "hold:0"); run(eng, 2.2f);
+    int lit = 0; for (int k = 0; k < 8; k++) if (ms->m->seq[Module::si(k, 1)].load() >= 0) lit++;
+    const bool ok = onSteps >= 9 && onSteps <= 11 && offSteps >= 5 && lit >= 2 && lit <= 3; if (!ok) fails++;
+    std::printf("mute sequencer: on %d off %d of 16 steps, held for 2 steps -> %d lit%s\n", onSteps, offSteps, lit, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);
