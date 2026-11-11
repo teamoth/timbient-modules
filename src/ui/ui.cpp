@@ -118,7 +118,7 @@ Ui::Geom Ui::geom(const UiMod& u) const {
   const ModuleDef* d = u.m->def; const int jr = (int)std::max(d->ins.size(), d->outs.size()), np = u.fold ? 0 : (int)rowOrder(u).size();
   int cw = 15, ch = 9; keysCell(u, cw, ch);
   const int vh = d->type == "tracker" && d->vis ? trRows(u.m) * 6 + 1 + trHead(u.m) : d->type == "keys" ? ch * 4 : d->vis;
-  Geom g; g.jr = jr; g.vh = vh; g.vy = HEAD + jr * ROW + (vh ? 1 : 0); g.py = HEAD + jr * ROW + (vh ? vh + 2 : 0); g.h = g.py + np * ROW + FOOT;
+  Geom g; g.jr = jr; g.vh = vh; g.vy = HEAD + jr * ROW + (vh ? 1 : 0); g.py = HEAD + jr * ROW + (vh ? vh + 2 : 0); g.h = g.py + np * ROW + (np ? 2 : 0) + FOOT;   // a little room under the last row (for the tails of g, p, y)
   g.w = d->width + (d->type == "keys" ? 8 * (cw - 15) : 0); return g;
 }
 UiMod* Ui::hit(int wx, int wy, int& lx, int& ly) {
@@ -526,7 +526,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   if (x > c.W || y > c.H || x + w < 0 || y + g.h < 0) return;
   static uint8_t inkTbl[128]; static bool init = false; if (!init) { for (int i = 0; i < 128; i++) inkTbl[i] = (uint8_t)i; inkTbl[9] = 28; inkTbl[18] = 29; inkTbl[21] = 30; inkTbl[4] = 47; init = true; }
   if (shadows) c.rect(x + 2, y + 2, w, g.h, 26);   // THEME > SHADOWS
-  c.ink = inkTbl; c.rect(x, y, w, g.h, 27); c.frame(x, y, w, g.h, 21);
+  c.ink = inkTbl; c.rect(x, y, w, g.h, 27); if (borders) c.frame(x, y, w, g.h, 21);
   c.ink = nullptr; const bool fl = false, mu = u.m->mute.load();
   c.rect(x, y, w, HEAD, fl ? 4 : mu ? 18 : catCol(d->cat)); c.text(d->name, x + 2, y + 2, 15); if (!d->fixed) c.text("x", x + w - 6, y + 2, 15);
   c.ink = inkTbl;
@@ -557,6 +557,9 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, (size_t)std::max(6, (w - Canvas::tw(lab.substr(0, 11)) - 10 - (jacksIn ? 7 : 0)) / 4)); /* as much of the choice as fits beside its name */ c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
     const bool stepping = drag.kind == D_STEP && drag.m == &u && drag.k == (int)j;
     const int mx = x + minusX(u, (int)j); c.text("-", mx, ry + 1, stepping && drag.dir < 0 ? 4 : idle ? 21 : 9); c.text("+", x + w - 6, ry + 1, stepping && drag.dir > 0 ? 4 : idle ? 21 : 9);   // nudge it a little at a time
+    if (q.stepper) {   // a small whole number: - 3 + (what it's moved to, when something modulates it)
+      const float sv = modded ? std::round(u.m->eff[j].load(std::memory_order_relaxed) / q.step) * q.step : v; const std::string t = fmtParam(q, clampf(sv, q.min, q.max), root);
+      const int l = mx + 5, r = x + w - 8; c.text(t, l + (r - l - Canvas::tw(t)) / 2, ry + 1, active ? 4 : idle ? 21 : modded ? 11 : 9); continue; }
     const int bx = mx + 5, bw = x + w - 8 - bx; const float nb = clampf(q.toNorm(v), 0, 1), n = modded ? clampf(q.toNorm(u.m->eff[j].load(std::memory_order_relaxed)), 0, 1) : nb;
     for (int i = 0; i < bw; i += 2) c.px(bx + i, ry + 4, 18);
     const int fw = (int)std::lround(n * bw); for (int i = 0; i < fw; i++) { c.px(bx + i, ry + 4, active ? 4 : idle ? 21 : modded ? 11 : 7); if (active) c.px(bx + i, ry + 3, 4); }   // modulated: green, and moving with it
@@ -633,9 +636,11 @@ void Ui::draw(Canvas& c, float dt) {
     for (auto& up : mods) { UiMod& u = *up; const auto& list = drag.rev ? u.m->def->outs : u.m->def->ins;
       for (size_t k = 0; k < list.size(); k++) if (list[k].type == drag.from.type && &u != drag.from.u) drawJack(c, (drag.rev ? outJackX(u) : inJackX(u)) - viewX, u.y + jackY((int)k) - viewY, list[k].type, true, true); }
   }
-  // top bar
+  // top bar, menus and panels: drawn in the MENUS colours (light text on black, or text to suit a pale shade)
+  static uint8_t menuInk[128]; static bool mInit = false; if (!mInit) { for (int i = 0; i < 128; i++) menuInk[i] = (uint8_t)i; menuInk[4] = MENU_HI; menuInk[9] = MENU_TEXT; menuInk[18] = MENU_MID; menuInk[21] = MENU_LINE; mInit = true; }
+  c.ink = menuInk;
   barHits.clear();
-  c.rect(0, 0, c.W, TOP, 15); for (int x = 0; x < c.W; x += 2) c.px(x, TOP, 21);
+  c.rect(0, 0, c.W, TOP, MENU_BG); for (int x = 0; x < c.W; x += 2) c.px(x, TOP, 21);
   int bx = 3;
   auto btn = [&](const std::string& l, int col, std::function<void()> fn) { c.text(l, bx, 3, col); barHits.push_back({bx, bx + Canvas::tw(l), fn}); bx += Canvas::tw(l) + 8; };
   btn("+ ADD", 4, [this] { menuOpen = !menuOpen; dd.reset(); });
@@ -661,7 +666,7 @@ void Ui::draw(Canvas& c, float dt) {
       std::sort(v.begin(), v.end(), [](const ModuleDef* a, const ModuleDef* b) { return a->name < b->name; }); int w = Canvas::tw(cat.first);
       for (auto* d : v) w = std::max(w, Canvas::tw(d->name) + 6); ws.push_back(w + 8); tot += w + 8; colsD.push_back(v); }
     size_t most = 0; for (auto& v : colsD) most = std::max(most, v.size()); const int mh = (int)most * 8 + 16;
-    c.rect(1, TOP + 1, tot, mh, 15); c.frame(1, TOP + 1, tot, mh, 21);
+    c.rect(1, TOP + 1, tot, mh, MENU_BG); c.frame(1, TOP + 1, tot, mh, 21);
     int x = 4; for (size_t k = 0; k < colsD.size(); k++) { c.text(MENU[k].first, x, TOP + 4, 18);
       for (size_t r = 0; r < colsD[k].size(); r++) { const ModuleDef* d = colsD[k][r]; const int y = TOP + 13 + (int)r * 8; c.rect(x, y + 1, 3, 3, catCol(d->cat)); c.text(d->name, x + 6, y, 9); menuItems.push_back({d->type, x, y, ws[k] - 6}); }
       x += ws[k]; }
@@ -673,7 +678,7 @@ void Ui::draw(Canvas& c, float dt) {
     const int n = (int)dd->items.size(), rowsFit = std::max(1, (c.H - TOP - 8) / 8), cols = (n + rowsFit - 1) / rowsFit, rows = (n + cols - 1) / cols;
     const int w = cw * cols, h = rows * 8 + 4;
     dd->x = std::max(2, std::min(dd->x, c.W - w)); dd->y = std::max(TOP + 1, std::min(dd->y, c.H - h - 1)); dd->w = w; dd->rows = rows; dd->colW = cw;
-    c.rect(dd->x, dd->y + 2, w, h, 26); c.rect(dd->x - 2, dd->y, w, h, 15); c.frame(dd->x - 2, dd->y, w, h, 21);
+    c.rect(dd->x, dd->y + 2, w, h, 26); c.rect(dd->x - 2, dd->y, w, h, MENU_BG); c.frame(dd->x - 2, dd->y, w, h, 21);
     for (int i = 0; i < n; i++) { const int cx = dd->x + (i / rows) * cw, y = dd->y + 2 + (i % rows) * 8; if (i == dd->cur) c.rect(cx - 1, y - 1, cw - 2, 7, 21);
       const int sw = i < (int)dd->sw.size() ? dd->sw[i] : -1, tx = dd->sw.empty() ? cx + 1 : cx + 9;   // a colour swatch in front, in the theme menus
       if (sw >= 0) { c.rect(cx + 1, y, 6, 5, sw); c.frame(cx + 1, y, 6, 5, 21); }
@@ -682,7 +687,7 @@ void Ui::draw(Canvas& c, float dt) {
   // the tempo panel
   if (tp.open) {
     tp.x = std::max(2, std::min(tp.x, c.W - TPW - 2)); tp.y = std::max(TOP + 1, std::min(tp.y, c.H - TPH - 2)); const int x = tp.x, y = tp.y, bpm = (int)std::lround(eng.tempo.bpm.load());
-    c.rect(x + 2, y + 2, TPW, TPH, 26); c.rect(x, y, TPW, TPH, 15); c.frame(x, y, TPW, TPH, 21);
+    c.rect(x + 2, y + 2, TPW, TPH, 26); c.rect(x, y, TPW, TPH, MENU_BG); c.frame(x, y, TPW, TPH, 21);
     c.text("SHARED TEMPO", x + 4, y + 3, 18); const std::string v = std::to_string(bpm) + " BPM"; c.text(v, x + TPW - 4 - Canvas::tw(v), y + 3, 4);
     auto btn = [&](int bx, int by, int w, const char* l) { c.frame(bx, by, w, 7, 18); c.text(l, bx + (w - Canvas::tw(l)) / 2, by + 1, 9); };
     btn(x + 4, y + 11, 9, "-"); btn(x + TPW - 13, y + 11, 9, "+");
@@ -695,7 +700,7 @@ void Ui::draw(Canvas& c, float dt) {
   // the name box
   if (ask) {
     const int w = std::min(c.W - 10, 150), h = 34, x = (c.W - w) / 2, y = TOP + 30;
-    c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, 15); c.frame(x, y, w, h, 21);
+    c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, MENU_BG); c.frame(x, y, w, h, 21);
     c.text(ask->title, x + 4, y + 4, 18); c.rect(x + 4, y + 12, w - 8, 9, 21);
     std::string t = ask->text; const int room = (w - 14) / 4; if ((int)t.size() > room) t = t.substr(t.size() - room);
     c.text(t, x + 6, y + 14, 4); if (std::fmod(blink, 1.f) < 0.5f) c.rect(x + 6 + Canvas::tw(t) + 2, y + 13, 1, 7, 4);
@@ -703,6 +708,7 @@ void Ui::draw(Canvas& c, float dt) {
     if (ask->dice) { const int dx = x + w - 52; c.frame(dx, y + 24, 7, 7, 9); for (int k : {0, 2, 4}) c.px(dx + 1 + k, y + 25 + k, 4);   // a dice: another name
       c.text("NEW NAME", dx + 10, y + 25, 9); }
   }
+  c.ink = nullptr;
   c.toRGBA();
 }
 

@@ -121,7 +121,7 @@ struct Tracker : Module {
   }
 };
 static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PType::Trig}, {"STEP ENTER", PType::Trig}},
-  {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}, {"1", PType::Trig}, {"2", PType::Trig}, {"3", PType::Trig}, {"4", PType::Trig}},
+  {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}, {"CHN 1", PType::Trig}, {"CHN 2", PType::Trig}, {"CHN 3", PType::Trig}, {"CHN 4", PType::Trig}},
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float v) { return std::to_string((int)v); }), "own"),
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), noMod(ST("estep", "STEP JUMP", 0, 8, 1)), OP("rec", "STEP RECORD", {"OFF", "ON"}, 1), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL")},

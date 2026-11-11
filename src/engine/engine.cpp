@@ -51,6 +51,7 @@ void registerDef(ModuleDef* d) {
   if (audio && d->type != "mixer" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {
     ParamDef q = pr("pan", "PAN", -1, 1, 0); q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };
     d->panIdx = (int)d->params.size(); d->params.push_back(q); }
+  for (auto& q : d->params) if (q.opts.empty() && !q.act && q.step >= 1 && std::fabs(q.step - std::round(q.step)) < 1e-4f && (q.max - q.min) / q.step + 1 <= 16.5f) q.stepper = true;   // up to 16 whole numbers: a stepper
   { int end = 39; for (auto& q : d->params) if (q.opts.empty() && !q.act) end = std::max(end, 3 + (int)std::min<size_t>(11, q.label.size()) * 4 - 1 + 2 - (q.noMod ? 7 : 0));
     d->labelEnd = end; d->width += end - 39; }   // a long name widens the module rather than shortening its sliders
   allDefs().push_back(d);

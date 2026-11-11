@@ -78,7 +78,7 @@ void Ui::drawBrowser(Canvas& c) {
   if (br.playing >= 0 && eng.previewAt.load() < 0) br.playing = -1;   // it finished
   brW = br.wide ? c.W - 8 : std::min(c.W - 8, 190); brH = std::min(c.H - TOP - 8, 204); brX = (c.W - brW) / 2; brY = TOP + std::max(2, (c.H - TOP - brH) / 3);
   const int x = brX, y = brY, w = brW, h = brH;
-  c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, 15); c.frame(x, y, w, h, 21);
+  c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, MENU_BG); c.frame(x, y, w, h, 21);
   UiMod* t = byId(br.target);
   std::string title = "SOUNDS"; if (t) title += " FOR " + t->m->def->name + (br.slot >= 0 && t->m->def->type == "sample" && t->m->p[1].load() >= 2 ? " PLACE " + std::to_string(br.slot + 1) : "");
   c.text(title, x + 4, y + 3, 18); c.text("x", x + w - 6, y + 3, 9); c.text(br.wide ? "><" : "<>", x + w - 18, y + 3, 9);   // <>: wider, for long names

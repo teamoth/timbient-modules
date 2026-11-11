@@ -80,9 +80,9 @@ int main(int argc, char** argv) {
   { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* tr = ui.add("tracker", 0, 20); UiMod* a = ui.add("pluck", 100, 20); UiMod* b = ui.add("pluck", 100, 120); UiMod* lfo = ui.add("lfo", 0, 200);
     ui.set(tr, "sync", 0); ui.set(tr, "bpm", 120); ui.set(tr, "len", 4);
     for (int r = 0; r < 4; r++) tr->m->seq[Module::si(r, 1)].store(60.f); tr->m->seq[Module::si(0, 0)].store(48.f);
-    ui.connect(tr, tr->m->def->outIndex("2"), a, a->m->def->inIndex("TRIG")); ui.connect(tr, tr->m->def->outIndex("TRIG"), b, b->m->def->inIndex("TRIG"));
+    ui.connect(tr, tr->m->def->outIndex("CHN 2"), a, a->m->def->inIndex("TRIG")); ui.connect(tr, tr->m->def->outIndex("TRIG"), b, b->m->def->inIndex("TRIG"));
     ui.connect(a, "OUT", out, "A"); ui.connect(b, "OUT", out, "B");
-    run(eng, 2.1f); const int f2 = tr->m->fires[tr->m->def->outIndex("2")].load(), ft = tr->m->fires[0].load();
+    run(eng, 2.1f); const int f2 = tr->m->fires[tr->m->def->outIndex("CHN 2")].load(), ft = tr->m->fires[0].load();
     const bool nm = !ui.modulate(lfo, tr, tr->m->def->paramIndex("estep"));
     const bool ok = f2 >= 6 && ft >= f2 + 1 && nm; if (!ok) fails++;
     std::printf("tracker columns: out 2 %d, trig %d, step jump unmodulatable %d%s\n", f2, ft, nm, ok ? "" : "  WRONG"); }

@@ -43,7 +43,7 @@ void Ui::drawEditor(Canvas& c) {
   if (ed.playing && eng.previewAt.load() < 0) ed.playing = false;   // it finished
   edW = std::min(c.W - 8, 320); edH = 134; edX = (c.W - edW) / 2; edY = TOP + std::max(2, (c.H - TOP - edH) / 3);
   const int x = edX, y = edY, w = edW, h = edH, wx = x + 4, wy = y + 12, ww = w - 8; const double dur = ed.d.size() / ed.sr;
-  c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, 15); c.frame(x, y, w, h, 21);
+  c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, MENU_BG); c.frame(x, y, w, h, 21);
   UiMod* t = byId(ed.target); std::string title = "EDIT SOUND"; if (t) title += " FOR " + t->m->def->name; if (!ed.name.empty()) title += ": " + ed.name;
   const int room = (w - 16) / 4; if ((int)title.size() > room) title = title.substr(0, room - 2) + "..";
   c.text(title, x + 4, y + 3, 18); c.text("x", x + w - 6, y + 3, 9);

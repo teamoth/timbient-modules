@@ -45,7 +45,8 @@ public:
   std::function<void(int)> onZoom;                    // the zoom buttons: -1 out, +1 in
   std::function<bool(UiMod*, const std::string&)> onAction;
   // QWERTY MIDI: the key on each of the 36 notes (C-0 to B-2), named by the app; the note waiting for a key, or -1
-  bool shadows = false;   // THEME > SHADOWS: a drop shadow under each module
+  bool borders = false;   // THEME > BORDERS: the line round each module
+  bool shadows = true;    // THEME > SHADOWS   // THEME > SHADOWS: a drop shadow under each module
   std::string qwKeys[36]; int qwLearn = -1;
   bool hasQwerty() const;      // a QWERTY MIDI that's on: the computer keys play it
   void qwertyPlay(int i);      // note i (0 = C-0) on every QWERTY MIDI   // the app's own handling of some buttons (LOAD FILE, RECORD...); true if it took it

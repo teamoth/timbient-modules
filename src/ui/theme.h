@@ -9,7 +9,7 @@
 
 namespace tb {
 
-struct Theme { std::string bg = "#1c1915", mod = "#3b352d", audio = "#8e9b6b", trig = "#c39a69", modc = "#a8786c"; };   // earthy by default: umber, warm stone, moss, ochre, clay
+struct Theme { std::string bg = "#e0e4e3", mod = "#c6cdcc", audio = "#5f8f8a", trig = "#a4703f", modc = "#8f84a8"; };   // MIST by default: pale grey-green, light grey, teal, amber, dusky violet
 using Choice = std::pair<const char*, const char*>;
 inline const std::vector<Choice>& bgChoices() { static const std::vector<Choice> v = {{"POND", "pond"}, {"BLACK", "#000000"}, {"CHARCOAL", "#1a1a1d"}, {"SLATE", "#232c33"}, {"NAVY", "#111a2e"}, {"FOREST", "#13201a"}, {"PLUM", "#221624"},
   {"CLAY", "#3a2a24"}, {"MIDNIGHT", "#0b1020"}, {"EARTH", "#2a1d18"}, {"STEEL", "#5c5f66"}, {"LIGHT GREY", "#c9c9ce"}, {"PAPER", "#ebe6da"},
@@ -26,7 +26,7 @@ inline const std::vector<Choice>& cableChoices() { static const std::vector<Choi
   {"TEAL", "#6fb3ad"}, {"LILAC", "#b39ddb"}, {"CREAM", "#ece6cf"}, {"GOLD", "#c9b26b"}, {"PEACH", "#e09a6b"}, {"TAN", "#e3b07a"}, {"BROWN", "#8a5a3a"}, {"FOREST", "#2f5a3a"}, {"PLUM", "#6a3a6a"}, {"CHARCOAL", "#3a3a40"},
   {"PALE SAGE", "#b9c9a8"}, {"POWDER BLUE", "#a9bfd1"}, {"BLUSH", "#e0b4ac"}, {"BUTTER", "#e6d394"}, {"PALE LILAC", "#c8bde0"}, {"SEAFOAM", "#a8cfc4"}, {"APRICOT", "#efc39a"}}; return v; }
 inline const std::vector<std::pair<const char*, Theme>>& presets() { static const std::vector<std::pair<const char*, Theme>> v = {
-  {"EARTH", Theme{}},
+  {"EARTH", {"#1c1915", "#3b352d", "#8e9b6b", "#c39a69", "#a8786c"}},
   {"MOSS", {"#161c14", "#323a2a", "#b7b58a", "#c39a69", "#8e9b6b"}},
   {"CLAY", {"#24180f", "#4a3328", "#d4bf91", "#b86f50", "#9aab8c"}},
   {"PEAT", {"#1a1612", "#2f2924", "#a4703f", "#9c8aa0", "#7d7f4a"}},
@@ -66,7 +66,8 @@ template <class R> Theme randomTheme(R&& rnd) {   // rnd(n) gives 0..n-1
 }
 inline std::string headerOf(const std::string& c) { std::string h = c; for (int k = 1; k <= 10 && lum(h) < 0.42f; k++) h = mixHex(c, "#ffffff", k * 0.08f); return h; }
 // set the canvas palette from a theme (the same formulas as the web version)
-inline void applyTheme(Canvas& cv, const Theme& t) {
+// MENUS: the top bar, menus, dropdowns and panels. 0 MATCH (a shade of the background, with text to suit), 1 BLACK, 2 DARK (a dark shade of the background)
+inline void applyTheme(Canvas& cv, const Theme& t, int menus = 0) {
   const bool pond = t.bg == "pond"; const std::string bg = pond ? "#07131d" : t.bg, md = t.mod; const bool lightMod = lum(md) > 0.5f;
   cv.setColour(25, bg.c_str()); cv.setColour(26, (lum(bg) > 0.4f ? mixHex(bg, "#000000", 0.25f) : mixHex(bg, "#000000", 0.6f)).c_str()); cv.setColour(27, md.c_str());
   cv.setColour(28, lightMod ? "#1b1b1f" : "#d2c7a6"); cv.setColour(29, (lightMod ? mixHex(md, "#000000", 0.55f) : mixHex(md, "#ffffff", 0.5f)).c_str());
@@ -76,6 +77,13 @@ inline void applyTheme(Canvas& cv, const Theme& t) {
   cv.setColour(17, headerOf(t.audio).c_str()); cv.setColour(24, headerOf(t.trig).c_str()); cv.setColour(11, headerOf(t.modc).c_str());
   cv.setColour(46, mixHex(t.trig, "#ffffff", 0.55f).c_str());
   cv.setColour(47, lightMod ? "#d9761c" : "#ece6cf"); cv.setColour(48, (lightMod ? mixHex(t.audio, "#000000", 0.45f) : t.audio).c_str());
+  { const bool paleBg = lum(bg) > 0.45f;
+    cv.pal[MENU_HI] = cv.pal[4]; cv.pal[MENU_TEXT] = cv.pal[9]; cv.pal[MENU_MID] = cv.pal[18]; cv.pal[MENU_LINE] = cv.pal[21];   // light text, as on black
+    if (menus == 1) cv.pal[MENU_BG] = cv.pal[15];
+    else if (menus == 2) cv.setColour(MENU_BG, mixHex(bg, "#000000", paleBg ? 0.75f : 0.4f).c_str());
+    else if (!paleBg) cv.setColour(MENU_BG, mixHex(bg, "#000000", 0.35f).c_str());
+    else { cv.setColour(MENU_BG, mixHex(bg, "#000000", 0.06f).c_str()); cv.setColour(MENU_HI, "#1b1b1f"); cv.setColour(MENU_TEXT, mixHex(bg, "#000000", 0.68f).c_str());   // pale: dark text
+      cv.setColour(MENU_MID, mixHex(bg, "#000000", 0.45f).c_str()); cv.setColour(MENU_LINE, mixHex(bg, "#000000", 0.2f).c_str()); } }
   if (pond) cv.pal[25] &= 0x00ffffffu;   // the pond shows through the background
 }
 inline Theme themeFrom(const Json& j) { Theme t; if (j.t != Json::OBJ) return t; t.bg = j.str("bg", t.bg); t.mod = j.str("mod", t.mod); t.audio = j.str("audio", t.audio); t.trig = j.str("trig", t.trig); t.modc = j.str("modc", t.modc); return t; }

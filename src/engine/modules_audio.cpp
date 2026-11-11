@@ -92,7 +92,7 @@ struct Sample : Module {
   }
 };
 static Reg rSample(new ModuleDef{"sample", "SAMPLE", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  {ACT("load", "LOAD FILE"), OP("kind", "SOUNDS", {"ONE", "SLICES", "KIT", "MULTI"}, 0), only(noMod(ST("slices", "SLICES", 2, 32, 8)), "slices"),
+  {ACT("load", "LOAD FILE"), OP("kind", "SOUNDS", {"ONE", "SLICES", "KIT", "MULTI"}, 0), only(stepper(noMod(ST("slices", "SLICES", 2, 32, 8))), "slices"),
    OP("mode", "TRIG", {"LOOP", "ONCE"}, 0), only(OP("notes", "NOTES", {"OFF", "ON"}, 0), "one"), only(fine(pct("start", "START", 0)), "region"), fmt(prExp("len", "LENGTH", 0.0005f, 1, 1), [](float v) { char b[16]; std::snprintf(b, 16, v < 0.1f ? "%.1f%%" : "%.0f%%", v * 100); return std::string(b); }),   // the screen shows these as times
    ST("pitch", "PITCH", -24, 24, 0), OP("rev", "PLAY", {"FWD", "BACK", "BOUNCE", "RANDOM"}, 0),
    only(T("atk", "ATTACK", 0.002f, 4, 0.01f), "once"), only(T("rel", "RELEASE", 0.005f, 8, 0.3f), "once"), only(T("fade", "FADE", 0.005f, 4, 0.4f), "loop"),
@@ -294,7 +294,7 @@ struct TapeLoop : Module {
   }
 };
 static Reg rTapeLoop(new ModuleDef{"tloop", "TAPE LOOP", Cat::Proc, {{"IN", PType::Audio}, {"CLOCK", PType::Trig}, {"REC", PType::Trig}, {"JUMP", PType::Trig}}, {{"OUT", PType::Audio}},
-  {OP("rec", "RECORD", {"OFF", "ON"}, 0), only(noMod(T("len", "LENGTH", 1, 60, 8)), "free"), only(noMod(ST("beats", "BEATS", 1, 64, 16)), "clock"),
+  {OP("rec", "RECORD", {"OFF", "ON"}, 0), only(noMod(T("len", "LENGTH", 1, 60, 8)), "free"), only(stepper(noMod(ST("beats", "BEATS", 1, 64, 16))), "clock"),
    pct("keep", "KEEP", 0.8f), pct("inlv", "REC LEVEL", 0.8f),
    fmt(pr("speed", "SPEED", -2, 2, 1), [](float v) { char b[16]; std::snprintf(b, 16, "%.2fX", v); return std::string(b); }),
    pct("wander", "WANDER", 0.4f), fmt(prExp("wspd", "WANDER SPD", 0.005f, 0.5f, 0.05f), [](float v) { char b[16]; std::snprintf(b, 16, "1 PER %.0fS", 1 / v); return std::string(b); }),

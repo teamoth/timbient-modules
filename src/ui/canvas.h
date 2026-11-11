@@ -12,6 +12,8 @@
 
 namespace tb {
 
+// the MENUS colours (set by the theme): the top bar, menus, dropdowns and panels
+enum { MENU_BG = 49, MENU_HI = 50, MENU_TEXT = 51, MENU_MID = 52, MENU_LINE = 53 };
 struct Canvas {
   int W = 0, H = 0;
   std::vector<uint8_t> buf;                 // palette index per pixel
@@ -29,7 +31,8 @@ struct Canvas {
   void beginFrame() { runs.clear(); cur = 1; if (fine) std::fill(stamp.begin(), stamp.end(), 0u); }
 
   Canvas() { for (int i = 0; i < 128; i++) inkMap[i] = (uint8_t)i; for (int i = 0; i < FONT_N; i++) { unsigned char c = (unsigned char)FONT[i].c; if (c < 128) { std::copy(FONT[i].bits, FONT[i].bits + 15, glyph[c]); hasGlyph[c] = true; } }
-    for (int i = 0; i < PAL_N; i++) setColour(i, PAL_HEX[i]); }
+    for (int i = 0; i < PAL_N; i++) setColour(i, PAL_HEX[i]);
+    pal[MENU_BG] = pal[15]; pal[MENU_HI] = pal[4]; pal[MENU_TEXT] = pal[9]; pal[MENU_MID] = pal[18]; pal[MENU_LINE] = pal[21]; }   // MENUS: black until a theme says otherwise
   void resize(int w, int h) { W = w; H = h; buf.assign((size_t)w * h, 25); rgba.assign((size_t)w * h, 0); stamp.assign((size_t)w * h, 0); }
   static uint32_t hexRGBA(const char* h) { unsigned r = std::strtoul(std::string(h + 1, 2).c_str(), 0, 16), g = std::strtoul(std::string(h + 3, 2).c_str(), 0, 16), b = std::strtoul(std::string(h + 5, 2).c_str(), 0, 16);
     return 0xff000000u | (b << 16) | (g << 8) | r; }   // RGBA bytes in memory (little-endian)

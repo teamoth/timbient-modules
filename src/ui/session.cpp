@@ -33,6 +33,9 @@ static void readSeq(Module* m, const Json* p) {
   for (int c = 1; c < Module::SEQ_COLS; c++) readCol(m, c, more && more->t == Json::ARR && c - 1 < (int)more->a.size() ? &more->a[c - 1] : nullptr);
 }
 
+static int outIdx(const ModuleDef* d, const std::string& n) { const int i = d->outIndex(n); if (i >= 0) return i;
+  if (d->type == "tracker" && n.size() == 1 && n[0] >= '1' && n[0] <= '4') return d->outIndex("CHN " + n);   // 0.27's names for them
+  return -1; }
 static int inIdx(const ModuleDef* d, const std::string& n) { if (n == "SWITCH") return SWITCH_PORT; const int i = d->inIndex(n); if (i >= 0) return i; return n == "ENTER" ? d->inIndex("STEP ENTER") : -1; }   // (renamed inputs)
 
 
@@ -119,7 +122,7 @@ void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& c
   struct Want { int f, fp, t, tp, tq; PType ty; }; std::vector<Want> want;
   if (const Json* cs = data.get("cables")) if (cs->t == Json::ARR) for (auto& c : cs->a) {
     UiMod *a = ui.byId((int)c.num("f")), *b = ui.byId((int)c.num("t")); if (!a || !b) continue; const std::string ty = c.str("ty");
-    const int fp = a->m->def->outIndex(c.str("fp")); if (fp < 0) continue;
+    const int fp = outIdx(a->m->def, c.str("fp")); if (fp < 0) continue;
     if (ty == "mod") { const int pk = b->m->def->paramIndex(c.str("tq")); if (pk >= 0) want.push_back({a->m->id, fp, b->m->id, -1, pk, PType::Mod}); }
     else { const int tp = inIdx(b->m->def, c.str("tp")); if (tp >= 0) want.push_back({a->m->id, fp, b->m->id, tp, -1, a->m->def->outs[fp].type}); } }
   auto same = [](const UiCable& c, const Want& w) { return c.from == w.f && c.fromPort == w.fp && c.to == w.t && (w.ty == PType::Mod ? c.type == PType::Mod && c.toParam == w.tq : c.type != PType::Mod && c.toPort == w.tp); };
@@ -185,7 +188,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     UiMod *a = fi->second, *b = ti->second; const std::string ty = c.str("ty"), fp = c.str("fp"); std::string tp = c.str("tp");
     if (b->m->def->type == "out" && tp == "IN") tp = "A"; if (tp == "SWELL") tp = "TRIG";
     if (ty == "mod") { const int pk = b->m->def->paramIndex(c.str("tq")); if (pk < 0 || !ui.modulate(a, b, pk)) lost++; }
-    else if (!ui.connect(a, a->m->def->outIndex(fp), b, inIdx(b->m->def, tp))) lost++;
+    else if (!ui.connect(a, outIdx(a->m->def, fp), b, inIdx(b->m->def, tp))) lost++;
   }
   std::string note;
   std::vector<std::string> gone; for (const char* g : {"fm2", "grains", "bell", "glass", "crush"}) if (skipped.erase(g)) gone.push_back(std::string(g) == "fm2" ? "FM 2-OP" : std::string(g) == "grains" ? "GRAIN CLOUD" : std::string(g) == "bell" ? "MODAL BELL" : std::string(g) == "crush" ? "BITCRUSH" : "GLASS");
