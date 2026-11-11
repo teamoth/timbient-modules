@@ -9,7 +9,7 @@
 
 namespace tb {
 
-struct Theme { std::string bg = "#e0e4e3", mod = "#c6cdcc", audio = "#5f8f8a", trig = "#a4703f", modc = "#8f84a8"; };   // MIST by default: pale grey-green, light grey, teal, amber, dusky violet
+struct Theme { std::string bg = "#e4e6ea", mod = "#cdd1d8", audio = "#6a8caf", trig = "#c77d8e", modc = "#6fa58f"; };   // FOG by default: pale grey, soft blue, rose, sage
 using Choice = std::pair<const char*, const char*>;
 inline const std::vector<Choice>& bgChoices() { static const std::vector<Choice> v = {{"POND", "pond"}, {"BLACK", "#000000"}, {"CHARCOAL", "#1a1a1d"}, {"SLATE", "#232c33"}, {"NAVY", "#111a2e"}, {"FOREST", "#13201a"}, {"PLUM", "#221624"},
   {"CLAY", "#3a2a24"}, {"MIDNIGHT", "#0b1020"}, {"EARTH", "#2a1d18"}, {"STEEL", "#5c5f66"}, {"LIGHT GREY", "#c9c9ce"}, {"PAPER", "#ebe6da"},
@@ -26,24 +26,20 @@ inline const std::vector<Choice>& cableChoices() { static const std::vector<Choi
   {"TEAL", "#6fb3ad"}, {"LILAC", "#b39ddb"}, {"CREAM", "#ece6cf"}, {"GOLD", "#c9b26b"}, {"PEACH", "#e09a6b"}, {"TAN", "#e3b07a"}, {"BROWN", "#8a5a3a"}, {"FOREST", "#2f5a3a"}, {"PLUM", "#6a3a6a"}, {"CHARCOAL", "#3a3a40"},
   {"PALE SAGE", "#b9c9a8"}, {"POWDER BLUE", "#a9bfd1"}, {"BLUSH", "#e0b4ac"}, {"BUTTER", "#e6d394"}, {"PALE LILAC", "#c8bde0"}, {"SEAFOAM", "#a8cfc4"}, {"APRICOT", "#efc39a"}}; return v; }
 inline const std::vector<std::pair<const char*, Theme>>& presets() { static const std::vector<std::pair<const char*, Theme>> v = {
-  {"EARTH", {"#1c1915", "#3b352d", "#8e9b6b", "#c39a69", "#a8786c"}},
-  {"MOSS", {"#161c14", "#323a2a", "#b7b58a", "#c39a69", "#8e9b6b"}},
-  {"CLAY", {"#24180f", "#4a3328", "#d4bf91", "#b86f50", "#9aab8c"}},
-  {"PEAT", {"#1a1612", "#2f2924", "#a4703f", "#9c8aa0", "#7d7f4a"}},
-  {"SLATE", {"#1b1f22", "#363d42", "#9aab8c", "#c39a69", "#7d8ea0"}},
-  {"HEATH", {"#1e1820", "#3a3038", "#b7b58a", "#9c8aa0", "#a8786c"}},
-  {"SANDSTONE", {"#d8ccb2", "#bcae90", "#4f6b52", "#9c5a3c", "#6f7f96"}},
-  {"PAPER", {"#ebe6da", "#d9d3c3", "#4f6b52", "#8f84a8", "#9a4a3a"}},
-  {"NIGHT", {"#11141b", "#272c36", "#7d8ea0", "#c39a69", "#9aab8c"}},
-  {"MONO", {"#141414", "#2e2e2e", "#d8cfbb", "#8a8a84", "#a39e92"}},
-  // light and pastel, still earthy
-  {"CHALK", {"#ece6da", "#d9cfbc", "#6f7f4a", "#a4703f", "#9a4a3a"}},
-  {"MEADOW", {"#e1e6d6", "#c8d1b9", "#4f6b52", "#b86f50", "#7d6f96"}},
-  {"SHELL", {"#f0e4da", "#e2ccbe", "#6f7f96", "#a8786c", "#6f8a5a"}},
-  {"DUNE", {"#e8d8b6", "#d2bd93", "#6d5a46", "#9c5a3c", "#4f6b52"}},
-  {"MIST", {"#e0e4e3", "#c6cdcc", "#5f8f8a", "#a4703f", "#8f84a8"}},
-  {"BLOSSOM", {"#efe2e4", "#dcc6cb", "#6f8a5a", "#9c8aa0", "#b86f50"}}}; return v; }
+  // pale
+  {"FOG", {"#e4e6ea", "#cdd1d8", "#6a8caf", "#c77d8e", "#6fa58f"}}, {"ICE", {"#e6edf2", "#cfdbe4", "#5b8fb9", "#d08c60", "#8a7fc0"}},
+  {"MINT", {"#e3f1ea", "#c8e2d5", "#3f9c86", "#e08a6b", "#7b86c9"}}, {"PEACH", {"#f6e9e1", "#ecd3c4", "#d9775b", "#5a9bb0", "#a07cc0"}},
+  {"LAVENDER", {"#ece8f4", "#d8d0ea", "#8a6fc4", "#4fa39a", "#d98a9e"}}, {"SKY", {"#e5f0f7", "#c9dfed", "#3d8fc4", "#e3a03f", "#c4677c"}},
+  {"PORCELAIN", {"#f2f3f4", "#dfe2e6", "#4878c8", "#e0694e", "#3fa77a"}}, {"PISTACHIO", {"#eef2df", "#d9e2bb", "#7a9a3a", "#c26a8a", "#4f8fb0"}},
+  // dark
+  {"NAVY", {"#0f1a2e", "#1f2d47", "#6fb0e0", "#f0b45a", "#c28fd9"}}, {"INK TEAL", {"#0c2226", "#183a3f", "#5fd1c0", "#f08a6a", "#b6a2f0"}},
+  {"PLUM NIGHT", {"#1d1426", "#33263f", "#d98ad0", "#7fc7d9", "#f0c070"}}, {"CHARCOAL", {"#18191c", "#2b2d32", "#59c3e8", "#f2a541", "#e86f8a"}},
+  {"SUMI", {"#141414", "#262626", "#e2563b", "#e8e2d0", "#8fa6b3"}}, {"FOREST NIGHT", {"#0f1d17", "#1d3329", "#8fd17a", "#e0a86a", "#7fb0e0"}},
+  {"MIDNIGHT ROSE", {"#1a1420", "#2e2236", "#ef8fa8", "#8fd3c2", "#e8c27a"}}, {"DEEP SEA", {"#08202e", "#12384a", "#4fc3d9", "#f4d35e", "#ee8a8a"}}}; return v; }
 inline bool sameTheme(const Theme& a, const Theme& b) { return a.bg == b.bg && a.mod == b.mod && a.audio == b.audio && a.trig == b.trig && a.modc == b.modc; }
+// RANDOMISE: another of the presets (never the one on now)
+template <class R> inline Theme randomPreset(const Theme& cur, R rnd) { const auto& p = presets(); int at = -1; for (size_t i = 0; i < p.size(); i++) if (sameTheme(p[i].second, cur)) at = (int)i;
+  int k = rnd((int)p.size() - (at >= 0 ? 1 : 0)); if (at >= 0 && k >= at) k++; return p[k].second; }
 
 inline void rgbOf(const std::string& h, float c[3]) { for (int i = 0; i < 3; i++) c[i] = h.size() >= 7 ? (float)std::strtoul(h.substr(1 + i * 2, 2).c_str(), 0, 16) : 0; }
 inline std::string hexOf(const float c[3]) { char b[8]; std::snprintf(b, 8, "#%02x%02x%02x", (int)std::lround(clampf(c[0], 0, 255)), (int)std::lround(clampf(c[1], 0, 255)), (int)std::lround(clampf(c[2], 0, 255))); return b; }
@@ -76,6 +72,7 @@ inline void applyTheme(Canvas& cv, const Theme& t, int menus = 0) {
   // the module headers (and highlights) follow the cable colours, so a theme hangs together; a dark one is lightened for them
   cv.setColour(17, headerOf(t.audio).c_str()); cv.setColour(24, headerOf(t.trig).c_str()); cv.setColour(11, headerOf(t.modc).c_str());
   cv.setColour(46, mixHex(t.trig, "#ffffff", 0.55f).c_str());
+  cv.setColour(7, headerOf(mixHex(t.audio, lum(bg) > 0.45f ? "#000000" : "#ffffff", 0.18f)).c_str());   // sound makers' headers and the slider fills: from the theme too (they were a fixed brown)
   cv.setColour(47, lightMod ? "#d9761c" : "#ece6cf"); cv.setColour(48, (lightMod ? mixHex(t.audio, "#000000", 0.45f) : t.audio).c_str());
   { const bool paleBg = lum(bg) > 0.45f;
     cv.pal[MENU_HI] = cv.pal[4]; cv.pal[MENU_TEXT] = cv.pal[9]; cv.pal[MENU_MID] = cv.pal[18]; cv.pal[MENU_LINE] = cv.pal[21];   // light text, as on black

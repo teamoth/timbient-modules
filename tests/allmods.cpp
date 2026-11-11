@@ -86,6 +86,23 @@ int main(int argc, char** argv) {
     const bool nm = !ui.modulate(lfo, tr, tr->m->def->paramIndex("estep"));
     const bool ok = f2 >= 6 && ft >= f2 + 1 && nm; if (!ok) fails++;
     std::printf("tracker columns: out 2 %d, trig %d, step jump unmodulatable %d%s\n", f2, ft, nm, ok ? "" : "  WRONG"); }
+  // DUPLICATE (as the app does it): a Tracker copy keeps its steps and settings, gets no cables
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* tr = ui.add("tracker", 0, 20); UiMod* v = ui.add("pluck", 100, 20); ui.connect(tr, 0, v, v->m->def->inIndex("TRIG"));
+    ui.set(tr, "len", 7); tr->m->seq[Module::si(3, 2)].store(65); tr->m->mute.store(true);
+    Json data = serializePatch(ui); Json* mods = data.getm("mods"); int maxId = 0; Json copy; for (auto& m : mods->a) { maxId = std::max(maxId, (int)m.num("id")); if ((int)m.num("id") == tr->m->id) copy = m; }
+    copy.set("id", Json::number(maxId + 1)); copy.set("x", Json::number(12)); mods->push(copy); std::vector<std::pair<UiMod*, int>> sc; applyPatch(ui, data, sc);
+    UiMod* d = ui.byId(maxId + 1); int cab = 0; for (auto& c : ui.cables) if (c.from == maxId + 1 || c.to == maxId + 1) cab++;
+    const bool ok = d && d->m->def->type == "tracker" && d->m->seq[Module::si(3, 2)].load() == 65 && (int)d->m->p[d->m->def->paramIndex("len")].load() == 7 && d->m->mute.load() && cab == 0 && ui.cables.size() == 1;
+    if (!ok) fails++; std::printf("duplicate: %s%s\n", d ? "made" : "none", ok ? "" : "  WRONG"); }
+  // NOTE LOOPER: CHANCE 0 plays nothing; RANDOM RHYTHM keeps the notes, moves them onto the grid, first on the downbeat; UNDO RANDOM puts them back
+  { ui.clearPatch(); ui.add("out", 300, 20); UiMod* nl = ui.add("nloop", 0, 20); UiMod* v = ui.add("pluck", 100, 20); ui.connect(nl, 0, v, v->m->def->inIndex("TRIG"));
+    Module* m = nl->m; const float T[6] = {0.1f, 1.3f, 1.3f, 2.7f, 5.2f, 6.9f}; for (int i = 0; i < 6; i++) { m->ev[i * 4].store(T[i]); m->ev[i * 4 + 1].store(60.f + i); m->ev[i * 4 + 2].store(0.8f); m->ev[i * 4 + 3].store(0); } m->evN.store(6);
+    ui.set(nl, "lenb", 8); ui.set(nl, "chance", 0); run(eng, 3); const int f0 = m->fires[0].load(); ui.set(nl, "chance", 1); run(eng, 3); const int f1 = m->fires[0].load() - f0;
+    eng.action(m->id, "rrhythm"); run(eng, 0.05f); bool grid = true; float first = 99; int chordSame = m->ev[1 * 4].load() == m->ev[2 * 4].load();
+    for (int i = 0; i < 6; i++) { const float t = m->ev[i * 4].load(); first = std::min(first, t); if (std::fabs(t * 4 - std::round(t * 4)) > 1e-3f) grid = false; }
+    eng.action(m->id, "urand"); run(eng, 0.05f); bool back = true; for (int i = 0; i < 6; i++) if (std::fabs(m->ev[i * 4].load() - T[i]) > 1e-4f) back = false;
+    const bool ok = f0 == 0 && f1 > 0 && grid && first == 0 && chordSame && back; if (!ok) fails++;
+    std::printf("note looper: chance 0 -> %d, 1 -> %d, random rhythm on grid %d, first %.2f, chord kept %d, undo %d%s\n", f0, f1, grid, first, chordSame, back, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

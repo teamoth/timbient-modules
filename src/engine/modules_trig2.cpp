@@ -32,7 +32,7 @@ struct Bursts : Module {
   }
 };
 static Reg rBursts(new ModuleDef{"bursts", "BURSTS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("hits", "HITS", 2, 9, 5), pr("clump", "CLUMP", 0, 0.9f, 0.5f), T("len", "LENGTH", 0.4f, 6, 1.8f), T("rest", "REST", 0.2f, 12, 3), ST("range", "RANGE", 1, 8, 4), OCTP("oct", 1, 7, 6)},
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("hits", "HITS", 2, 9, 5), pr("clump", "CLUMP", 0, 0.9f, 0.5f), T("len", "LENGTH", 0.4f, 6, 1.8f), T("rest", "REST", 0.2f, 12, 3), ST("range", "RANGE", 1, 8, 4), OCTP("oct", 1, 7, 4)},
   7, 68, false, [] { return new Bursts(); }});
 
 // ---------------- WALKER: a head that gets pushed along the scale and slides to a stop ----------------
@@ -51,7 +51,7 @@ struct Walker : Module {
   }
 };
 static Reg rWalker(new ModuleDef{"walker", "WALKER", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), pct("push", "PUSH", 0.4f), pct("glide", "SLIDE", 0.5f), ST("range", "RANGE", 1, 16, 10), OCTP("oct", 1, 8, 6)},
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), pct("push", "PUSH", 0.4f), pct("glide", "SLIDE", 0.5f), ST("range", "RANGE", 1, 16, 10), OCTP("oct", 1, 8, 4)},
   6, 68, false, [] { return new Walker(); }});
 
 // ---------------- TRIG TOOLS: thin, repeat and transpose whatever passes through ----------------
@@ -188,17 +188,20 @@ static Reg rTombola(new ModuleDef{"tombola", "TOMBOLA", Cat::Trig, {{"ADD", PTyp
    ST("maxb", "BALLS", 1, 12, 8), ST("sides", "SIDES", 3, 8, 6), OP("walls", "WALLS", {"ALL PLAY", "EVERY 2ND", "ONE WALL"}, 0), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), ACT("clear", "CLEAR NOTES")}, 40, 68, false, [] { return new Tombola(); }});
 
 // ---------------- NOTE LOOPER: records the notes that come in (from MIDI IN or any sequencer) and plays them round ----------------
-// Notes are kept in beats: of a clock patched into CLOCK, or of the session's tempo. So patching in a clock (or changing
-// the tempo) changes how fast it plays, and the notes keep their places in the bar.
+// Notes are kept in beats: of a clock patched into CLOCK, or of the session's tempo (TEMPO SHARED), or of its own BPM.
+// So patching in a clock or changing the BPM changes how fast it plays, and the notes keep their places in the bar:
+// record at 90, play at 45 for half speed; record more at 45, play at 22 for half again.
 // The first take sets the loop (when RECORD goes off); after that, recording overdubs a new layer. START and LENGTH
 // choose which part of what's recorded plays round.
 struct NoteLooper : Module {
-  enum { REC, THRU, START, LEN, DIR, SPEED, TRANS, QUANT, VEL, CHANCE, UNDO, HALVE, DOUBLE, CLEAR, DRIFT };
+  enum { REC, THRU, START, LEN, DIR, SYNC, BPM, TRANS, QUANT, VEL, CHANCE, UNDO, RRHY, RORD, URAND, CLEAR, DRIFT };
+  static constexpr int SNAPS = 8;   // RANDOM RHYTHM / RANDOM ORDER: what it was, for UNDO RANDOM (the last 8)
+  std::vector<float> snap[SNAPS]; int snapN[SNAPS] = {}; int snaps = 0, snapTop = 0;
   struct Late { float note, vel; double left; }; Late late[64]; int nLate = 0;   // DRIFT: notes held back a moment
   double pos = 0, recPos = 0; bool firstTake = false, wasRec = false, fwd = true; int layer = 0; double last = -1; float cp = 0, ppb = 1;
-  NoteLooper() { allocEv(); }
+  NoteLooper() { allocEv(); for (auto& v : snap) v.assign((size_t)EV_MAX * 4, 0.f); }
   bool clocked() const { return clockedIn.load(std::memory_order_relaxed) && cp > 0; }
-  double beatSecs() const { return clocked() ? cp * ppb : 60.0 / std::max(10.f, eng->tempo.bpm.load(std::memory_order_relaxed)); }
+  double beatSecs() const { return clocked() ? cp * ppb : 60.0 / std::max(10.f, e[SYNC] > 0.5f ? eng->tempo.bpm.load(std::memory_order_relaxed) : e[BPM]); }
   int count() const { return evN.load(std::memory_order_relaxed); }
   void add(double t, float note, float vel) { const int n = count(); if (n >= EV_MAX) return;
     ev[n * 4].store((float)t); ev[n * 4 + 1].store(note); ev[n * 4 + 2].store(vel); ev[n * 4 + 3].store((float)layer); evN.store(n + 1); }
@@ -221,15 +224,37 @@ struct NoteLooper : Module {
     if (k == "clear") { evN.store(0); layer = 0; firstTake = false; pos = 0; p[START].store(0); }
     else if (k == "undo") { int top = -1; for (int i = 0; i < n; i++) top = std::max(top, (int)ev[i * 4 + 3].load()); int w = 0;   // the last layer goes
       for (int i = 0; i < n; i++) if ((int)ev[i * 4 + 3].load() != top) { for (int c = 0; c < 4; c++) ev[w * 4 + c].store(ev[i * 4 + c].load()); w++; } evN.store(w); layer = std::max(0, top); }
-    else if (k == "halve") p[LEN].store((float)std::max(0.25, L / 2));   // the notes past the end stay, so DOUBLE or LENGTH can bring them back
-    else if (k == "double") { int m = n; for (int i = 0; i < n && m < EV_MAX; i++) { const double tt = ev[i * 4].load(); if (tt < S || tt >= S + L) continue;
-        ev[m * 4].store((float)(tt + L)); for (int c = 1; c < 4; c++) ev[m * 4 + c].store(ev[i * 4 + c].load()); m++; } evN.store(m); p[LEN].store((float)std::min(128.0, L * 2)); }
+    else if (k == "rrhythm" || k == "rorder") shuffle(k == "rrhythm", S, L);
+    else if (k == "urand") { if (snaps == 0) return; snapTop = (snapTop + SNAPS - 1) % SNAPS; snaps--; const int m = snapN[snapTop];
+      for (int i = 0; i < m * 4; i++) ev[i].store(snap[snapTop][i]); evN.store(m); }
+  }
+  // RANDOM RHYTHM: the notes in the loop (chords together, in the same order) on new places on the QUANTISE grid (1/16 when
+  // it's off), the first still on the downbeat. RANDOM ORDER: the same places, the notes (or chords) shuffled among them.
+  void shuffle(bool rhythm, double S, double L) {
+    const int n = count(); if (n == 0) return;
+    for (int i = 0; i < n * 4; i++) snap[snapTop][i] = ev[i].load(); snapN[snapTop] = n; snapTop = (snapTop + 1) % SNAPS; snaps = std::min(SNAPS, snaps + 1);
+    struct Note { int i; double t; }; std::vector<Note> in; for (int i = 0; i < n; i++) { const double tt = ev[i * 4].load(); if (tt >= S && tt < S + L) in.push_back({i, tt}); }
+    if (in.empty()) return;
+    std::sort(in.begin(), in.end(), [](const Note& a, const Note& b) { return a.t < b.t; });
+    std::vector<std::vector<int>> groups; std::vector<double> times; double gt = -1e9;   // chords: notes within a fiftieth of a beat
+    for (auto& nt : in) { if (nt.t - gt > 0.02) { groups.push_back({}); times.push_back(nt.t); gt = nt.t; } groups.back().push_back(nt.i); }
+    const int G = (int)groups.size(); std::vector<double> to(G);
+    if (rhythm) { static const double GR[4] = {0.25, 0.25, 0.5, 1}; const double g = GR[(int)e[QUANT] & 3]; const int slots = std::max(1, (int)std::floor(L / g + 1e-6));
+      std::vector<int> pick; if (G >= slots) { for (int k = 0; k < G; k++) pick.push_back(k * slots / G); }   // more notes than places: spread them evenly
+      else { std::vector<int> rest; for (int k = 1; k < slots; k++) rest.push_back(k);
+        for (int k = (int)rest.size() - 1; k > 0; k--) std::swap(rest[k], rest[(int)(rng.uni() * (k + 1)) % (k + 1)]);
+        pick.push_back(0); for (int k = 0; k < G - 1; k++) pick.push_back(rest[k]); std::sort(pick.begin(), pick.end()); }
+      for (int k = 0; k < G; k++) to[k] = S + pick[k] * g; }
+    else { std::vector<int> ord(G); for (int k = 0; k < G; k++) ord[k] = k; for (int k = G - 1; k > 0; k--) std::swap(ord[k], ord[(int)(rng.uni() * (k + 1)) % (k + 1)]);
+      for (int k = 0; k < G; k++) to[ord[k]] = times[k]; }
+    for (int k = 0; k < G; k++) for (int i : groups[k]) ev[i * 4].store((float)to[k]);
   }
   void play(double a0, double a1) {   // the notes between two positions (either way round)
     const double lo = std::min(a0, a1), hi = std::max(a0, a1); const int n = count();
     for (int i = 0; i < n; i++) { const double tt = ev[i * 4].load(std::memory_order_relaxed); if (tt <= lo || tt > hi) continue;
       Event o; o.note = ev[i * 4 + 1].load() + e[TRANS]; o.vel = ev[i * 4 + 2].load() * e[VEL]; if (o.note < 0 || o.note >= 128) continue;
-      if (e[DRIFT] > 0.001f && nLate < 64) {   // DRIFT: each note a little late, by a different amount each time round (up to a third of a beat), and a touch softer or louder
+      if (rng.uni() >= e[CHANCE]) continue;   // CHANCE: each note, each time round (notes played in through THRU always pass)
+      if (e[DRIFT] > 0.001f && nLate < 64) {   // DRIFT: each note a little late, by a different amount each time round (up to a third of a beat at 100%, two thirds at 200%), and a touch softer or louder
         const double d = rng.uni() * rng.uni() * e[DRIFT] * 0.33 * beatSecs() * sr; o.vel = clampf(o.vel * (1 + (rng.uni() - 0.5f) * 0.3f * e[DRIFT]), 0.02f, 1);
         late[nLate++] = {o.note, o.vel, d}; continue; }
       emit(0, o); }
@@ -241,7 +266,7 @@ struct NoteLooper : Module {
     if (!rec && wasRec && firstTake) { firstTake = false; const double L = clocked() ? std::max(1.0, std::round(recPos)) : std::max(0.25, recPos);   // the first take ends: that's the loop
       p[START].store(0); e[START] = 0; p[LEN].store((float)L); e[LEN] = (float)L; pos = 0; fwd = true; }
     wasRec = rec;
-    const double step = (b - a) / (sr * beatSecs()) * (e[SPEED] < 0.5f ? 0.5 : e[SPEED] < 1.5f ? 1.0 : 2.0);   // in beats
+    const double step = (b - a) / (sr * beatSecs());   // in beats
     if (firstTake) { recPos += step; disp[0].store(0); disp[1].store(1); disp[3].store((float)recPos); }
     else if (count() > 0) {
       const double S = e[START], L = std::max(0.01f, e[LEN]), E = S + L; const int dir = (int)e[DIR];
@@ -261,9 +286,12 @@ static std::string beatsText(float v) { char b[24]; std::snprintf(b, 24, v < 10 
 static Reg rNoteLooper(new ModuleDef{"nloop", "NOTE LOOPER", Cat::Trig, {{"NOTES", PType::Trig}, {"CLOCK", PType::Trig}, {"REC", PType::Trig}}, {{"NOTES", PType::Trig}},
   {OP("rec", "RECORD", {"OFF", "ON"}, 0), OP("thru", "THRU", {"OFF", "ON"}, 1),
    fine(fmt(pr("start", "START", 0, 128, 0), beatsText)), fmt(prExp("lenb", "LENGTH", 0.25f, 128, 16), beatsText),
-   OP("dir", "PLAYS", {"FORWARDS", "BACKWARDS", "PING-PONG"}, 0), OP("speed", "SPEED", {"HALF", "NORMAL", "DOUBLE"}, 1), ST("trans", "TRANSPOSE", -24, 24, 0),
+   OP("dir", "PLAYS", {"FORWARDS", "BACKWARDS", "PING-PONG"}, 0),
+   only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float v) { return std::to_string((int)v); }), "own"),
+   ST("trans", "TRANSPOSE", -24, 24, 0),
    OP("quant", "QUANTISE", {"OFF", "1/16", "1/8", "1/4"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
-   ACT("undo", "UNDO LAYER"), ACT("halve", "HALVE"), ACT("double", "DOUBLE"), ACT("clear", "CLEAR"), pct("drift", "DRIFT", 0)}, 30, 68, false, [] { return new NoteLooper(); }});
+   ACT("undo", "UNDO LAYER"), ACT("rrhythm", "RANDOM RHYTHM"), ACT("rorder", "RANDOM ORDER"), ACT("urand", "UNDO RANDOM"), ACT("clear", "CLEAR"),
+   pctX("drift", "DRIFT", 2, 0)}, 30, 68, false, [] { return new NoteLooper(); }});
 
 
 // ---------------- TIMELINE: a stretch of time (5 minutes, say) with events placed along it ----------------

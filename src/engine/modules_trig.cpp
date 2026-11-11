@@ -97,7 +97,7 @@ struct Orbits : Module {
   }
 };
 static Reg rOrbits(new ModuleDef{"orbits", "ORBITS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), ST("range", "RANGE", 1, 14, 5), OCTP("oct", -1, 7, 6)},
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), ST("range", "RANGE", 1, 14, 5), OCTP("oct", -1, 7, 4)},
   26, 68, false, [] { return new Orbits(); }});
 
 // ---------------- RANDOM HOPS ----------------
@@ -120,7 +120,7 @@ struct Hops : Module {
 };
 static Reg rHops(new ModuleDef{"hops", "RANDOM HOPS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), fmt([] { auto q = prExp("rate", "BPM", 0.1f, 20, 2); q.step = 1 / 60.f; return q; }(), [](float v) { return std::to_string((int)std::lround(v * 60)) + " BPM"; }),   // whole BPM
-   pct("cluster", "CLUMP", 0.3f), ST("spread", "RANGE", 1, 14, 8), OCTP("oct", 1, 8, 6)}, 16, 68, false, [] { return new Hops(); }});
+   pct("cluster", "CLUMP", 0.3f), ST("spread", "RANGE", 1, 14, 8), OCTP("oct", 1, 8, 4)}, 16, 68, false, [] { return new Hops(); }});
 
 // ---------------- NOTE GRID: pads pressed on screen arrive here and go out as notes ----------------
 struct Keys : Module {

@@ -81,6 +81,8 @@ float Module::note(int oct, int step) const { return midiOf(degOf(oct, step, sca
 
 void Module::emit(int port, Event ev) {
   if (mute.load(std::memory_order_relaxed)) return;
+  // VELOCITY 0: a sequencer's note at no velocity isn't sent at all (so it's silent whatever the voice's VEL SENS); clock pulses still go
+  if (def->cat == Cat::Trig && ev.sw < 0 && ev.vel <= 0.001f && def->outs[port].name != "PULSE" && def->outs[port].name != "BAR") return;
   // CHANCE: each note a sequencer plays has this chance of sounding (clock pulses always pass)
   if (def->cat == Cat::Trig && def->outs[port].name == "TRIG" && def->type != "tools" && def->type != "tracker") { const int ci = def->paramIndex("chance"); if (ci >= 0 && rng.uni() >= e[ci]) return; }
   flash.store(0.12f, std::memory_order_relaxed); if (port >= 0 && port < 8) fires[port].fetch_add(1, std::memory_order_relaxed);

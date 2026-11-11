@@ -12,6 +12,9 @@ static inline bool modulatable(const ParamDef& q) { return q.opts.empty() && !q.
 
 static const int HEAD = 8, ROW = 7, FOOT = 9, TOP = 10;
 static int catCol(Cat c) { switch (c) { case Cat::Trig: return 24; case Cat::Voice: return 7; case Cat::Proc: return 17; case Cat::Mod: return 11; default: return 9; } }
+// TRACKER, NOTE LOOPER: moving BPM while TEMPO is SHARED makes it OWN, starting from the session's tempo
+static void takeOwnTempo(UiMod* u, int k, Engine& eng) { const ModuleDef* d = u->m->def; if (d->type == "clock" || d->params[k].key != "bpm") return; const int si = d->paramIndex("sync");
+  if (si < 0 || u->m->p[si].load() < 0.5f || u->m->clockedIn.load()) return; u->m->p[si].store(0); u->m->p[k].store(std::round(eng.tempo.bpm.load())); }
 static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ? 44 : 45; }
 
 // the ADD menu, in the web version's order (types not built yet are skipped)
@@ -318,7 +321,9 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     auto label = [&](const std::string& t, int col) { c.rect(x + 1, y + 1, Canvas::tw(t) + 3, 7, 26); c.text(t, x + 2, y + 2, col); };   // on its own patch, clear of the grid
     if (st == 1) { char b[32]; std::snprintf(b, 32, "RECORDING %.1f BEATS", D(3)); label(b, 14); }
     else if (n == 0) label("RECORD SOME NOTES", 18);
-    else { const int hx = X(D(0)); for (int j = 0; j < H; j++) c.px(hx, y + j, st == 2 ? 14 : 9); }
+    else { const int hx = X(D(0)); for (int j = 0; j < H; j++) c.px(hx, y + j, st == 2 ? 14 : 9);
+      for (int e2 = 0; e2 < 2; e2++) { const int lx = std::min(x + w - 2, X(e2 ? S + L : S)), col = drag.kind == D_NLOOP && drag.m == &u && drag.dir == e2 ? 4 : 12;   // the start and end lines: drag them
+        for (int j = 0; j < H; j += 2) c.px(lx, y + j, col); c.rect(lx - 1, y, 3, 3, col); c.rect(lx - 1, y + H - 3, 3, 3, col); } }
   } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
     const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
       const int h = std::max(0, std::min(5, (int)std::lround(std::sqrt(D(4 + k)) * 5))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
@@ -757,8 +762,16 @@ bool Ui::tempoDown(float sx, float sy) {   // true if the tap was inside the pan
   return true;
 }
 
+void Ui::contextAt(float sx, float sy) {
+  if (ask || br.open || ed.open || sy < TOP) return;
+  const int wx = (int)sx + viewX, wy = (int)sy + viewY; int lx, ly; UiMod* u = hit(wx, wy, lx, ly); dd.reset(); menuOpen = false;
+  if (!u || u->m->def->fixed) return; lastTouched = u->m->id; const int id = u->m->id;
+  Dropdown q; q.items = {"DUPLICATE"}; q.x = (int)sx + 2; q.y = (int)sy + 2;
+  q.pick = [this, id](int) { if (UiMod* m = byId(id)) if (onDuplicate) onDuplicate(m); }; openDropdown(q);
+}
 void Ui::pointerDown(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY;
+  { int lx0, ly0; if (sy >= TOP && !ask) if (UiMod* hu = hit(wx, wy, lx0, ly0)) lastTouched = hu->m->id; }
   drag = Drag(); drag.sx = sx; drag.sy = sy; drag.wx = wx; drag.wy = wy;
   if (ask) {   // OK / CANCEL in the name box
     const int w = std::min(lastW - 10, 150), x = (lastW - w) / 2, y = TOP + 30;
@@ -827,6 +840,11 @@ void Ui::pointerDown(float sx, float sy) {
     const int vx = lx - 3, vy = ly - g.vy;
     if (d->type == "keys") { keysPress(*u, vx, vy); return; }
     if (d->type == "timeline") { timelineDown(*u, vx, vy, g.w - 6); return; }
+    if (d->type == "nloop") {   // grab the start or end line (whichever is nearer, within a few pixels)
+      Module* m = u->m; const int n = m->evN.load(); if ((int)m->disp[1].load() == 1 || n == 0) return; const float S = m->disp[6].load(), L = std::max(0.01f, m->disp[2].load());
+      float tmax = 0; for (int i = 0; i < n; i++) tmax = std::max(tmax, m->ev[i * 4].load()); const float span = std::max(S + L, tmax + 0.25f); const int w = g.w - 6;
+      const int xs = (int)std::lround(S / span * (w - 2)), xe = std::min(w - 2, (int)std::lround((S + L) / span * (w - 2))), ds = std::abs(vx - xs), de = std::abs(vx - xe);
+      if (std::min(ds, de) > 4) return; drag.kind = D_NLOOP; drag.m = u; drag.k = m->id; drag.dir = de <= ds ? 1 : 0; drag.n0 = span; return; }
     if (d->type == "qwerty" && vy >= 7) {   // pick a note, then press the key for it
       const int cw = (g.w - 12) / 12, k = (vx - 6) / std::max(1, cw), r = 2 - (vy - 7) / 8; if (vx < 6 || k < 0 || k > 11 || r < 0 || r > 2) return;
       const int i = r * 12 + k; static const char* NM[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
@@ -875,7 +893,7 @@ void Ui::pointerDown(float sx, float sy) {
       openDropdown(l); return; }
     if (lx >= minusX(*u, pj) - 2 && lx < minusX(*u, pj) + 5) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = -1; drag.holdT = 0; nudge(u, pj, -1); return; }
     if (lx >= g.w - 8) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = 1; drag.holdT = 0; nudge(u, pj, 1); return; }
-    drag.kind = D_PARAM; drag.m = u; drag.k = pj; drag.n0 = q.toNorm(u->m->p[pj].load()); return;
+    takeOwnTempo(u, pj, eng); drag.kind = D_PARAM; drag.m = u; drag.k = pj; drag.n0 = q.toNorm(u->m->p[pj].load()); return;
   }
   drag.kind = D_MOVE; drag.m = u; drag.ox = wx - u->x; drag.oy = wy - u->y;
 }
@@ -884,6 +902,7 @@ void Ui::pointerDown(float sx, float sy) {
 static void clockToTempo(UiMod* u, int k, Engine& eng) { if (u->m->def->type == "clock" && u->m->def->params[k].key == "bpm" && u->m->p[0].load() > 0.5f) eng.tempo.bpm.store(std::round(u->m->p[k].load())); }
 // - and +: one step for settings that move in steps, otherwise about a hundredth of the way along
 void Ui::nudge(UiMod* u, int k, int dir) {
+  takeOwnTempo(u, k, eng);
   const ParamDef& q = u->m->def->params[k]; const float v0 = u->m->p[k].load();
   float v = q.step > 0 ? clampf(v0 + dir * q.step, std::min(q.min, q.max), std::max(q.min, q.max)) : q.fromNorm(q.toNorm(v0) + dir * q.nudge);
   if (q.step > 0 && q.rev) v = clampf(v0 - dir * q.step, q.min, q.max);
@@ -919,6 +938,13 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
   else if (drag.kind == D_SCROLL) { drag.m->hold = 6; drag.m->scroll = drag.n0 - (sy - drag.sy) / 6; trClamp(*drag.m); }
+  else if (drag.kind == D_NLOOP) {   // NOTE LOOPER: the start or end line, onto the QUANTISE grid (1/16 when off; Shift: anywhere)
+    UiMod& u = *drag.m; Module* m = u.m; const int w = geom(u).w - 6, vx = (int)std::lround(wx) - u.x - 3; const float span = drag.n0;
+    float t = clampf((float)vx / std::max(1, w - 2) * span, 0, 256); static const float GR[4] = {0.25f, 0.25f, 0.5f, 1};
+    const float g = shiftHeld ? 0.01f : GR[std::max(0, std::min(3, (int)m->p[m->def->paramIndex("quant")].load()))]; t = std::round(t / g) * g;
+    const int si = m->def->paramIndex("start"), li = m->def->paramIndex("lenb"); const float S = m->p[si].load(), E = S + m->p[li].load();
+    if (drag.dir == 0) { const float S2 = clampf(t, 0, std::max(0.f, E - 0.25f)); m->p[si].store(std::min(128.f, S2)); m->p[li].store(clampf(E - S2, 0.25f, 128)); status("NOTE LOOPER  START  " + valueText(u, si, m->p[si].load(), 0), 1.5f); }
+    else { m->p[li].store(clampf(t - S, 0.25f, 128)); status("NOTE LOOPER  LENGTH  " + valueText(u, li, m->p[li].load(), 0), 1.5f); } }
   else if (drag.kind == D_TLINE) { if (std::fabs(sx - drag.sx) > 1 || std::fabs(sy - drag.sy) > 1) drag.moved = true; if (drag.moved) timelineDrag(*drag.m, wx - drag.m->x - 3, wy - drag.m->y - geom(*drag.m).vy, geom(*drag.m).w - 6); }
   else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
     drag.m->m->p[drag.m->m->def->paramIndex("xf")].store(v); char b[32]; std::snprintf(b, 32, "CROSSFADE  A %d / B %d", (int)std::lround((1 - v) * 100), (int)std::lround(v * 100)); status(b, 1); }
@@ -927,6 +953,7 @@ void Ui::pointerMove(float sx, float sy) {
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
   if (d.kind == D_TEMPO) { changed(); return; }
+  if (d.kind == D_NLOOP) { changed(); return; }
   if (d.kind == D_TLINE) { if (byId(d.k)) timelineUp(*byId(d.k), d.moved, d.dir); changed(); return; }
   if (d.kind == D_BROWSE) { if (!d.moved) browserPick(d.k); return; }
   if (d.kind == D_GRAB || d.kind == D_PULL) { selectCable(d.grab, sx, sy); return; }
@@ -940,7 +967,7 @@ void Ui::pointerUp(float sx, float sy) {
       const int mi = m->m->def->paramIndex("mix"); if (mi >= 0) m->m->p[mi].store(0);   // fully dry, as the web version does, so nothing jumps out
       status("INSERTED " + m->m->def->name + (mi >= 0 ? " (FULLY DRY: RAISE ITS MIX)" : ""), 4); changed(); };
     openDropdown(q); return; }
-  if (d.kind == D_PARAM && !d.moved && !d.held && (d.m->m->def->params[d.k].key == "pitch" || (d.m->m->def->type == "midiout" && d.m->m->def->params[d.k].key == "trans"))) {
+  if (d.kind == D_PARAM && !d.moved && !d.held && (d.m->m->def->params[d.k].key == "pitch" || ((d.m->m->def->type == "midiout" || d.m->m->def->type == "nloop") && d.m->m->def->params[d.k].key == "trans"))) {
     // a tap on PITCH: jump by octaves (on Sample, pitch is speed, so the speeds are named too)
     const ModuleDef* df = d.m->m->def; const int k = d.k, id = d.m->m->id; const bool smp = df->type == "sample", grains = df->type == "looper";
     static const int V[5] = {-24, -12, 0, 12, 24};

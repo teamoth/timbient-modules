@@ -177,7 +177,10 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     bool stopped = false;
     if (const Json* p = m.get("p")) {   // older sessions: a RUN setting became the footer's ON/OFF; Orbits gained RANGE
       if ((ty == "clock" || ty == "tracker") && p->get("run") && p->get("run")->t == Json::NUM && p->get("run")->n < 0.5) stopped = true;
-      if (ty == "orbits" && !p->get("range") && p->get("rings")) u->m->p[def->paramIndex("range")].store((float)p->num("rings", 5)); }
+      if (ty == "orbits" && !p->get("range") && p->get("rings")) u->m->p[def->paramIndex("range")].store((float)p->num("rings", 5));
+      if (ty == "nloop" && !p->get("sync") && p->get("speed") && std::fabs(p->num("speed", 1) - 1) > 0.5) {   // NOTE LOOPER: SPEED half or double became its own BPM
+        const double f = p->num("speed", 1) < 0.5 ? 0.5 : 2.0, bpm = data.num("bpm", 90) > 0 ? data.num("bpm", 90) : 90;
+        u->m->p[def->paramIndex("sync")].store(0); u->m->p[def->paramIndex("bpm")].store((float)std::max(20.0, std::min(240.0, std::round(bpm * f)))); } }
     u->m->mute.store(m.truthy("mute") || stopped); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold"); u->m->bypass.store(m.truthy("bypass"));   // only voices solo now
     idmap[(int)m.num("id")] = u; maxId = std::max(maxId, (int)m.num("id"));
   }

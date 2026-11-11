@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.28.0";
+static const char* VERSION = "0.29.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -165,6 +165,20 @@ int main(int argc, char** argv) {
       std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (b) giveSound(u, b, false, k); else sd.missing = true; }
     restoring = false;
     ui.viewX = vx; ui.viewY = vy; dirty = true; saveT = 0.5f; ui.status(back ? "UNDONE" : "REDONE", 1.2f);
+  };
+  // DUPLICATE: the module again, a little down and to the right, with all its settings and what it holds (steps, notes,
+  // events, sounds) but no cables. Done as a change to the patch, like undo, so nothing else stops or reloads
+  bool ctxClick = false;
+  ui.onDuplicate = [&](UiMod* src) {
+    if (histDirty) { snapshot(); histDirty = false; }
+    Json data = serializePatch(ui); Json* mods = data.getm("mods"); if (!mods || mods->t != Json::ARR) return;
+    int maxId = 0; const Json* mine = nullptr; for (auto& m : mods->a) { maxId = std::max(maxId, (int)m.num("id")); if ((int)m.num("id") == src->m->id) mine = &m; }
+    if (!mine) return; Json copy = *mine; const int nid = maxId + 1;
+    copy.set("id", Json::number(nid)); copy.set("x", Json::number(src->x + 12)); copy.set("y", Json::number(src->y + 12)); mods->push(copy);
+    std::vector<std::pair<UiMod*, int>> sc; applyPatch(ui, data, sc);
+    for (auto& [u, k] : sc) { UiMod::Snd& sd = u->snd[k]; if (sd.id.empty()) continue;
+      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (b) giveSound(u, b, false, k); else sd.missing = true; }
+    ui.lastTouched = nid; ui.status("DUPLICATED " + src->m->def->name, 2); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.1f;
   };
   // ---- RECORD on the Output: straight to a WAV file in Music / Timbient Modules ----
   std::string recDir; { const char* mu = SDL_GetUserFolder(SDL_FOLDER_MUSIC); recDir = std::string(mu ? mu : store.dir.c_str()) + "Timbient Modules/"; SDL_CreateDirectory(recDir.c_str()); }
@@ -317,7 +331,7 @@ int main(int argc, char** argv) {
       if (i == 8) { ui.shadows = !ui.shadows; settings.set("shadows", Json::number(ui.shadows ? 1 : 0)); saveSettings(); ui.status(ui.shadows ? "SHADOWS UNDER THE MODULES" : "NO SHADOWS", 2); openTheme(x0); return; }
       if (i == 9) { ui.borders = !ui.borders; settings.set("borders", Json::number(ui.borders ? 1 : 0)); saveSettings(); ui.status(ui.borders ? "A LINE ROUND EACH MODULE" : "NO BORDERS", 2); openTheme(x0); return; }
       if (i >= 10) i -= 4;   // RANDOMISE and RESET come after LETTERS, MENUS, SHADOWS and BORDERS
-      if (i == 6) { setTheme(randomTheme([](int n) { return (int)SDL_rand(n); })); ui.status("RANDOM THEME: TAP RANDOMISE AGAIN FOR ANOTHER", 3); openTheme(x0); return; }   // stays open, to roll again
+      if (i == 6) { setTheme(randomPreset(theme, [](int n) { return (int)SDL_rand(n); })); { std::string nm = "?"; for (auto& pr : presets()) if (sameTheme(pr.second, theme)) nm = pr.first; ui.status("THEME " + nm + ": TAP RANDOMISE AGAIN FOR ANOTHER", 3); } openTheme(x0); return; }   // stays open, to roll again
       if (i == 7) { setTheme(Theme{}); ui.status("THEME RESET"); return; }
       Dropdown q; q.x = x0; q.y = 11 + (i ? i * 8 : 0); const int SW = 64;
       if (i == 0) { int k = 0; for (auto& p : presets()) { canvas.setColour(SW + k, p.second.mod.c_str()); q.items.push_back(p.first); q.sw.push_back(SW + k); if (sameTheme(p.second, theme)) q.cur = k; k++; }
@@ -450,6 +464,7 @@ int main(int argc, char** argv) {
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
           if (ev.key.key == SDLK_S && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) {   // Cmd/Ctrl+S saves to the session's file (Shift: SAVE AS)
             if (curFile.empty() || (ev.key.mod & SDL_KMOD_SHIFT)) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); break; }
+          if (ev.key.key == SDLK_D && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) { if (UiMod* u = ui.byId(ui.lastTouched)) if (!u->m->def->fixed) ui.onDuplicate(u); break; }   // Cmd/Ctrl+D: duplicate
           if (ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) { restoreStep((ev.key.mod & SDL_KMOD_SHIFT) ? hpos + 1 : hpos - 1); break; }   // Cmd/Ctrl+Z, and with Shift to redo
           if (ev.key.key == SDLK_Y && (ev.key.mod & SDL_KMOD_CTRL)) { restoreStep(hpos + 1); break; }
           if (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS || ev.key.key == SDLK_KP_PLUS) pendingZoom++;
@@ -457,9 +472,11 @@ int main(int argc, char** argv) {
           if (ev.key.key == SDLK_0 && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) pendingZoom = -zoom;
           if (ev.key.key == SDLK_SPACE) { engine.freeze.store(!engine.freeze.load()); ui.status(engine.freeze.load() ? "FROZEN" : "UNFROZEN"); }
           break;
-        case SDL_EVENT_MOUSE_BUTTON_DOWN: if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerDown(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:   // right click, or Ctrl-click (a Mac trackpad): the module's menu
+          if (ev.button.button == SDL_BUTTON_RIGHT || (ev.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & SDL_KMOD_CTRL))) { ui.contextAt(ev.button.x * dens / scale, ev.button.y * dens / scale); ctxClick = true; break; }
+          if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerDown(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
         case SDL_EVENT_MOUSE_MOTION: ui.pointerMove(ev.motion.x * dens / scale, ev.motion.y * dens / scale); break;
-        case SDL_EVENT_MOUSE_BUTTON_UP: if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerUp(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
+        case SDL_EVENT_MOUSE_BUTTON_UP: if (ctxClick) { ctxClick = false; break; } if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerUp(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
         case SDL_EVENT_MOUSE_WHEEL:   // with Ctrl or Cmd held: zoom. Otherwise: move around the patch
           if (SDL_GetModState() & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) { wheelAcc += ev.wheel.y; if (std::fabs(wheelAcc) >= 1) { pendingZoom += wheelAcc > 0 ? 1 : -1; wheelAcc = 0; } }
           else if (ui.ed.open) ui.editorWheel(ev.wheel.mouse_x * dens / scale, ev.wheel.y);   // the sound editor: zoom
@@ -524,6 +541,7 @@ int main(int argc, char** argv) {
     const Uint64 now = SDL_GetTicksNS(); const float dt = std::min(0.1f, (now - last) / 1e9f); last = now;
     if (W != canvas.W || H != canvas.H) canvas.resize(W, H);
     canvas.fine = atlas && letters < 2 && Canvas::fineDot(scale) >= 2; canvas.letterCase = letters;   // too small a scale for them: the classic ones
+    ui.shiftHeld = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
     canvas.beginFrame();
     ui.draw(canvas, dt);
     if (!tex || texW != W || texH != H) { if (tex) SDL_DestroyTexture(tex); tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W, H); SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_PIXELART); texW = W; texH = H; }
