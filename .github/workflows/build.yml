@@ -27,6 +27,9 @@ jobs:
       - name: Linux libraries for SDL
         if: matrix.name == 'linux'
         run: |
+          # if GitHub's own Ubuntu mirror can't be reached, use Ubuntu's main one; and retry downloads
+          if ! getent hosts azure.archive.ubuntu.com >/dev/null; then sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list 2>/dev/null || true; sudo find /etc/apt/sources.list.d -type f -exec sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' {} + 2>/dev/null || true; fi
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libdbus-1-dev libudev-dev
       - name: "Configure (Mac, one app for both Intel and Apple Silicon)"
@@ -35,6 +38,9 @@ jobs:
       - name: "MinGW, for the 32-bit Windows version (it still supports Windows 7)"
         if: matrix.name == 'windows32'
         run: |
+          # if GitHub's own Ubuntu mirror can't be reached, use Ubuntu's main one; and retry downloads
+          if ! getent hosts azure.archive.ubuntu.com >/dev/null; then sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list 2>/dev/null || true; sudo find /etc/apt/sources.list.d -type f -exec sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' {} + 2>/dev/null || true; fi
+          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries >/dev/null
           sudo apt-get update
           sudo apt-get install -y mingw-w64 zip
       - name: "Configure (Windows 32-bit, for older computers)"
