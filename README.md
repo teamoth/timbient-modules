@@ -1,9 +1,10 @@
 # Timbient Modules
 
-A modular patch-bay for ambient music with simplistic pixelated graphics: Sequencers, voices and effects you patch together with cables.
-Written in C++, inspired by the idea of having something that's like SunVox and Norns scripts all mashed together. Where this is different from SunVox is that there isn't one BPM and it's not about specific notes that you enter. It is possible to sync things together and there is a tracker module if you do want to sequence specific notes, but the idea here is that you have things more random/generative and out sync from each other. You choose a scale, you choose a key, you choose a sequencer style and connect some modules together. In this way it's more like a modular synthesizer. One goal here is to have this running well on older hardware, although at the moment I'm limited by what devices I own.
+A friendly pixelated modular patch-bay environment for ambient music, with a variety of sequencers, voices and effects to patch together.
 
-I've had a lot of help from Claude to build this and the intention is that it's free for anyone to use.
+Written in C++ and inspired by the idea of having something that's like SunVox and various Norns scripts all mashed together. Where this is different from a DAW is that there isn't just one BPM and it's not about using specific notes. It is possible to clock sync everything together (and there is a note entry tracker module), but the idea here is that the separate voices can have completely different timings from each other. 
+
+One goal here is to have this running well on older hardware, for example 32bit windows machines.
 
 **Status:** An early preview. Things are still being developed, but it does work. Improvements are onging. Testing is happening on:
 
