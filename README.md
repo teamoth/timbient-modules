@@ -2,7 +2,7 @@
 
 A friendly, pixelated, modular patch-bay environment for ambient music, with a variety of sequencers, voices and effects to patch together.
 
-Written in C++ and inspired by the idea of having something that's like SunVox and various Norns scripts all mashed together. Where this is different from a DAW is that there isn't just one BPM and it's not about using specific notes. It is possible to clock sync everything together (and there is a note entry tracker module), but the idea here is that the separate voices can have completely different timings from each other. 
+Written in C++ and inspired by the idea of having something that's a bit like a cross between SunVox a Monome Norns. Where this is different from a DAW is that there isn't just one BPM and it's not really about using specific notes. It is possible to clock sync everything together (and there is a note entry tracker module), but the idea here is that the separate voices can have completely different timings from each other. 
 
 One goal here is to have this running well on older hardware, for example 32bit windows machines.
 
