@@ -2,6 +2,7 @@
 #include "engine.h"
 #include "params.h"
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 
 namespace tb {
@@ -81,8 +82,8 @@ Module* Engine::create(const std::string& type, int id) {
 void Engine::collectGarbage() { Module* m; while (garbage.pop(m)) delete m; AudioBuf* b; while (bufGarbage.pop(b)) delete b; }
 
 bool Module::patched(int inPort) const { for (auto& c : eng->cables) if (c.to == id && c.toPort == inPort && c.type != PType::Mod) return true; return false; }
-int Module::root() const { if (def->keyIdx >= 0) { const int k = (int)e[def->keyIdx]; if (k >= 1) return k - 1; } return eng->key.root.load(std::memory_order_relaxed); }
-int Module::scale() const { if (def->scaleIdx >= 0) { const int k = (int)e[def->scaleIdx]; if (k >= 1 && k <= (int)scales().size()) return k - 1; } return eng->key.scale.load(std::memory_order_relaxed); }
+int Module::root() const { { const int ki = keyIn.load(std::memory_order_relaxed); if (ki >= 0) return ki; } if (def->keyIdx >= 0) { const int k = (int)e[def->keyIdx]; if (k >= 1) return k - 1; } return eng->key.root.load(std::memory_order_relaxed); }
+int Module::scale() const { { const int si = scaleIn.load(std::memory_order_relaxed); if (si >= 0 && si < (int)scales().size()) return si; } if (def->scaleIdx >= 0) { const int k = (int)e[def->scaleIdx]; if (k >= 1 && k <= (int)scales().size()) return k - 1; } return eng->key.scale.load(std::memory_order_relaxed); }
 float Module::note(int oct, int step) const { return midiOf(degOf(oct, step, scale()), root(), scale()); }
 
 void Module::emit(int port, Event ev) {
@@ -91,6 +92,10 @@ void Module::emit(int port, Event ev) {
   if (def->cat == Cat::Trig && ev.sw < 0 && ev.vel <= 0.001f && def->outs[port].name != "PULSE" && def->outs[port].name != "BAR") return;
   // CHANCE: each note a sequencer plays has this chance of sounding (clock pulses always pass)
   if (def->cat == Cat::Trig && def->outs[port].name == "TRIG" && def->type != "tools" && def->type != "tracker") { const int ci = def->paramIndex("chance"); if (ci >= 0 && rng.uni() >= e[ci]) return; }
+  // SOFT CHANGE: for a bar after a KEY JOURNEY moves, a keyed sequencer's notes keep to those the old and new keys share
+  if (def->keyIdx >= 0 && ev.sw < 0 && def->outs[port].name != "PULSE" && def->outs[port].name != "BAR") {
+    const int sm = keyIn.load(std::memory_order_relaxed) >= 0 ? softIn : (e[def->keyIdx] < 1 ? eng->key.soft : 0);
+    if (sm) { const int n0 = (int)std::lround(ev.note); for (int dd = 0; dd <= 6; dd++) { if (sm >> (((n0 - dd) % 12 + 12) % 12) & 1) { ev.note = (float)(n0 - dd); break; } if (sm >> (((n0 + dd) % 12 + 12) % 12) & 1) { ev.note = (float)(n0 + dd); break; } } } }
   flash.store(0.12f, std::memory_order_relaxed); if (port >= 0 && port < 8) fires[port].fetch_add(1, std::memory_order_relaxed);
   ev.offset = eng->pos;
   for (auto& c : eng->cables) {
@@ -123,7 +128,7 @@ void Engine::applyCommands() {
         cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const Cable& k) { return k.same(c.cable); }), cables.end());
         dirty = true; break;
       case Command::ACTION: if (Module* m = byId(c.id)) m->action(c.key); break;
-      case Command::PREVIEW: if (prevBuf) bufGarbage.push(prevBuf); prevBuf = c.buf; prevPos = 0; previewAt.store(c.buf ? 0.f : -1.f, std::memory_order_relaxed); break;
+      case Command::PREVIEW: if (prevBuf) bufGarbage.push(prevBuf); prevBuf = c.buf; prevPos = std::max(0.0, prevA.load(std::memory_order_relaxed)); previewAt.store(c.buf ? 0.f : -1.f, std::memory_order_relaxed); break;
       case Command::SETBUF: if (Module* m = byId(c.id)) { AudioBuf* old = m->swapBuf(c.buf, c.port); if (old && !bufGarbage.push(old)) {} } else if (c.buf) bufGarbage.push(c.buf); break;
       case Command::TRIGGER: if (Module* m = byId(c.id)) { Event e = c.ev; e.offset = 0; m->events.push(c.port, e); } break;
       case Command::CLEAR: for (auto* m : mods) garbage.push(m); mods.clear(); cables.clear(); dirty = true; break;
@@ -206,6 +211,9 @@ void Engine::block(float* L, float* R, int n) {
         for (int ch = 0; ch < 2; ch++) { float* dst = m->in[c.toPort][ch].data(); const float* src = s->out[c.fromPort][ch].data(); for (int i = 0; i < n; i++) dst[i] += src[i] * (g0 + (g1 - g0) * (i + 1) / n); }
         const_cast<Cable&>(c).g = g1; }
     }
+    if (d->keyIdx >= 0) {   // the KEY socket: the key of whatever KEY JOURNEY is patched in (it ran first)
+      int kr = -1, ks = -1, sm = 0; for (auto& c : cables) if (c.to == m->id && c.toPort == KEY_PORT && c.type == PType::Trig) if (Module* s = byId(c.from)) if (s->keyOut >= 0) { kr = s->keyOut; ks = s->scaleOut; sm = s->softOut; }
+      m->keyIn.store(kr, std::memory_order_relaxed); m->scaleIn.store(ks, std::memory_order_relaxed); m->softIn = sm; }
     m->blockStart(n);
     // render, stopping at each trigger so notes start on the exact sample
     EventQueue q = m->events; m->events.n = 0;
@@ -214,6 +222,7 @@ void Engine::block(float* L, float* R, int n) {
     for (int ii = 0; ii < q.n; ii++) { const int i = idx[ii]; const int off = std::min(std::max(q.ev[i].offset, 0), n - 1);
       if (off > at) { pos = at; m->render(at, off); at = off; }
       pos = at;
+      if (q.port[i] == KEY_PORT) continue;   // the KEY socket's pulses only show on the cable
       if (q.port[i] == SWITCH_PORT) { const int a = q.ev[i].sw >= 0 ? q.ev[i].sw : 2; m->mute.store(a == 0 ? true : a == 1 ? false : !m->mute.load()); continue; }   // the SWITCH socket: a Timeline says ON (1) or OFF (0); any other trigger turns it over
       m->trig(q.port[i], q.ev[i]); }
     if (at < n) { pos = at; m->render(at, n); }
@@ -238,7 +247,9 @@ void Engine::block(float* L, float* R, int n) {
     if (m->retiring) {   // ringing out: once it's quiet (or after 20 s), fade its cables away; when none are left, it goes
       float pk = 0; for (auto& op : m->out) for (auto& ch : op) for (int i = 0; i < n; i++) pk = std::max(pk, std::fabs(ch[i]));
       m->retireT += n / sr; m->quietT = pk < 1e-4f ? m->quietT + n / sr : 0;
-      if (m->quietT > 0.3f || m->retireT > 20) for (auto& k : cables) if (k.from == m->id && !k.dieAtZero) { k.gt = 0; k.dieAtZero = true; } }
+      // voices, and modules that hold a sound (which could loop for ever), get a second for their release; effects ring out
+      const bool holds = d->cat == Cat::Voice || d->type == "looper" || d->type == "stretch" || d->type == "tloop";
+      if (m->quietT > 0.3f || m->retireT > (holds ? 1.f : 20.f)) for (auto& k : cables) if (k.from == m->id && !k.dieAtZero) { k.gt = 0; k.dieAtZero = true; } }
     const bool silent = (m->mute.load(std::memory_order_relaxed) && d->cat != Cat::Out) || (anySolo && d->cat == Cat::Voice && !m->solo.load(std::memory_order_relaxed));
     if (silent) { for (auto& o : m->out) for (auto& ch : o) std::fill(ch.begin(), ch.begin() + n, 0.f); for (auto& lv : m->outLev) lv.store(0, std::memory_order_relaxed); }
     const float f = m->flash.load(std::memory_order_relaxed); if (f > 0) m->flash.store(std::max(0.f, f - n / sr), std::memory_order_relaxed);
@@ -251,13 +262,19 @@ void Engine::block(float* L, float* R, int n) {
     const long N = (long)recBuf.size() / 2; long w = recW.load(std::memory_order_relaxed);
     for (int i = 0; i < n; i++, w++) { recBuf[(w % N) * 2] = L[i]; recBuf[(w % N) * 2 + 1] = R[i]; }
     recW.store(w, std::memory_order_release); }
-  if (prevBuf) {   // the sound browser's preview, added after the recorder so it never ends up in a recording
+  if (prevBuf) {   // the sound browser's (and editor's) preview, added after the recorder so it never ends up in a recording
     const AudioBuf& b = *prevBuf; const double step = b.sr / sr; const long len = (long)b.d.size();
     const std::vector<float>& br = b.R();   // a stereo sound: its right; mono: the same again
-    for (int i = 0; i < n; i++) { const long k = (long)prevPos; if (k + 1 >= len) break; const float fr = (float)(prevPos - k), x = (b.d[k] + (b.d[k + 1] - b.d[k]) * fr) * 0.7f, xr = (br[k] + (br[k + 1] - br[k]) * fr) * 0.7f;
-      const float fade = std::min(1.f, std::min((float)k, (float)(len - k)) / 64.f);
+    const bool loop = prevLoop.load(std::memory_order_relaxed); const double A = std::max(0.0, std::min((double)len - 2, prevA.load(std::memory_order_relaxed)));
+    double E = prevE.load(std::memory_order_relaxed); E = E < 0 ? (double)len - 1 : std::max(A + 1, std::min((double)len - 1, E));
+    bool done = len < 2; if (prevPos < A) prevPos = A;
+    for (int i = 0; i < n && !done; i++) {
+      if (prevPos >= E) { if (loop && E - A > 8 * step) prevPos = A + std::fmod(prevPos - A, E - A); else { done = true; break; } }
+      const long k = (long)prevPos; if (k + 1 >= len) { done = true; break; }
+      const float fr = (float)(prevPos - k), x = (b.d[k] + (b.d[k + 1] - b.d[k]) * fr) * 0.7f, xr = (br[k] + (br[k + 1] - br[k]) * fr) * 0.7f;
+      const float fade = std::min(1.f, (float)std::min(prevPos - A, E - prevPos) / 64.f);   // no clicks at the ends (or going round)
       L[i] = clampf(L[i] + x * fade, -1, 1); R[i] = clampf(R[i] + xr * fade, -1, 1); prevPos += step; }
-    if ((long)prevPos + 1 >= len) { bufGarbage.push(prevBuf); prevBuf = nullptr; previewAt.store(-1, std::memory_order_relaxed); }
+    if (done) { bufGarbage.push(prevBuf); prevBuf = nullptr; previewAt.store(-1, std::memory_order_relaxed); }
     else previewAt.store((float)(prevPos / len), std::memory_order_relaxed); }
   outPeak.store(std::max(pk, outPeak.load(std::memory_order_relaxed) * 0.995f), std::memory_order_relaxed);
 }

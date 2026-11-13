@@ -1,5 +1,6 @@
 // Timbient native: more rhythm modules (bursts, walker, trig tools, tracker).
 #include "params.h"
+#include <cstring>
 
 namespace tb {
 
@@ -126,7 +127,6 @@ static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PT
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), noMod(ST("estep", "STEP JUMP", 0, 8, 1)), OP("rec", "STEP RECORD", {"OFF", "ON"}, 1), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL")},
   85, 92, false, [] { return new Tracker(); }});
-
 }  // namespace tb
 
 namespace tb {
@@ -396,5 +396,97 @@ static Reg rMuteSeq(new ModuleDef{"mutes", "MUTE SEQUENCER", Cat::Trig, {{"CLOCK
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"),
    stepper(noMod(ST("len1", "LENGTH 1", 1, 32, 16))), stepper(noMod(ST("len2", "LENGTH 2", 1, 32, 16))), stepper(noMod(ST("len3", "LENGTH 3", 1, 32, 16))), stepper(noMod(ST("len4", "LENGTH 4", 1, 32, 16))),
    pct("chance", "CHANCE", 1), only(pct("swing", "SWING", 0), "free"), OP("rlane", "HOLD LANE", {"1", "2", "3", "4"}, 0), ACT("clear", "CLEAR ALL")}, 40, 130, false, [] { return new MuteSeq(); }});
+
+// ---------------- KEY JOURNEY: moves through keys and scales musically, on the bar ----------------
+// PATH: FIFTHS (round the circle), MODES (brighter or darker: Lydian, major, Mixolydian, Dorian, minor, Phrygian, one
+// note changing each time), RELATIVE (major and its relative minor: the same notes), PARALLEL (major and minor on the
+// same root), THIRDS (chromatic mediants: a third away, same kind of scale) or WANDER (any of these, chosen at random,
+// with HOME PULL drawing it back towards where it began). It moves every few bars (EVERY, with CHANCE), or on the bar
+// after a NEXT trigger. Its KEY output goes into sequencers' KEY sockets; MOVES SESSION KEY moves the whole session.
+// SOFT CHANGE: for a bar after each move, the sequencers keep to the notes the old and new keys share.
+static int pcMask(int r, int sc) { int m = 0; for (int st : scales()[sc].steps) m |= 1 << ((r + st) % 12); return m; }
+static int scaleNamed(const char* n) { for (size_t i = 0; i < scales().size(); i++) if (!std::strcmp(scales()[i].name, n)) return (int)i; return 0; }
+static int bitsOf(int x) { int n = 0; for (; x; x &= x - 1) n++; return n; }
+struct KeyJourney : Module {
+  enum { PATH, DIR, EVERY, CHANCE, PULL, HKEY, HSCALE, SOFT, MOVES, RESET };
+  int cr = 0, cs = 0, nr = 0, ns = 0, pr0 = -1, ps0 = -1, hr = 0, hs = 0, modeDir = 1, barsLeft = 4; bool started = false, pending = false;
+  double barPos = 0, softUntil = -1; long pulses = 0; ClockIn2 ck;
+  static int every(float v) { static const int E[6] = {0, 1, 2, 4, 8, 16}; return E[std::max(0, std::min(5, (int)v))]; }
+  int dirSign() { const int d = (int)e[DIR]; return d == 0 ? 1 : d == 1 ? -1 : (rng.uni() < 0.5f ? 1 : -1); }
+  bool session() const { return e[MOVES] > 0.5f; }
+  void home() { const int k = (int)e[HKEY], q = (int)e[HSCALE]; hr = k >= 1 ? k - 1 : eng->key.root.load(std::memory_order_relaxed); hs = q >= 1 && q <= (int)scales().size() ? q - 1 : eng->key.scale.load(std::memory_order_relaxed); }
+  // the moves, each from (r, s) to a new key
+  void fifth(int r, int s, int d, int& r2, int& s2) { r2 = (r + (d > 0 ? 7 : 5)) % 12; s2 = s; }
+  void third(int r, int s, int d, int& r2, int& s2) { const int up[2] = {4, 3}, dn[2] = {8, 9}; const int k = rng.uni() < 0.6f ? 0 : 1; r2 = (r + (d > 0 ? up[k] : dn[k])) % 12; s2 = s; }
+  bool relative(int r, int s, int& r2, int& s2) {
+    static const char* PAIRS[][2] = {{"MAJOR", "NAT MINOR"}, {"MAJ PENTA", "MIN PENTA"}}; const std::string n = scales()[s].name;
+    for (auto& p : PAIRS) { if (n == p[0]) { r2 = (r + 9) % 12; s2 = scaleNamed(p[1]); return true; } if (n == p[1]) { r2 = (r + 3) % 12; s2 = scaleNamed(p[0]); return true; } }
+    const int m = pcMask(r, s); for (size_t q = 0; q < scales().size(); q++) for (int k = 1; k < 12; k++) if (pcMask((r + k) % 12, (int)q) == m) { r2 = (r + k) % 12; s2 = (int)q; return true; }   // the same notes from another root
+    return false; }
+  void parallel(int r, int s, int& r2, int& s2) {
+    const auto& st = scales()[s].steps; const bool maj3 = std::find(st.begin(), st.end(), 4) != st.end(); const std::string n = scales()[s].name; r2 = r;
+    if (st.size() == 5) s2 = scaleNamed(maj3 ? "MIN PENTA" : "MAJ PENTA"); else s2 = scaleNamed(n == "NAT MINOR" ? "MAJOR" : maj3 && n != "MAJOR" ? "MAJOR" : maj3 ? "NAT MINOR" : n == "MAJOR" ? "NAT MINOR" : "NAT MINOR");
+    if (!maj3) s2 = scaleNamed(st.size() == 5 ? "MAJ PENTA" : "MAJOR"); }
+  void mode(int r, int s, int d, int& r2, int& s2) {   // one step brighter (d > 0) or darker, on the same root; at either end it turns back
+    static const char* M[6] = {"LYDIAN", "MAJOR", "MIXOLYDIAN", "DORIAN", "NAT MINOR", "PHRYGIAN"}; int i = -1; for (int k = 0; k < 6; k++) if (scales()[s].name == std::string(M[k])) i = k;
+    if (i < 0) { const auto& st = scales()[s].steps; i = std::find(st.begin(), st.end(), 4) != st.end() ? 1 : 4; }
+    int j = i - d; if (j < 0 || j > 5) j = i + d; r2 = r; s2 = scaleNamed(M[std::max(0, std::min(5, j))]); }
+  int dist(int r, int s) const { const int m = pcMask(r, s), h = pcMask(hr, hs); return bitsOf(m ^ h) + (r != hr ? 1 : 0) + (s != hs ? 1 : 0); }
+  void plan() {   // choose the next key (shown before it comes)
+    const int path = (int)e[PATH]; int r2 = cr, s2 = cs;
+    if (path == 0) fifth(cr, cs, dirSign(), r2, s2);
+    else if (path == 1) { const int d0 = (int)e[DIR]; int d = d0 == 2 ? dirSign() : modeDir * (d0 == 0 ? 1 : -1); mode(cr, cs, d, r2, s2);
+      if (s2 == cs) { modeDir = -modeDir; mode(cr, cs, -d, r2, s2); } else if (d0 != 2) { int t1, t2; mode(r2, s2, d, t1, t2); if (t2 == s2 || (t1 == cr && t2 == cs)) modeDir = -modeDir; } }   // ping-pong at the ends
+    else if (path == 2) { if (!relative(cr, cs, r2, s2)) fifth(cr, cs, 1, r2, s2); }
+    else if (path == 3) parallel(cr, cs, r2, s2);
+    else if (path == 4) third(cr, cs, dirSign(), r2, s2);
+    else {   // WANDER: every kind of move, weighted; HOME PULL favours moves back towards home
+      struct C { int r, s; float w; } c[8]; int n = 0; const int d0 = (int)e[DIR]; const float up = d0 == 0 ? 2.f : d0 == 1 ? 0.5f : 1.f;
+      auto add = [&](int r, int s, float w) { if ((r == cr && s == cs) || n >= 8) return; c[n++] = {r, s, w}; };
+      int a, b; fifth(cr, cs, 1, a, b); add(a, b, 4 * up); fifth(cr, cs, -1, a, b); add(a, b, 4 / up);
+      if (relative(cr, cs, a, b)) add(a, b, 3); parallel(cr, cs, a, b); add(a, b, 2);
+      mode(cr, cs, 1, a, b); add(a, b, 1.5f * up); mode(cr, cs, -1, a, b); add(a, b, 1.5f / up); third(cr, cs, rng.uni() < 0.5f ? 1 : -1, a, b); add(a, b, 1);
+      const float pull = 1 + 4 * e[PULL]; const int d = dist(cr, cs); float tot = 0;
+      for (int i = 0; i < n; i++) { c[i].w *= std::pow(pull, (float)(d - dist(c[i].r, c[i].s)) / 2); if (c[i].r == pr0 && c[i].s == ps0) c[i].w *= 0.4f; tot += c[i].w; }
+      float x = rng.uni() * tot; for (int i = 0; i < n; i++) { x -= c[i].w; if (x <= 0 || i == n - 1) { r2 = c[i].r; s2 = c[i].s; break; } } }
+    nr = r2; ns = s2; }
+  void show() { keyOut = cr; scaleOut = cs; if (session()) { eng->key.root.store(cr, std::memory_order_relaxed); eng->key.scale.store(cs, std::memory_order_relaxed); } }
+  void move() {
+    if (rng.uni() >= e[CHANCE]) { plan(); return; }   // not this time (a fresh next key, so WANDER varies)
+    const int was = pcMask(cr, cs); pr0 = cr; ps0 = cs; cr = nr; cs = ns; const int now = pcMask(cr, cs), common = was & now;
+    softUntil = e[SOFT] > 0.5f && bitsOf(common) >= 3 && common != now ? t + eng->pos / sr + barSecs() : -1; softOut = softUntil > 0 ? common : 0;
+    show(); plan();
+    Event ev; ev.note = 60 + cr; ev.vel = 1; emit(0, ev); emit(1, ev); }
+  double barSecs() const { return ck.cp > 0 && clockedIn.load(std::memory_order_relaxed) ? ck.cp * ck.ppb * 4 : 240.0 / std::max(10.f, eng->tempo.bpm.load(std::memory_order_relaxed)); }
+  void bar() {   // a bar begins: move if it's time
+    if (mute.load(std::memory_order_relaxed)) return;
+    if (pending) { pending = false; barsLeft = every(e[EVERY]); move(); return; }
+    const int ev = every(e[EVERY]); if (!ev) return; if (--barsLeft <= 0) { barsLeft = ev; move(); } }
+  void start() { home(); cr = hr; cs = hs; started = true; barsLeft = every(e[EVERY]); show(); plan(); }
+  void blockStart(int n) override {
+    clockedIn.store(patched(1));
+    if (!started) start();
+    if (session() && (eng->key.root.load(std::memory_order_relaxed) != cr || eng->key.scale.load(std::memory_order_relaxed) != cs)) { cr = eng->key.root.load(); cs = eng->key.scale.load(); plan(); }   // the session's key was changed by hand: go on from there
+    keyOut = cr; scaleOut = cs;
+    if (softUntil > 0 && t >= softUntil) { softUntil = -1; softOut = 0; }
+    if (session()) eng->key.soft = softOut;
+    if (!clockedIn.load(std::memory_order_relaxed)) { barPos += n / sr / barSecs(); if (barPos >= 1) { barPos -= std::floor(barPos); bar(); } }
+    publish();
+  }
+  void trig(int port, const Event& ev) override {
+    if (port == 0) { pending = true; return; }   // NEXT: on the next bar
+    if (port == 1) { ck.tick(t + eng->pos / sr, ev); pulses++; const long per = std::max(1L, std::lround(ck.ppb * 4)); if (pulses % per == 0) bar(); }
+  }
+  void action(const std::string& k) override { if (k == "reset") { home(); pr0 = cr; ps0 = cs; cr = hr; cs = hs; softUntil = -1; softOut = 0; barsLeft = every(e[EVERY]); show(); plan(); Event ev; ev.note = 60 + cr; emit(1, ev); } }
+  void publish() { const float v[8] = {(float)cr, (float)cs, (float)nr, (float)ns, every(e[EVERY]) ? (float)barsLeft : -1.f, pending ? 1.f : 0.f, softUntil > 0 ? 1.f : 0.f, clockedIn.load() ? -1.f : (float)barPos}; for (int i = 0; i < 8; i++) disp[i].store(v[i], std::memory_order_relaxed); }
+  ~KeyJourney() override { if (session()) eng->key.soft = 0; }
+};
+static std::vector<std::string> keyNamesH() { std::vector<std::string> v = {"SESSION"}; for (int i = 0; i < 12; i++) v.push_back(NOTE_NAMES[i]); return v; }
+static std::vector<std::string> scaleNamesH() { std::vector<std::string> v = {"SESSION"}; for (auto& x : scales()) v.push_back(x.name); return v; }
+static Reg rJourney(new ModuleDef{"journey", "KEY JOURNEY", Cat::Trig, {{"NEXT", PType::Trig}, {"CLOCK", PType::Trig}}, {{"KEY", PType::Trig}, {"CHANGED", PType::Trig}},
+  {OP("path", "PATH", {"FIFTHS", "MODES", "RELATIVE", "PARALLEL", "THIRDS", "WANDER"}, 5), OP("dir", "DIRECTION", {"UP", "DOWN", "BOTH"}, 2),
+   OP("every", "EVERY", {"NEXT ONLY", "1 BAR", "2 BARS", "4 BARS", "8 BARS", "16 BARS"}, 3), pct("chance", "CHANCE", 1), only(pct("pull", "HOME PULL", 0.5f), "wander"),
+   OP("hkey", "HOME KEY", keyNamesH(), 0), OP("hscale", "HOME SCALE", scaleNamesH(), 0), OP("soft", "SOFT CHANGE", {"OFF", "ON"}, 1),
+   OP("moves", "MOVES", {"PATCHED", "SESSION KEY"}, 0), ACT("reset", "GO HOME")}, 25, 70, false, [] { return new KeyJourney(); }});
 
 }  // namespace tb

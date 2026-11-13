@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.31.0";
+static const char* VERSION = "0.32.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -212,12 +212,13 @@ int main(int argc, char** argv) {
       Ctx* c = (Ctx*)ud; SDL_PathInfo info; std::string full = d; if (!full.empty() && full.back() != '/' && full.back() != '\\') full += "/"; full += name;
       const bool folder = SDL_GetPathInfo(full.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY; c->out->push_back({name, folder}); return SDL_ENUM_CONTINUE; }, &ctx); };
   ui.br.autoPreview = settings.num("autoPreview", 1) > 0.5; ui.br.wide = settings.num("browseWide", 0) > 0.5;
-  ui.onEditPlay = [&](const std::vector<float>& d, const std::vector<float>& r, float sr) { if (d.empty()) { engine.preview(nullptr); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = d; b->r = r; engine.preview(b); };
-  ui.onEditCrop = [&](int id, int slot, std::vector<float>&& d, std::vector<float>&& rr, float sr, const std::string& name) {   // CROP: the part becomes the module's sound (kept, so sessions bring it back)
-    UiMod* u = ui.byId(id); if (!u) return; AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = std::move(d); b->r = std::move(rr); const double secs = b->d.size() / sr;
-    giveSound(u, b, true, slot, name.empty() ? "CROPPED" : (name.size() > 4 && name.substr(name.size() - 4) == " (C)" ? name : name + " (C)"));
+  ui.onEditPlay = [&](const std::vector<float>& d, const std::vector<float>& r, float sr, double a, double e, bool loop) {
+    if (d.empty()) { engine.preview(nullptr); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = d; b->r = r; engine.preview(b, a, e, loop); };
+  ui.onEditCrop = [&](int id, int slot, std::vector<float>&& d, std::vector<float>&& rr, float sr, const std::string& name) {   // KEEP: this becomes the module's sound (kept, so sessions bring it back)
+    UiMod* u = ui.byId(id); if (!u) { ui.status("ITS MODULE HAS GONE", 3); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = std::move(d); b->r = std::move(rr); const double secs = b->d.size() / sr;
+    giveSound(u, b, true, slot, name.empty() ? "EDITED" : name);
     if (u->m->def->type == "sample") { const int ks = u->m->def->paramIndex("start"), kl = u->m->def->paramIndex("len"); if (ks >= 0) u->m->p[ks].store(0); if (kl >= 0) u->m->p[kl].store(1); }   // the whole of the new sound
-    char t[48]; std::snprintf(t, 48, "CROPPED TO %.2fS", secs); ui.status(t, 4); histDirty = true; histT = 0.1f; dirty = true; saveT = 0.3f; };
+    char t[48]; std::snprintf(t, 48, "KEPT: %.2fS", secs); ui.status(t, 4); histDirty = true; histT = 0.1f; dirty = true; saveT = 0.3f; };
   ui.onBrowseChanged = [&] { settings.set("autoPreview", Json::number(ui.br.autoPreview ? 1 : 0)); settings.set("browseWide", Json::number(ui.br.wide ? 1 : 0)); saveSettings(); };
   ui.onBrowseFolder = [&]() { const std::string d = ui.br.dir; SDL_ShowOpenFolderDialog(onFolderDialog, nullptr, win, d.empty() ? nullptr : d.c_str(), false); };
   ui.onBrowseFile = [&](int id, int slot) { const UiMod* u = ui.byId(id); const bool many = slot < 0 && u && u->m->def->type == "sample";
@@ -473,6 +474,8 @@ int main(int argc, char** argv) {
           if (ev.key.key == SDLK_S && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) {   // Cmd/Ctrl+S saves to the session's file (Shift: SAVE AS)
             if (curFile.empty() || (ev.key.mod & SDL_KMOD_SHIFT)) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); break; }
           if (ev.key.key == SDLK_D && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) { if (UiMod* u = ui.byId(ui.lastTouched)) if (!u->m->def->fixed) ui.onDuplicate(u); break; }   // Cmd/Ctrl+D: duplicate
+          if (ui.ed.open && ((ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) || (ev.key.key == SDLK_Y && (ev.key.mod & SDL_KMOD_CTRL)))) {   // the editor open: its own undo
+            ui.editorUndo(ev.key.key == SDLK_Y || (ev.key.mod & SDL_KMOD_SHIFT) ? 1 : -1); break; }
           if (ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) { restoreStep((ev.key.mod & SDL_KMOD_SHIFT) ? hpos + 1 : hpos - 1); break; }   // Cmd/Ctrl+Z, and with Shift to redo
           if (ev.key.key == SDLK_Y && (ev.key.mod & SDL_KMOD_CTRL)) { restoreStep(hpos + 1); break; }
           if (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS || ev.key.key == SDLK_KP_PLUS) pendingZoom++;

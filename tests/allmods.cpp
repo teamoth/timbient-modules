@@ -145,6 +145,39 @@ int main(int argc, char** argv) {
     AudioBuf* b = new AudioBuf(); b->sr = 48000; b->d.resize(48000); b->r.assign(48000, 0.f); for (int i = 0; i < 48000; i++) b->d[i] = 0.5f * std::sin(i * 0.05f);
     eng.setBuffer(sm->m->id, b, 0); run(eng, 0.3f); float l = 0, r = 0; std::vector<float> L(256), R(256); for (int k = 0; k < 40; k++) { eng.render(L.data(), R.data(), 256); for (int i = 0; i < 256; i++) { l = std::max(l, std::fabs(L[i])); r = std::max(r, std::fabs(R[i])); } }
     const bool ok = l > 0.05f && r < l * 0.05f; if (!ok) fails++; std::printf("stereo sample: left %.3f right %.4f%s\n", l, r, ok ? "" : "  WRONG"); }
+  // KEY JOURNEY: FIFTHS UP every bar into a sequencer's KEY socket; it saves and loads; unplugged, the sequencer's own key again
+  { ui.clearPatch(); ui.add("out", 300, 20); eng.tempo.bpm.store(120); eng.key.root.store(0); eng.key.scale.store(0);
+    UiMod* j = ui.add("journey", 0, 20); UiMod* cl = ui.add("clump", 100, 20); ui.set(j, "path", 0); ui.set(j, "dir", 0); ui.set(j, "every", 1); ui.set(j, "soft", 1);
+    const bool plugged = ui.connect(j, 0, cl, KEY_PORT); const bool refused = !ui.connect(cl, 0, j, KEY_PORT);
+    run(eng, 0.2f); const int k0 = cl->m->keyIn.load(); run(eng, 2.0f); const int k1 = cl->m->keyIn.load(), soft = cl->m->softIn; run(eng, 2.0f); const int k2 = cl->m->keyIn.load(), sess = eng.key.root.load();
+    const std::string S = serializePatch(ui).dump(); Json jj; Json::parse(S, jj); ui.clearPatch(); loadPatch(ui, jj); bool back = false; for (auto& cb : ui.cables) if (cb.toPort == KEY_PORT) back = true;
+    UiMod* c2 = nullptr; for (auto& um : ui.mods) if (um->m->def->type == "clump") c2 = um.get(); run(eng, 0.1f); const bool follows = c2 && c2->m->keyIn.load() >= 0;
+    if (c2) for (size_t i = 0; i < ui.cables.size(); i++) if (ui.cables[i].toPort == KEY_PORT) { ui.unplug(ui.cables[i]); break; } run(eng, 0.1f); const bool own = c2 && c2->m->keyIn.load() < 0;
+    const bool ok = plugged && refused && k0 == 0 && k1 == 7 && k2 == 2 && soft != 0 && sess == 0 && back && follows && own; if (!ok) fails++;
+    std::printf("key journey: keys %d %d %d (C G D), soft %d, session stays C %d, saved %d, follows %d, unplugged %d%s\n", k0, k1, k2, soft != 0, sess == 0, back, follows, own, ok ? "" : "  WRONG"); }
+  // KEY JOURNEY: WANDER moving the session's key; MODES ping-pong between Lydian and Phrygian
+  { ui.clearPatch(); ui.add("out", 300, 20); eng.tempo.bpm.store(240); eng.key.root.store(2); eng.key.scale.store(0);
+    UiMod* j = ui.add("journey", 0, 20); ui.set(j, "moves", 1); ui.set(j, "every", 1); int moves = 0, last = -1;   // a bar a second
+    for (int k = 0; k < 40; k++) { run(eng, 1.0f); const int now = eng.key.root.load() * 100 + eng.key.scale.load(); if (now != last) moves++; last = now; }
+    ui.clearPatch(); eng.key.root.store(0); eng.key.scale.store(0); UiMod* m = ui.add("journey", 0, 20); ui.set(m, "moves", 1); ui.set(m, "every", 1); ui.set(m, "path", 1); ui.set(m, "dir", 1);
+    std::string seen; for (int k = 0; k < 12; k++) { run(eng, 1.0f); seen += std::string(scales()[eng.key.scale.load()].name).substr(0, 2) + " "; }
+    const bool ok = moves >= 30 && seen.find("PH") != std::string::npos && seen.find("LY") != std::string::npos && eng.key.root.load() == 0; if (!ok) fails++;
+    std::printf("key journey: wander moved %d of 40 bars; modes down then back: %s%s\n", moves, seen.c_str(), ok ? "" : "  WRONG"); eng.key.root.store(2); eng.key.scale.store(0); }
+  // SOUND EDITOR: FADE OUT twice is steeper, DELETE shortens with a smooth join, NORMALISE, its UNDO; app UNDO leaves it open
+  { ui.clearPatch(); UiMod* sm = ui.add("sample", 0, 20); std::vector<float> L(48000, 0.25f); ui.openEditor(sm->m->id, 0, "TEST", std::move(L), 48000);
+    Canvas cv; cv.resize(400, 300); auto press = [&](int id) { cv.beginFrame(); ui.draw(cv, 0.016f); for (auto& b : ui.edBtns) if (b.id == id) { ui.pointerDown(b.x + 2, b.y + 2); ui.pointerUp(b.x + 2, b.y + 2); return true; } return false; };
+    ui.ed.a = 0.5; ui.ed.b = 1.0; press(11); const float f1 = ui.ed.d[36000]; press(11); const float f2 = ui.ed.d[36000];   // halfway through the fade: 1/2, then 1/4
+    press(6); press(6); ui.ed.a = 0.25; ui.ed.b = 0.5; press(13); const size_t n1 = ui.ed.d.size(); float jump = 0; for (size_t i = 1; i < n1; i++) jump = std::max(jump, std::fabs(ui.ed.d[i] - ui.ed.d[i - 1]));
+    ui.ed.a = 0; ui.ed.b = 0.2; press(9); const float nm = ui.ed.d[4800]; press(6); const float un = ui.ed.d[4800];
+    ui.pointerDown(5, 3); const bool stillOpen = ui.ed.open; press(16); const bool asks = ui.ed.open; press(16); const bool shut = !ui.ed.open;
+    const bool ok = std::fabs(f1 - 0.125f) < 0.01f && std::fabs(f2 - 0.0625f) < 0.01f && std::abs((long)n1 - 36000) < 400 && jump < 0.01f && std::fabs(nm - 0.95f) < 0.01f && std::fabs(un - 0.25f) < 0.01f && stillOpen && asks && shut;
+    if (!ok) fails++;
+    std::printf("sound editor: fades %.3f %.3f, delete -> %zu (biggest step %.4f), normalise %.2f, undo %.2f, open after bar tap %d, close asks %d then closes %d%s\n", f1, f2, n1, jump, nm, un, stillOpen, asks, shut, ok ? "" : "  WRONG"); }
+  // taking away a playing SAMPLE: it's gone in about a second (not left ringing for 20)
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "A"); AudioBuf* b = new AudioBuf(); b->d.assign(48000 * 30, 0.3f); eng.setBuffer(sm->m->id, b);
+    ui.set(sm, "trig", 1); eng.trigger(sm->m->id, 0, Event{}); const float pk0 = run(eng, 0.5f).peak; const int id = sm->m->id; ui.removeGently(sm); float gone = -1;
+    for (int k = 0; k < 40; k++) { run(eng, 0.1f); if (!eng.byId(id)) { gone = (k + 1) * 0.1f; break; } }
+    const bool ok = gone > 0 && gone < 1.6f; if (!ok) fails++; std::printf("playing sample taken away: gone after %.1fs (was playing at %.2f)%s\n", gone, pk0, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

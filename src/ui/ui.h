@@ -87,16 +87,21 @@ public:
     std::string infoPath; bool infoReady = false, infoFailed = false; SoundInfo info; int channels = 0; float fileRate = 0; double secs = 0; } br;
   std::function<void(const std::string&)> onInfo;
   std::function<void()> onBrowseChanged;
-  // the sound editor (EDIT SOUND on SAMPLE, GRAIN LOOPER, STRETCH): pick a part of the sound and keep just that (CROP)
-  struct Editor { bool open = false; int target = 0, slot = 0; std::string name; std::vector<float> d, r; float sr = 48000, peak = 1;   // r: the right of a stereo sound (else empty)
+  // the sound editor (EDIT SOUND on SAMPLE, GRAIN LOOPER, STRETCH): choose a part, change it (reverse, normalise, fades,
+  // silence, delete) with its own undo, hear it (once or looping), and KEEP ALL or KEEP PART as the module's sound
+  struct Editor { bool open = false; int target = 0, slot = 0; std::string name; std::vector<float> d, r; float sr = 48000;   // r: the right of a stereo sound (else empty)
     std::vector<float> mipLo, mipHi;   // every 256 samples' lowest and highest, for drawing long sounds quickly
-    double a = 0, b = 0, v0 = 0, v1 = 0; bool fades = true, norm = false, playing = false; } ed;
+    double a = 0, b = 0, v0 = 0, v1 = 0; bool playing = false, loop = false, unkept = false, closeAsked = false;
+    struct Snap { std::vector<float> d, r; double a, b; }; std::vector<Snap> undo, redo; } ed;
+  struct EdBtn { int x, y, w, id; }; std::vector<EdBtn> edBtns; int edHintY = 0;
   void openEditor(int targetId, int slot, const std::string& name, std::vector<float>&& data, float sr, std::vector<float>&& right = {});
-  void closeEditor();
+  void closeEditor(bool force = true);
   void editorWheel(float sx, float wheel);   // zoom in or out around the pointer
   void editorKey(int key);                   // Escape closes, Space plays
-  std::function<void(const std::vector<float>&, const std::vector<float>&, float)> onEditPlay;                     // play a piece (empty: stop)
-  std::function<void(int, int, std::vector<float>&&, std::vector<float>&&, float, const std::string&)> onEditCrop;   // keep this piece as the module's sound   // PREVIEW or <> switched: remember it   // look into a sound file (the answer comes back into br)
+  void editorUndo(int dir);                  // the editor's own undo (-1) and redo (+1)
+  // play the sound from a to e (samples), going round if loop (empty: stop)
+  std::function<void(const std::vector<float>&, const std::vector<float>&, float, double, double, bool)> onEditPlay;
+  std::function<void(int, int, std::vector<float>&&, std::vector<float>&&, float, const std::string&)> onEditCrop;   // KEEP: this becomes the module's sound
   void openBrowser(int targetId, int slot, const std::string& dir);   // slot -1: the next empty place (KIT / MULTI)
   void browseTo(const std::string& dir);
   void browserScroll(float rows);
@@ -148,6 +153,7 @@ public:
   int sockX(const UiMod& u) const { return u.x + (jacksIn ? 4 : -2); }
   // the SWITCH socket in the footer, beside the ON / M buttons: a trigger turns the module on, off or over (a Timeline lane, say)
   bool hasSwitch(const UiMod& u) const;
+  bool hasKey(const UiMod& u) const; int kyX(const UiMod& u) const;
   int swX(const UiMod& u) const;
   int swY(const UiMod& u) const;
   int minusX(const UiMod& u, int j) const;   // where a slider row's "-" sits, from the module's left
@@ -187,7 +193,7 @@ private:
   std::unique_ptr<Dropdown> dd; bool menuOpen = false; int lastW = 400; float blink = 0;
   struct MenuItem { std::string type; int x, y, w; };
   std::vector<MenuItem> menuItems;
-  struct BarHit { int x0, x1; std::function<void()> fn; };
+  struct BarHit { int x0, x1; std::function<void()> fn; std::string label; };
   std::vector<BarHit> barHits;
 };
 

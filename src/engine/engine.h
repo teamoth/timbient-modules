@@ -72,6 +72,9 @@ void registerDef(ModuleDef* d);
 constexpr int MAX_EVENTS = 64;
 // a trigger into a module's SWITCH socket (next to its ON / M button) turns it on, off or over: a Timeline's event says on (sw 1), off (0) or over (2); any other trigger turns it over
 constexpr int SWITCH_PORT = 99;
+// a KEY JOURNEY's KEY output into a sequencer's KEY socket (next to its SWITCH): while patched, the sequencer plays in the
+// journey's key and scale instead of its own (read every block, not sent as triggers)
+constexpr int KEY_PORT = 98;
 struct EventQueue { Event ev[MAX_EVENTS]; int port[MAX_EVENTS]; int n = 0; void push(int p, const Event& e) { if (n < MAX_EVENTS) { port[n] = p; ev[n] = e; n++; } } };
 
 class Module {
@@ -130,7 +133,9 @@ public:
   // helpers for modules
   void emit(int port, Event ev);                         // send a trigger down every cable from an output
   bool patched(int inPort) const;                        // is anything plugged into this input?
-  int root() const; int scale() const;                   // the current key
+  int root() const; int scale() const;                   // the current key (a patched KEY socket's, else its own, else the session's)
+  std::atomic<int> keyIn{-1}, scaleIn{-1}; int softIn = 0;   // what its KEY socket brings (-1: nothing patched); softIn: SOFT CHANGE's notes
+  int keyOut = -1, scaleOut = -1, softOut = 0;               // KEY JOURNEY: the key it sends (softOut: the notes old and new share, just after a change)
   float note(int oct, int step) const;                  // a note from the current key and scale
   float base(int k) const { return p[k].load(std::memory_order_relaxed); }
   int pi(const char* k) const { return def->paramIndex(k); }
@@ -158,7 +163,7 @@ struct Tempo { std::atomic<float> bpm{72}; };
 struct MidiMsg { uint8_t st = 0, d1 = 0, d2 = 0; };
 struct MidiOutMsg { int slot = 0, n = 0; uint8_t b[3] = {0, 0, 0}; double at = 0; };   // at: when to send, in seconds on the steady clock
 double wallSeconds();
-struct Key { std::atomic<int> root{2}, scale{0}; };
+struct Key { std::atomic<int> root{2}, scale{0}; int soft = 0; };   // soft: a KEY JOURNEY moving the session's key, just after a change
 
 class Engine {
 public:
@@ -185,7 +190,10 @@ public:
   void clear() { send({Command::CLEAR}); }
   void setBuffer(int id, AudioBuf* b, int slot = 0) { Command k{Command::SETBUF}; k.id = id; k.buf = b; k.port = slot; send(k); }
   // the sound browser: play a file straight to the speakers, outside the patch (nullptr stops it). Not recorded
-  void preview(AudioBuf* b) { previewAt.store(b ? 0.f : -1.f); Command k{Command::PREVIEW}; k.buf = b; send(k); }   // playing from now (so the screen doesn't think it's already finished)
+  // a: where to start (samples of the buffer), e: where to stop (-1: the end); loop: go round a..e until stopped.
+  // The sound editor moves a, e and loop while it plays (they're read every block)
+  void preview(AudioBuf* b, double a = 0, double e = -1, bool loop = false) { prevA.store(a); prevE.store(e); prevLoop.store(loop); previewAt.store(b ? 0.f : -1.f); Command k{Command::PREVIEW}; k.buf = b; send(k); }
+  std::atomic<double> prevA{0}, prevE{-1}; std::atomic<bool> prevLoop{false};   // playing from now (so the screen doesn't think it's already finished)
   std::atomic<float> previewAt{-1};   // how far through the preview is (0..1), or -1 when nothing is playing
   // recording the master output: the audio thread writes here, the screen thread drains it to a file
   static constexpr int MIDI_INS = 8;

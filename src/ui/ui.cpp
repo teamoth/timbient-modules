@@ -19,7 +19,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
-  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "midi", "midiout", "qwerty"}},
+  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "journey", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
   {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
@@ -40,6 +40,7 @@ void Ui::remove(UiMod* u) {
 bool Ui::connect(UiMod* a, int fp, UiMod* b, int tp) {
   if (!a || !b || a == b || fp < 0 || tp < 0) return false;
   if (tp == SWITCH_PORT && (a->m->def->outs[fp].type != PType::Trig || !hasSwitch(*b))) return false;
+  if (tp == KEY_PORT && (a->m->def->outs[fp].name != "KEY" || !hasKey(*b))) { status("THE KEY SOCKET TAKES A KEY JOURNEY'S KEY", 3); return false; }
   for (auto& c : cables) if (c.from == a->m->id && c.fromPort == fp && c.to == b->m->id && c.toPort == tp) return false;
   Cable c; c.from = a->m->id; c.fromPort = fp; c.to = b->m->id; c.toPort = tp; c.type = a->m->def->outs[fp].type; if (c.type == PType::Audio) c.g = 0;   // audio fades in
   eng.connect(c);
@@ -108,12 +109,14 @@ static int rowY(const UiMod& u, int j) { return std::max(0, rowOf(u, j)); }   //
 // effects can be bypassed: a straight audio IN to an audio OUT (not MIXER, which has four)
 static bool bypassable(const ModuleDef* d) { return d->cat == Cat::Proc && d->type != "mixer" && !d->ins.empty() && d->ins[0].type == PType::Audio && !d->outs.empty() && d->outs[0].type == PType::Audio; }
 bool Ui::hasSwitch(const UiMod& u) const { return !u.m->def->fixed; }
+bool Ui::hasKey(const UiMod& u) const { return u.m->def->keyIdx >= 0; }   // sequencers that play in a key: a KEY socket beside the SWITCH
+int Ui::kyX(const UiMod& u) const { return swX(u) + 8; }
 int Ui::swX(const UiMod& u) const { const ModuleDef* d = u.m->def; const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod;
   return u.x + (onOff ? 23 : (d->cat == Cat::Voice || bypassable(d)) ? 28 : 17); }
 int Ui::swY(const UiMod& u) const { return u.y + geom(u).h - FOOT + 4; }
 // a sequencer's own KEY and SCALE, or the session's when set to GLOBAL
-static int keyOf(const UiMod& u, const Engine& eng) { const int k = u.m->def->keyIdx; const int v = k >= 0 ? (int)u.m->p[k].load() : 0; return v >= 1 ? v - 1 : eng.key.root.load(); }
-static int scaleOf(const UiMod& u, const Engine& eng) { const int k = u.m->def->scaleIdx; const int v = k >= 0 ? (int)u.m->p[k].load() : 0; return v >= 1 && v <= (int)scales().size() ? v - 1 : eng.key.scale.load(); }
+static int keyOf(const UiMod& u, const Engine& eng) { if (u.m->keyIn.load() >= 0) return u.m->keyIn.load(); const int k = u.m->def->keyIdx; const int v = k >= 0 ? (int)u.m->p[k].load() : 0; return v >= 1 ? v - 1 : eng.key.root.load(); }
+static int scaleOf(const UiMod& u, const Engine& eng) { if (u.m->scaleIn.load() >= 0) return u.m->scaleIn.load(); const int k = u.m->def->scaleIdx; const int v = k >= 0 ? (int)u.m->p[k].load() : 0; return v >= 1 && v <= (int)scales().size() ? v - 1 : eng.key.scale.load(); }
 // NOTE GRID's SIZE: bigger buttons (and a wider module) so long note names sit comfortably
 void keysCell(const UiMod& u, int& cw, int& ch) { cw = 15; ch = 9; if (u.m->def->type != "keys") return; const int k = u.m->def->paramIndex("size"); const int z = k >= 0 ? (int)u.m->p[k].load() : 0;
   static const int W[3] = {15, 19, 24}, H[3] = {9, 11, 13}; cw = W[std::max(0, std::min(2, z))]; ch = H[std::max(0, std::min(2, z))]; }
@@ -138,6 +141,7 @@ Ui::JackHit Ui::jackAt(int wx, int wy, int tol) {
     for (size_t k = 0; k < d->ins.size(); k++) { const int jx = inJackX(u), jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol && !covered(i, jx, jy)) return {&u, false, (int)k, d->ins[k].type, jx, jy}; }
     for (size_t k = 0; k < d->outs.size(); k++) { const int jx = outJackX(u), jy = u.y + jackY((int)k); if (std::abs(wx - jx) <= tol && std::abs(wy - jy) <= tol && !covered(i, jx, jy)) return {&u, true, (int)k, d->outs[k].type, jx, jy}; }
     if (hasSwitch(u)) { const int jx = swX(u), jy = swY(u); if (std::abs(wx - jx) <= std::min(tol, 3) && std::abs(wy - jy) <= std::min(tol, 3) && !covered(i, jx, jy)) return {&u, false, SWITCH_PORT, PType::Trig, jx, jy}; }
+    if (hasKey(u)) { const int jx = kyX(u), jy = swY(u); if (std::abs(wx - jx) <= std::min(tol, 3) && std::abs(wy - jy) <= std::min(tol, 3) && !covered(i, jx, jy)) return {&u, false, KEY_PORT, PType::Trig, jx, jy}; }
     if (!u.fold) { const Geom g = geom(u); const int st = std::min(tol, 3);   // the mod socket beside each setting that can be moved
       for (size_t k = 0; k < d->params.size(); k++) { if (!modulatable(d->params[k]) || rowOf(u, (int)k) < 0) continue; const int jx = sockX(u), jy = u.y + g.py + rowOf(u, (int)k) * ROW + 3;
         if (std::abs(wx - jx) <= st && std::abs(wy - jy) <= st && !covered(i, jx, jy)) { JackHit h{&u, false, -1, PType::Mod, jx, jy}; h.param = (int)k; return h; } } } }
@@ -167,6 +171,7 @@ bool Ui::cableEnds(const UiCable& cb, float& ax, float& ay, float& bx, float& by
   ax = (float)outJackX(*a); ay = (float)(a->y + jackY(cb.fromPort));
   if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = (float)sockX(*b); by = (float)(b->y + (b->fold ? g.h - FOOT : g.py + rowY(*b, cb.toParam) * ROW + 3)); }
   else if (cb.toPort == SWITCH_PORT) { bx = (float)swX(*b); by = (float)swY(*b); }
+  else if (cb.toPort == KEY_PORT) { bx = (float)kyX(*b); by = (float)swY(*b); }
   else { bx = (float)inJackX(*b); by = (float)(b->y + jackY(cb.toPort)); }
   return true;
 }
@@ -182,7 +187,7 @@ int Ui::cableAt(int wx, int wy, float maxD, bool audioOnly) {   // the nearest c
 std::string Ui::cableName(const UiCable& cb) {
   UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) return "";
   std::string s = a->m->def->name + " > " + b->m->def->name;
-  if (cb.type == PType::Mod) s += " " + b->m->def->params[cb.toParam].label; else if (cb.toPort == SWITCH_PORT) s += " SWITCH"; else if (b->m->def->ins[cb.toPort].name != "IN") s += " " + b->m->def->ins[cb.toPort].name;
+  if (cb.type == PType::Mod) s += " " + b->m->def->params[cb.toParam].label; else if (cb.toPort == SWITCH_PORT) s += " SWITCH"; else if (cb.toPort == KEY_PORT) s += " KEY"; else if (b->m->def->ins[cb.toPort].name != "IN") s += " " + b->m->def->ins[cb.toPort].name;
   return s;
 }
 static bool sameCable(const UiCable& x, const UiCable& k) { return x.from == k.from && x.fromPort == k.fromPort && x.to == k.to && x.toPort == k.toPort && x.toParam == k.toParam && x.type == k.type; }
@@ -350,6 +355,13 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
       if (h > 0) c.rect(bx, y + 25 - h, bw - 1, h, inSc[i] ? (i == r ? 4 : 11) : 21); }
     { const float bp = D(19); const std::string t = bp > 0 ? "TEMPO " + std::to_string((int)std::lround(bp)) + " BPM" : "NO CLEAR TEMPO", pc = bp > 0 ? std::to_string((int)std::lround(D(20) * 100)) + "%" : "";   // the tempo it hears
       c.text(t, x + 1, y + 28, bp > 0 ? 4 : 18); if (!pc.empty()) c.text(pc, x + w - 1 - Canvas::tw(pc), y + 28, 9); }
+  } else if (ty == "journey") {   // the key now (bright), the next, and when it comes (with a little bar of the bar)
+    const int nsc = (int)scales().size(); auto kn = [&](float r, float s) { return std::string(NOTE_NAMES[((int)r % 12 + 12) % 12]) + " " + scales()[std::max(0, std::min(nsc - 1, (int)s))].name; };
+    const int room = std::max(4, w / 4); c.text(kn(D(0), D(1)).substr(0, room), x + 1, y + 1, D(6) > 0.5f ? 11 : 4);
+    c.text(("NEXT " + kn(D(2), D(3))).substr(0, room), x + 1, y + 8, 18);
+    const int bl = (int)D(4); std::string when = u.m->mute.load() ? "STOPPED" : D(5) > 0.5f ? "ON THE NEXT BAR" : bl < 0 ? "WAITING FOR NEXT" : bl == 1 ? "IN 1 BAR" : "IN " + std::to_string(bl) + " BARS";
+    if (D(6) > 0.5f && !u.m->mute.load()) when += " (SOFT)"; c.text(when.substr(0, room), x + 1, y + 15, 21);
+    if (D(7) >= 0) { const int bw = (int)std::lround(clampf(D(7), 0, 1) * (w - 2)); c.rect(x + 1, y + 23, w - 2, 1, 21); c.rect(x + 1, y + 23, bw, 1, 9); }
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
@@ -522,6 +534,8 @@ static std::string valueText(const UiMod& u, int j, float v, int root) {
       if (q.key == "start") return timeText(v * dur);
       if (slices) { const int n = std::max(1, (int)u.m->p[2].load()); return timeText(dur / n * v); }
       return timeText(std::max(0.05, v * (dur - st * dur))); } }
+  if (j == u.m->def->keyIdx && u.m->keyIn.load() >= 0) return std::string(NOTE_NAMES[u.m->keyIn.load() % 12]) + " (JOURNEY)";   // a patched KEY socket: the key it's being sent
+  if (j == u.m->def->scaleIdx && u.m->scaleIn.load() >= 0 && u.m->scaleIn.load() < (int)scales().size()) return std::string(scales()[u.m->scaleIn.load()].name);
   if (u.m->def->type == "nloop" && (q.key == "lenb" || q.key == "start")) { const float bs = u.m->disp[7].load(); if (bs > 0) return fmtParam(q, v, root) + " (" + timeText(v * bs) + ")"; }   // beats, and how long that is now
   return fmtParam(q, v, root);
 }
@@ -564,6 +578,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     bool idle = (q.only == "free" && clocked) || (q.only == "clock" && !clocked) || (q.only == "own" && (syncOn || clocked));
     if (q.only == "adsr" && u.m->p[6].load() < 0.5f) idle = true;
     if (q.only == "side") { bool sp = false; for (auto& cb : cables) if (cb.to == u.m->id && cb.toPort == 2) sp = true; if (!sp) idle = true; }   // DUCKER: THRESHOLD is for SIDE
+    if (q.only == "wander" && u.m->p[0].load() < 4.5f) idle = true;   // KEY JOURNEY: HOME PULL is for WANDER
     if (q.only == "file" && u.m->p[0].load() < 0.5f) idle = true;   // STRETCH: only for a loaded file   // MI VOICES: the envelope is only used in ADSR
     if (d->type == "sample") { const int kind = (int)u.m->p[1].load(); const bool once = u.m->p[3].load() > 0.5f;   // settings that don't apply to this kind of sound or way of playing
       idle = idle || (q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once); }
@@ -571,7 +586,8 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     c.text(lab.substr(0, 11), x + 3 + (jacksIn && modulatable(q) ? 7 : 0), ry + 1, active ? 4 : idle ? 21 : 18);
     bool modded = false; for (auto& cb : cables) if (cb.type == PType::Mod && cb.to == u.m->id && cb.toParam == (int)j) modded = true;
     if (modulatable(q)) drawJack(c, sockX(u) - viewX, ry + 3, PType::Mod, modded, false);   // its mod socket: filled when something moves it
-    if (!q.opts.empty()) { std::string s = fmtParam(q, v, root).substr(0, (size_t)std::max(6, (w - Canvas::tw(lab.substr(0, 11)) - 10 - (jacksIn ? 7 : 0)) / 4)); /* as much of the choice as fits beside its name */ c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
+    const int kIn = u.m->keyIn.load(), sIn = u.m->scaleIn.load(); const bool fromJ = kIn >= 0 && ((int)j == d->keyIdx || (int)j == d->scaleIdx);   // a KEY JOURNEY patched in: its key, in green
+    if (!q.opts.empty()) { std::string s = (fromJ ? ((int)j == d->keyIdx ? std::string(NOTE_NAMES[kIn % 12]) : std::string(scales()[std::max(0, std::min((int)scales().size() - 1, sIn))].name)) : fmtParam(q, v, root)).substr(0, (size_t)std::max(6, (w - Canvas::tw(lab.substr(0, 11)) - 10 - (jacksIn ? 7 : 0)) / 4)); /* as much of the choice as fits beside its name */ c.text(s, x + w - 3 - Canvas::tw(s), ry + 1, active ? 4 : idle ? 21 : fromJ ? 11 : 9); c.px(x + w - 3 - Canvas::tw(s) - 3, ry + 3, idle ? 21 : 18); continue; }
     const bool stepping = drag.kind == D_STEP && drag.m == &u && drag.k == (int)j;
     const int mx = x + minusX(u, (int)j); c.text("-", mx, ry + 1, stepping && drag.dir < 0 ? 4 : idle ? 21 : 9); c.text("+", x + w - 6, ry + 1, stepping && drag.dir > 0 ? 4 : idle ? 21 : 9);   // nudge it a little at a time
     if (q.stepper) {   // a small whole number: - 3 + (what it's moved to, when something modulates it)
@@ -589,6 +605,8 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     else { box(x + 3, mu, "M", 14); if (d->cat == Cat::Voice) box(x + 14, u.m->solo.load(), "S", 4); else if (bypassable(d)) box(x + 14, u.m->bypass.load(), "B", 12); }   // only sound makers can be soloed; effects can be bypassed
     { bool conn = false; for (auto& cb : cables) if (cb.to == u.m->id && cb.toPort == SWITCH_PORT) conn = true;
       drawJack(c, swX(u) - viewX, swY(u) - viewY, PType::Trig, conn, false); }
+    if (hasKey(u)) { bool conn = false; for (auto& cb : cables) if (cb.to == u.m->id && cb.toPort == KEY_PORT) conn = true;   // the KEY socket, named
+      const int kx = kyX(u) - viewX; drawJack(c, kx, swY(u) - viewY, PType::Trig, conn, false); if (!clocked || kx + 18 < x + w - 15 - Canvas::tw("CLOCKED")) c.text("KEY", kx + 5, fy + 1, conn ? 9 : 21); }
     box(x + w - 12, false, u.fold ? "+" : "-", 9);
     if (clocked) c.text("CLOCKED", x + w - 15 - Canvas::tw("CLOCKED"), fy + 1, 24); }
   c.ink = nullptr;
@@ -612,7 +630,7 @@ void Ui::draw(Canvas& c, float dt) {
   for (auto& cb : cables) {
     UiMod *a = byId(cb.from), *b = byId(cb.to); if (!a || !b) continue;
     const int ax = outJackX(*a) - viewX, ay = a->y + jackY(cb.fromPort) - viewY;
-    int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = sockX(*b) - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + rowY(*b, cb.toParam) * ROW + 3) - viewY; } else if (cb.toPort == SWITCH_PORT) { bx = swX(*b) - viewX; by = swY(*b) - viewY; } else { bx = inJackX(*b) - viewX; by = b->y + jackY(cb.toPort) - viewY; }
+    int bx, by; if (cb.type == PType::Mod) { const Geom g = geom(*b); bx = sockX(*b) - viewX; by = b->y + (b->fold ? g.h - FOOT : g.py + rowY(*b, cb.toParam) * ROW + 3) - viewY; } else if (cb.toPort == SWITCH_PORT) { bx = swX(*b) - viewX; by = swY(*b) - viewY; } else if (cb.toPort == KEY_PORT) { bx = kyX(*b) - viewX; by = swY(*b) - viewY; } else { bx = inJackX(*b) - viewX; by = b->y + jackY(cb.toPort) - viewY; }
     const bool hi = (selT > 0 && sameCable(cb, sel)) || (drag.kind == D_MOVE && drag.splice >= 0 && drag.splice < (int)cables.size() && sameCable(cb, cables[drag.splice]));
     if (!cableMotion) { drawCable(c, ax, ay, bx, by, hi ? 4 : typeCol(cb.type)); continue; }   // still: nothing moves or flashes
     if (cb.type == PType::Audio && !hi) {   // audio: dashes that run faster, longer and brighter the louder it is; still when silent
@@ -659,7 +677,7 @@ void Ui::draw(Canvas& c, float dt) {
   barHits.clear();
   c.rect(0, 0, c.W, TOP, MENU_BG); for (int x = 0; x < c.W; x += 2) c.px(x, TOP, 21);
   int bx = 3;
-  auto btn = [&](const std::string& l, int col, std::function<void()> fn) { c.text(l, bx, 3, col); barHits.push_back({bx, bx + Canvas::tw(l), fn}); bx += Canvas::tw(l) + 8; };
+  auto btn = [&](const std::string& l, int col, std::function<void()> fn) { c.text(l, bx, 3, col); barHits.push_back({bx, bx + Canvas::tw(l), fn, l}); bx += Canvas::tw(l) + 8; };
   btn("+ ADD", 4, [this] { menuOpen = !menuOpen; dd.reset(); });
   for (auto& b : bar) { const int x0 = bx; auto fn = b.fn; btn(b.label, b.col, [fn, x0] { fn(x0); }); }
   { bool open = false; for (auto& u : mods) if (!u->m->def->fixed && !u->fold) open = true;
@@ -794,7 +812,9 @@ void Ui::pointerDown(float sx, float sy) {
     if (sx >= ubx - 1 && sx < ubx + bw + 1 && sy >= uby - 1 && sy < uby + 10) { selOn = true; unplugSelected(); return; } }
   if (tp.open) { if (!tempoDown(sx, sy)) tp.open = false; return; }   // a tap away closes it
   if (br.open) { if (!browserDown(sx, sy)) closeBrowser(); return; }
-  if (ed.open) { if (!editorDown(sx, sy)) closeEditor(); return; }
+  if (ed.open) {   // the editor stays open until CLOSE (or Escape); the bar's UNDO and REDO still work under it
+    if (sy < TOP) for (auto& b : barHits) if ((b.label == "UNDO" || b.label == "REDO") && sx >= b.x0 - 2 && sx <= b.x1 + 2) { b.fn(); return; }
+    editorDown(sx, sy); return; }
   if (dd) {   // a tap picks from the open list, or closes it
     auto d0 = std::move(dd); const int r = (int)std::floor((sy - d0->y - 1) / 8), col = (int)std::floor((sx - d0->x + 2) / std::max(1, d0->colW)), i = col * d0->rows + r;
     const bool hit = sx >= d0->x - 2 && sx < d0->x - 2 + d0->w && r >= 0 && r < d0->rows && i >= 0 && i < (int)d0->items.size() && i != d0->title;
