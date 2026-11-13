@@ -348,6 +348,8 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     const int bw = std::max(2, (w - 2) / 12);
     for (int i = 0; i < 12; i++) { const int h = (int)std::lround(clampf(D(6 + i), 0, 1) * 9), bx = x + 1 + i * bw; c.px(bx, y + 25, 21);
       if (h > 0) c.rect(bx, y + 25 - h, bw - 1, h, inSc[i] ? (i == r ? 4 : 11) : 21); }
+    { const float bp = D(19); const std::string t = bp > 0 ? "TEMPO " + std::to_string((int)std::lround(bp)) + " BPM" : "NO CLEAR TEMPO", pc = bp > 0 ? std::to_string((int)std::lround(D(20) * 100)) + "%" : "";   // the tempo it hears
+      c.text(t, x + 1, y + 28, bp > 0 ? 4 : 18); if (!pc.empty()) c.text(pc, x + w - 1 - Canvas::tw(pc), y + 28, 9); }
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
   } else if (ty == "keys") {
@@ -897,6 +899,9 @@ void Ui::pointerDown(float sx, float sy) {
       if (d->type == "tracker" && q.key == "clear") {   // ask first: this wipes every step
         Dropdown z; z.items = {"CLEAR EVERY STEP?", "YES, CLEAR ALL", "NO, KEEP THEM"}; z.title = 0; z.danger = 1; z.x = u->x - viewX + 8; z.y = u->y - viewY + g.py + rowY(*u, pj) * ROW + 4;
         z.pick = [this, u](int i) { if (i == 1) { eng.action(u->m->id, "clear"); u->scroll = 0; status("TRACKER CLEARED"); } }; openDropdown(z); return; }
+      if (d->type == "listen" && q.key == "usetempo") {   // the session's tempo to what it hears
+        const float bp = u->m->disp[19].load(); if (bp <= 0) { status("NO CLEAR TEMPO HEARD YET (IT NEEDS A FEW SECONDS OF A BEAT)", 3); return; }
+        setBpm(bp); status("TEMPO " + std::to_string((int)std::lround(bp)) + " BPM: CLOCKS AND SEQUENCERS ON SHARED TEMPO FOLLOW IT", 4); changed(); return; }
       if (d->type == "listen" && q.key == "use") {   // set the app's key and scale to what it hears
         if (u->m->disp[2].load() <= 0) { status("NOTHING HEARD YET"); return; }
         const int r = (int)u->m->disp[0].load(), sc = (int)u->m->disp[1].load(); eng.key.root.store(r); eng.key.scale.store(sc);

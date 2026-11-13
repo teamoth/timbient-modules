@@ -151,17 +151,22 @@ static Reg rRand(new ModuleDef{"rand", "RANDOM", Cat::Mod, {{"TRIG", PType::Trig
 
 // ---------------- FOLLOWER: how loud the incoming sound is, as a modulation ----------------
 struct Follower : Module {
-  enum { GAIN, ATK, REL, DEPTH, DIR };
-  float ms = 0, env = 0;
+  enum { GAIN, ATK, REL, DEPTH, DIR, THRESH, HOLDOFF };
+  float ms = 0, env = 0, pk = 0, slow = 0, since = 1;
   void render(int a, int b) override {
     const float kw = 1 - std::exp(-1.f / (0.021f * sr));   // about the same window as the web version's 1024 samples
-    for (int i = a; i < b; i++) { const float x = 0.5f * (in[0][0][i] + in[0][1][i]); ms += (x * x - ms) * kw; }
+    const float kp = 1.f / (0.03f * sr), ks = 1 - std::exp(-1.f / (0.25f * sr)), thr = dbToGain(e[THRESH]);
+    for (int i = a; i < b; i++) { const float x = 0.5f * (in[0][0][i] + in[0][1][i]); ms += (x * x - ms) * kw;
+      // CLOCK: a trigger on each hit: the level jumps past THRESHOLD and well above what it's been, at most once each HOLD-OFF
+      const float ax = std::fabs(x) * dbToGain(e[GAIN] - 12); pk = ax > pk ? ax : std::max(0.f, pk - kp * pk * 3); slow += (pk - slow) * ks; since += 1.f / sr;
+      if (pk > thr && pk > slow * 1.8f + 1e-4f && since > e[HOLDOFF]) { since = 0; eng->pos = i; Event ev; ev.vel = clampf(pk / std::max(thr, 0.05f), 0.2f, 1); emit(1, ev); } }
     const float target = clampf(std::sqrt(std::max(0.f, ms)) * 1.4f * dbToGain(e[GAIN]), 0, 1), tc = target > env ? e[ATK] : e[REL], dt = (b - a) / sr;
     env += (target - env) * (1 - std::exp(-dt * 3 / std::max(0.002f, tc))); modv = env * 2 - 1; disp[0].store(modv);
   }
 };
-static Reg rFollow(new ModuleDef{"follow", "FOLLOWER", Cat::Mod, {{"IN", PType::Audio}}, {{"MOD", PType::Mod}},
-  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::lround(v)) + "DB"; }), T("atk", "ATTACK", 0.002f, 2, 0.02f), T("rel", "RELEASE", 0.02f, 8, 0.4f), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 1)},
+static Reg rFollow(new ModuleDef{"follow", "FOLLOWER", Cat::Mod, {{"IN", PType::Audio}}, {{"MOD", PType::Mod}, {"CLOCK", PType::Trig}},
+  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::lround(v)) + "DB"; }), T("atk", "ATTACK", 0.002f, 2, 0.02f), T("rel", "RELEASE", 0.02f, 8, 0.4f), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 1),
+   fmt(pr("thresh", "THRESHOLD", -48, 0, -30), [](float v) { return std::to_string((int)std::lround(v)) + "DB"; }), T("hold", "HOLD-OFF", 0.03f, 1, 0.1f)},
   7, 68, false, [] { return new Follower(); }});
 
 }  // namespace tb

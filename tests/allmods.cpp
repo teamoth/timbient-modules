@@ -132,6 +132,14 @@ int main(int argc, char** argv) {
   { float rm[2]; for (int k = 0; k < 2; k++) { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* v = ui.add("pad", 100, 20); ui.connect(v, "OUT", out, "A"); ui.set(v, "poly", (float)k);
       for (int i = 0; i < 6; i++) { Event ev; ev.note = 48.f + i * 4; eng.trigger(v->m->id, 0, ev); run(eng, 0.05f); } rm[k] = run(eng, 0.3f).rms; }
     const bool ok = rm[1] < rm[0] * 0.7f; if (!ok) fails++; std::printf("voices: poly rms %.4f, mono rms %.4f%s\n", rm[0], rm[1], ok ? "" : "  WRONG"); }
+  // FOLLOWER: CLOCK fires on each hit of a beat
+  { ui.clearPatch(); ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); ui.set(clk, "sync", 0); ui.set(clk, "bpm", 120); UiMod* v = ui.add("pluck", 100, 20); UiMod* fo = ui.add("follow", 200, 20);
+    ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", fo, "IN"); run(eng, 4); const int hits = fo->m->fires[1].load(), beats = clk->m->fires[0].load();
+    const bool ok = hits >= beats - 2 && hits <= beats + 2; if (!ok) fails++; std::printf("follower clock: %d hits for %d notes%s\n", hits, beats, ok ? "" : "  WRONG"); }
+  // LISTEN: hears the tempo of a beat
+  { ui.clearPatch(); ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); ui.set(clk, "sync", 0); ui.set(clk, "bpm", 100); UiMod* v = ui.add("click", 100, 20); UiMod* li = ui.add("listen", 200, 20);
+    ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", li, "IN"); run(eng, 10); const float bp = li->m->disp[19].load();
+    const bool ok = std::fabs(bp - 100) < 3 || std::fabs(bp - 50) < 2 || std::fabs(bp - 200) < 4; if (!ok) fails++; std::printf("listen tempo: %.0f BPM (clock 100), sure %.0f%%%s\n", bp, li->m->disp[20].load() * 100, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

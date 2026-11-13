@@ -316,10 +316,23 @@ static Reg rTapeLoop(new ModuleDef{"tloop", "TAPE LOOP", Cat::Proc, {{"IN", PTyp
 // (its "chroma"), lets that build up over TIME seconds, then compares it with every key and scale: a scale scores
 // well when its notes are the ones heard and its other notes aren't, with the key's root and fifth counting a little extra.
 struct Listen : Module {
-  enum { TIME, USE };
-  static constexpr int N = 8192, HOP = 4096;
+  enum { TIME, USE, USET, X2, HALF };
+  static constexpr int N = 8192, HOP = 4096, EH = 512, EMAX = 2048;   // tempo: the sound's energy each 512 samples, the last 2048 of them (about 20 s)
   FFT fft{N}; std::vector<float> rg, win, re, im; long w = 0; int sinceFrame = 0; float chroma[12] = {0}, level = 0;
-  void prepare() override { rg.assign(N, 0.f); win.resize(N); for (int i = 0; i < N; i++) win[i] = 0.5f - 0.5f * std::cos(TAU * i / N); re.assign(N, 0); im.assign(N, 0); }
+  std::vector<float> flux; int eN = 0, eAt = 0, sinceE = 0, sinceT = 0; float eAcc = 0, lastE = -14, bpm = 0, conf = 0, mul = 1;
+  void prepare() override { rg.assign(N, 0.f); win.resize(N); for (int i = 0; i < N; i++) win[i] = 0.5f - 0.5f * std::cos(TAU * i / N); re.assign(N, 0); im.assign(N, 0); flux.assign(EMAX, 0.f); }
+  void action(const std::string& k) override { if (k == "x2") mul = std::min(4.f, mul * 2); else if (k == "half") mul = std::max(0.25f, mul / 2); }
+  // TEMPO: how the jumps in loudness repeat, over the LISTEN window (at least 4 seconds), between 60 and 180 BPM
+  void tempo() {
+    const float fps = sr / EH; const int frames = std::min(eN, std::min(EMAX, (int)(std::max(4.f, e[TIME]) * fps))); if (frames < fps * 4) { bpm = 0; return; }
+    std::vector<float> f(frames); for (int i = 0; i < frames; i++) f[i] = flux[(size_t)((eAt - frames + i + EMAX * 4) % EMAX)];
+    float m = 0; for (float v : f) m += v; m /= frames; for (float& v : f) v = std::max(0.f, v - m);
+    float best = 0, mean = 0, bb = 0; int cnt = 0;
+    for (float b = 60; b <= 180; b += 1) { const float lag = fps * 60 / b; float acc = 0; int c = 0;
+      for (int i = 0; i + (int)(lag * 2) + 1 < frames; i++) { acc += f[i] * (f[i + (int)std::lround(lag)] + 0.5f * f[i + (int)std::lround(lag * 2)]); c++; }
+      if (!c) continue; acc /= c; mean += acc; cnt++; if (acc > best) { best = acc; bb = b; } }
+    const float ratio = cnt && mean > 0 ? best / (mean / cnt) : 0; conf = clampf((ratio - 1.5f) / 2.5f, 0, 1); bpm = ratio > 2.2f ? bb : 0;
+  }
   void frame() {
     for (int i = 0; i < N; i++) { re[i] = rg[(size_t)((w + i) % N)] * win[i]; im[i] = 0; }
     fft.run(re.data(), im.data(), false);
@@ -337,11 +350,14 @@ struct Listen : Module {
   }
   void render(int a, int b) override {
     for (int i = a; i < b; i++) { const float x = 0.5f * (in[0][0][i] + in[0][1][i]); rg[(size_t)(w % N)] = x; w++; out[0][0][i] = in[0][0][i]; out[0][1][i] = in[0][1][i];   // it passes the sound straight through
-      if (++sinceFrame >= HOP) { sinceFrame = 0; frame(); } }
+      if (++sinceFrame >= HOP) { sinceFrame = 0; frame(); }
+      eAcc += x * x; if (++sinceE >= EH) { const float le = std::log(1e-6f + eAcc); flux[(size_t)(eAt % EMAX)] = std::max(0.f, le - lastE); lastE = le; eAt++; eN++; eAcc = 0; sinceE = 0;
+        if (++sinceT >= 90) { sinceT = 0; tempo(); } } }   // about once a second
+    disp[19].store(bpm > 0 ? clampf(bpm * mul, 20, 300) : 0); disp[20].store(conf);
     float mx = 1e-6f; for (float c : chroma) mx = std::max(mx, c); for (int i = 0; i < 12; i++) disp[6 + i].store(chroma[i] / mx); disp[18].store(level);
   }
 };
 static Reg rListen(new ModuleDef{"listen", "LISTEN", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {noMod(T("time", "LISTEN", 1, 60, 8)), ACT("use", "USE THIS KEY")}, 26, 68, false, [] { return new Listen(); }});
+  {noMod(T("time", "LISTEN", 1, 60, 8)), ACT("use", "USE THIS KEY"), ACT("usetempo", "USE THIS TEMPO"), ACT("x2", "TEMPO X2"), ACT("half", "TEMPO /2")}, 34, 68, false, [] { return new Listen(); }});
 
 }  // namespace tb
