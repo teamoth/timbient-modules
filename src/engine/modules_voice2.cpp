@@ -10,13 +10,14 @@ static std::vector<ParamDef> vp(std::vector<ParamDef> p, std::vector<ParamDef> e
 static std::vector<ParamDef> ENVD() { return envP(0.003f, 0.3f, 1, 4, 2); }
 
 // ---------------- NOISE CLICK: a burst of noise through a tuned band ----------------
-struct ClickV : VoiceBase { Biquad bp; float t = 0, d = 0.08f, kd = 0; };
+struct ClickV : VoiceBase { Biquad bp; float t = 0, d = 0.08f, kd = 0; int gc = 0; };
 struct Click : Poly<ClickV> {
   enum { PITCHK, Q, DECAY, TUNE };
   Click() { gainScale = 2.2f; }
   void start(ClickV& x) override { x.t = 0; x.d = e[DECAY]; x.bp.reset(); x.bp.set(Biquad::BP, std::min(15000.f, x.f * e[TUNE]), e[Q], sr); x.kd = std::log(0.0001f) / std::max(0.005f, x.d - 0.002f); }
   void voice(ClickV& x, float& l, float& r) override {
     x.t += 1.f / sr; if (x.t > x.d + 0.02f) { l = r = 0; return; }
+    if (x.glLen > 0 && (++x.gc & 31) == 0) x.bp.set(Biquad::BP, std::min(15000.f, x.f * e[TUNE]), e[Q], sr);   // GLIDE: the band follows
     const float a = x.t < 0.002f ? x.t / 0.002f : std::exp(x.kd * (x.t - 0.002f));
     l = r = x.bp.run(rng.bi()) * a;
   }
@@ -41,7 +42,7 @@ struct Analog : Poly<AnalogV> {
   }
 };
 static Reg rAnalog(new ModuleDef{"analog", "ANALOG", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), OP("wave", "WAVE", {"SAW", "SQUARE", "TRI"}, 0), pct("sub", "SUB", 0.3f), prHz("cut", "CUTOFF", 60, 12000, 700), pct("res", "RES", 0.3f), pct("fenv", "FILT ENV", 0.5f), T("fdec", "FILT DEC", 0.01f, 6, 0.4f)},
+  vp({PITCH(), OP("wave", "WAVE", {"SAW", "SQUARE", "TRI"}, 0), pct("sub", "SUB", 0.3f), prHz("cut", "CUTOFF", 40, 20000, 700), pct("res", "RES", 0.3f), pct("fenv", "FILT ENV", 0.5f), T("fdec", "FILT DEC", 0.01f, 6, 0.4f)},
      envP(0.005f, 0.4f, 0.6f, 0.6f, 0.8f), 0.3f), 0, 68, false, [] { return new Analog(); }});
 
 // ---------------- FORMANT: a sung vowel, which can glide to another vowel ----------------
@@ -93,7 +94,7 @@ static Reg rBreath(new ModuleDef{"breath", "BREATH", Cat::Voice, {{"TRIG", PType
      envP(0.25f, 0.6f, 0.7f, 1.2f, 1.8f), 0.4f), 0, 68, false, [] { return new Breath(); }});
 
 // ---------------- ADDITIVE: a stack of sine partials; the upper ones fade sooner (TILT DEC) ----------------
-struct AddV : VoiceBase { static constexpr int P = 16; float c[P], s[P], cw[P], sw[P], a[P], lv[P], kd[P], gl[P], gr[P]; int n = 0, cnt = 0; float t = 0; };
+struct AddV : VoiceBase { static constexpr int P = 16; float c[P], s[P], cw[P], sw[P], a[P], lv[P], kd[P], gl[P], gr[P], mul[P]; int n = 0, cnt = 0; float t = 0; };
 struct Additive : Poly<AddV> {
   enum { PITCHK, PARTS, BRIGHT, EVEN, STRETCH, DECAY, SHIMMER };
   Additive() { gainScale = 0.22f; selfPan = true; }
@@ -103,13 +104,14 @@ struct Additive : Poly<AddV> {
     const float len = noteLen(x.env); x.n = 0; x.t = 0; x.cnt = 0;
     for (int k = 1; k <= parts; k++) {
       const float fr = x.f * k * (1 + e[STRETCH] * 0.015f * (k - 1)) * std::pow(2.f, rng.bi() * e[SHIMMER] * 12 / 1200.f); if (fr > 16000 || fr > sr * 0.45f) break;
-      const int i = x.n++; const float w = TAU * fr / sr; x.cw[i] = std::cos(w); x.sw[i] = std::sin(w); x.c[i] = 1; x.s[i] = 0;
+      const int i = x.n++; const float w = TAU * fr / sr; x.mul[i] = fr / x.f; x.cw[i] = std::cos(w); x.sw[i] = std::sin(w); x.c[i] = 1; x.s[i] = 0;
       x.a[i] = amps[k - 1] / tot; x.lv[i] = 1; const float dk = std::max(0.05f, len / (1 + e[DECAY] * (k - 1) * 1.5f)); x.kd[i] = std::exp(-3.f / (dk * sr));
       panGains(rng.bi() * e[iWidth] * std::min(1.f, k / 4.f), x.gl[i], x.gr[i]);
     }
   }
   void voice(AddV& x, float& l, float& r) override {
     x.t += 1.f / sr; const float atk = std::min(1.f, x.t / 0.005f); float L = 0, R = 0;
+    if (x.glLen > 0 && (x.cnt & 15) == 0) for (int i = 0; i < x.n; i++) { const float w = TAU * std::min(sr * 0.45f, x.mul[i] * x.f) / sr; x.cw[i] = std::cos(w); x.sw[i] = std::sin(w); }   // GLIDE: the partials follow
     for (int i = 0; i < x.n; i++) {
       const float c = x.c[i] * x.cw[i] - x.s[i] * x.sw[i], s = x.s[i] * x.cw[i] + x.c[i] * x.sw[i]; x.c[i] = c; x.s[i] = s;   // a rotating phasor: no sin() per sample
       const float y = s * x.a[i] * x.lv[i]; if (x.t > 0.005f) x.lv[i] *= x.kd[i]; L += y * x.gl[i]; R += y * x.gr[i];
@@ -125,11 +127,11 @@ static Reg rAdditive(new ModuleDef{"additive", "ADDITIVE", Cat::Voice, {{"TRIG",
 // ---------------- WAVEFOLD: a sine pushed into a folding curve; FOLD DEC lets it relax back towards a sine ----------------
 struct FoldV : VoiceBase { float ph = 0, t = 0, drive = 0.12f, pk = 0.5f; Biquad lp, hp; float prev = 0; };
 struct Fold : Poly<FoldV> {
-  enum { PITCHK, FOLD, FDEC, FSUS, SYM, CUT };
+  enum { PITCHK, FOLD, FDEC, FSUS, SYM };
   float kd = 0.01f;
   Fold() { gainScale = 0.13f; }
   void voicePrep() override { kd = 1 - std::exp(-3.f / (std::max(0.01f, e[FDEC]) * sr)); }
-  void start(FoldV& x) override { x.ph = 0; x.t = 0; x.drive = 0.12f; x.pk = 0.12f + e[FOLD] * 0.88f * (0.5f + 0.5f * x.vel); x.lp.reset(); x.hp.reset(); x.lp.set(Biquad::LP, e[CUT], 0.707f, sr); x.hp.set(Biquad::HP, 25, 0.707f, sr); x.prev = 0; }
+  void start(FoldV& x) override { x.ph = 0; x.t = 0; x.drive = 0.12f; x.pk = 0.12f + e[FOLD] * 0.88f * (0.5f + 0.5f * x.vel); x.hp.reset(); x.hp.set(Biquad::HP, 25, 0.707f, sr); x.prev = 0; }
   static inline float shape(float v) { v = clampf(v, -1, 1); return std::sin(v * 4 * PI); }
   void voice(FoldV& x, float& l, float& r) override {
     const float dt = 1.f / sr; x.t += dt;
@@ -137,11 +139,11 @@ struct Fold : Poly<FoldV> {
     x.ph += x.f * dt; if (x.ph >= 1) x.ph -= 1;
     const float in = std::sin(TAU * x.ph) * x.drive + e[SYM] * 0.12f;
     const float y = 0.5f * (shape(0.5f * (in + x.prev)) + shape(in)); x.prev = in;   // two points per sample: tames the folding's harshest edge
-    l = r = x.hp.run(x.lp.run(y));
+    l = r = x.hp.run(y);   // CUTOFF and RES (the engine's, after) soften it
   }
 };
 static Reg rFold(new ModuleDef{"fold", "WAVEFOLD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
-  vp({PITCH(), pct("fold", "FOLD", 0.5f), T("fdec", "FOLD DEC", 0.01f, 6, 0.5f), pct("fsus", "FOLD SUS", 0.2f), pct("sym", "SYMMETRY", 0), prHz("cut", "SOFTEN", 500, 16000, 6000)},
+  vp({PITCH(), pct("fold", "FOLD", 0.5f), T("fdec", "FOLD DEC", 0.01f, 6, 0.5f), pct("fsus", "FOLD SUS", 0.2f), pct("sym", "SYMMETRY", 0)},
      envP(0.003f, 0.4f, 0.6f, 0.8f, 1.2f), 0.3f), 0, 68, false, [] { return new Fold(); }});
 
 }  // namespace tb

@@ -128,6 +128,7 @@ public:
   virtual void display(float* vals, int n) {}            // copy display values for the screen (playheads, meters)
   virtual AudioBuf* swapBuf(AudioBuf* b, int slot = 0) { return b; }   // take a new sound; hand back the old one (freed off the audio thread)
   // the last few seconds of this module's input, for CATCH (written here, copied out by the screen thread)
+  std::atomic<AudioBuf*> recBuf{nullptr};   // SAMPLER: where it records (given by the screen; the screen copies each take out of it)
   std::vector<float> ring, ringR; std::atomic<long> ringW{0};   // ringR: the right, for CHANNELS STEREO
 
   // helpers for modules

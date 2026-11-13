@@ -12,11 +12,11 @@ struct VoiceBase { NoteEnv env; float pl = 0.7f, pr = 0.7f, vel = 1, f = 220; lo
 template <class V> struct Poly : Module {
   static constexpr int MAXV = 12;
   V v[MAXV]; long stamp = 0; float gainScale = 1; bool selfPan = false;
-  int iPitch = -1, iLevel = -1, iWidth = -1, iAtk = -1, iVs = -1, iPoly = -1, iGlide = -1; float lastF = 0;
+  int iPitch = -1, iLevel = -1, iWidth = -1, iAtk = -1, iVs = -1, iPoly = -1, iGlide = -1; float lastF = 0; bool ownGlide = false;   // ownGlide: TONE glides by itself (in POLY too)
   virtual void start(V& x) = 0;                          // set up a new note (x.f, x.vel are filled in)
   virtual void voice(V& x, float& l, float& r) = 0;      // one sample of a note, before its envelope
   virtual void voicePrep() {}                            // once per block, before the notes render
-  void prepare() override { iPitch = pi("pitch"); iLevel = pi("level"); iWidth = pi("width"); iAtk = pi("atk"); iVs = pi("vsens"); iPoly = pi("poly"); iGlide = pi("glide"); for (auto& x : v) x.env.sr = sr; }
+  void prepare() override { iPitch = pi("pitch"); iLevel = pi("level"); iWidth = pi("width"); iAtk = pi("atk"); iVs = pi("vsens"); iPoly = pi("poly"); iGlide = def->type == "tone" ? -1 : def->type == "formant" ? pi("pglide") : pi("glide"); ownGlide = def->type == "tone"; for (auto& x : v) x.env.sr = sr; }
   void trig(int, const Event& ev) override {
     const bool mono = iPoly >= 0 && e[iPoly] > 0.5f;
     if (mono) for (auto& x : v) if (x.env.active() && x.fadeK == 0) x.fadeK = 1.f / std::max(1.f, 0.015f * sr);   // MONO: whatever's sounding fades out quickly
@@ -28,8 +28,8 @@ template <class V> struct Poly : Module {
     if (!selfPan) panGains(rng.bi() * (iWidth >= 0 ? e[iWidth] : 0), x.pl, x.pr); else x.pl = x.pr = 1;
     x.vel = iVs >= 0 ? 1 - e[iVs] + e[iVs] * ev.vel : ev.vel; x.f = mtof(ev.note + (iPitch >= 0 ? e[iPitch] : 0));   // VEL SENS: how much harder notes are louder
     x.fadeV = 1; x.fadeK = 0; x.glLen = 0;
-    if (mono && iGlide >= 0 && e[iGlide] > 0.001f && lastF > 0) { x.glF0 = lastF; x.glLog = std::log(x.f / lastF); x.glAt = 0; x.glLen = e[iGlide]; const float to = x.f; x.f = lastF; lastF = to; }   // GLIDE: from the last note
-    else lastF = x.f;
+    if (iGlide >= 0 && e[iGlide] > 0.0015f && lastF > 0) { x.glF0 = lastF; x.glLog = std::log(x.f / lastF); x.glAt = 0; x.glLen = e[iGlide]; const float to = x.f; x.f = lastF; lastF = to; }   // GLIDE: from the last note (POLY or MONO)
+    else if (!ownGlide) lastF = x.f;
     start(x);
   }
   void render(int a, int b) override {

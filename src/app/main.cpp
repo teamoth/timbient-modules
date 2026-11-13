@@ -15,13 +15,14 @@
 #include "midi.h"
 #include <cstdio>
 #include <ctime>
+#include <set>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
 
 using namespace tb;
 
-static const char* VERSION = "0.32.0";
+static const char* VERSION = "0.33.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -134,6 +135,7 @@ int main(int argc, char** argv) {
     if (keep) { char id[40]; std::snprintf(id, 40, "n%llx%04x", (unsigned long long)std::time(nullptr), (unsigned)(SDL_rand(65536)));
       if (writeWavMono16(audioDir + id + ".wav", *b)) { sd.id = id; dirty = true; saveT = 0.5f; } else ui.status("COULD NOT KEEP THE SOUND", 4); }
     u->m->roots[slot].store(sd.root); engine.setBuffer(u->m->id, b, slot);
+    if (keep && u->m->def->type == "looper") u->m->p[0].store(1);   // GRAIN LOOPER: a sound caught or loaded is HELD
   };
   auto restoreSound = [&](UiMod* u) {
     for (int k = 0; k < UiMod::SLOTS; k++) { UiMod::Snd& sd = u->snd[k]; if (sd.id.empty()) continue; std::string err;
@@ -247,6 +249,12 @@ int main(int argc, char** argv) {
       const bool many = ty == "sample" && u->m->p[1].load() >= 2 && k == "load"; const int slot = k == "load" ? (many ? -1 : 0) : std::atoi(k.c_str() + 5);
       ui.openBrowser(u->m->id, slot, browseDir()); return true; }
     if (ty == "looper" && k == "catch") { catchSound(u, false); return true; }
+    if (ty == "sample" && k == "savetake") {   // SAVE TAKE: the sound as a WAV, in the recordings folder
+      const UiMod::Snd& sd = u->snd[0]; if (sd.id.empty()) { ui.status("NOTHING RECORDED OR LOADED YET", 3); return true; }
+      char ts[32]; const std::time_t tt = std::time(nullptr); std::strftime(ts, 32, "%Y-%m-%d %H%M%S", std::localtime(&tt)); std::string nm = sd.name.empty() ? std::string("TAKE") : sd.name;
+      for (auto& ch : nm) if (ch == '/' || ch == '\\' || ch == ':' || ch == '.') ch = ' ';
+      const std::string to = recDir + nm + " " + ts + ".wav";
+      ui.status(SDL_CopyFile((audioDir + sd.id + ".wav").c_str(), to.c_str()) ? "SAVED: " + to : std::string("COULD NOT SAVE THE TAKE"), 5); return true; }
     if (ty == "out" && k == "rec") {
       if (!rec.on()) { std::time_t tt = std::time(nullptr); char nm[64]; std::strftime(nm, 64, "timbient-%Y%m%d-%H%M%S.wav", std::localtime(&tt));
         if (rec.start(engine, recDir + nm)) ui.status("RECORDING"); else ui.status("COULD NOT START A RECORDING IN " + recDir, 6); }
@@ -543,7 +551,24 @@ int main(int argc, char** argv) {
         for (auto& up : ui.mods) if (up->m->def->type == "midiout" && up->m->devSlot.load() < 0) { if (!listed) { names = midi.outputs(); listed = true; }
           const std::string want = up->dev.empty() ? (names.empty() ? std::string() : names[0]) : up->dev; if (!want.empty()) up->m->devSlot.store(midi.openOutput(want)); } } }
     // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
-    { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->snd[0].peaks.empty() && up->snd[0].id.empty()) catchSound(up.get(), true); } }
+    for (auto& up : ui.mods) if (up->m->def->type == "sample") {   // SAMPLER: somewhere to record (once it could), each take kept as its sound, and the feedback guard
+      UiMod* u = up.get(); Module* m = u->m; const ModuleDef* d = m->def; bool inUse = m->p[d->paramIndex("rec")].load() > 0.5f;
+      for (auto& c : ui.cables) if (c.to == m->id && (c.toPort == 2 || c.toPort == 3)) inUse = true;
+      u->recGiveT -= ldt;
+      if (inUse && !m->recBuf.load() && u->recGiveT <= 0) { u->recGiveT = 1; AudioBuf* b = new AudioBuf(); b->sr = engine.sr; const size_t cap = (size_t)(60.0 * engine.sr); b->d.assign(cap, 0.f); b->r.assign(cap, 0.f); engine.setBuffer(m->id, b, 99); }
+      const int seq = (int)m->disp[42].load(); AudioBuf* rb = m->recBuf.load();
+      if (seq != u->lastTake && rb) { u->lastTake = seq; const size_t n = std::min(rb->d.size(), (size_t)m->disp[43].load());
+        if (n > 64) { AudioBuf* b = new AudioBuf(); b->sr = rb->sr; b->d.assign(rb->d.begin(), rb->d.begin() + n); const int ci = d->paramIndex("chan");
+          if (ci >= 0 && m->p[ci].load() > 0.5f) { bool same = true; for (size_t i = 0; i < n && same; i++) if (std::fabs(rb->d[i] - rb->r[i]) > 1e-6f) same = false; if (!same) b->r.assign(rb->r.begin(), rb->r.begin() + n); }   // STEREO: both sides, unless they were the same
+          char nm[32]; const std::time_t tt = std::time(nullptr); std::strftime(nm, 32, "TAKE %H.%M.%S", std::localtime(&tt));
+          giveSound(u, b, true, 0, nm); const int ks = d->paramIndex("start"), kl = d->paramIndex("len"); if (ks >= 0) m->p[ks].store(0); if (kl >= 0) m->p[kl].store(1);
+          char t[48]; std::snprintf(t, 48, "RECORDED %.1fS", n / rb->sr); ui.status(t, 3); histDirty = true; histT = 0.2f; }
+        engine.action(m->id, "taken"); }
+      // the feedback guard: its own sound finding its way back into its IN
+      std::set<int> seen{m->id}; std::vector<int> todo{m->id}; bool loop = false;
+      while (!todo.empty() && !loop) { const int at = todo.back(); todo.pop_back(); for (auto& c : ui.cables) if (c.from == at && c.type == PType::Audio) { if (c.to == m->id && c.toPort == 2) { loop = true; break; } if (seen.insert(c.to).second) todo.push_back(c.to); } }
+      if ((int)loop != u->fbSent) { u->fbSent = loop; engine.action(m->id, loop ? "fb:1" : "fb:0"); if (loop) ui.status("SAMPLER: ITS OWN SOUND COMES BACK INTO ITS IN, SO IT ISN'T MONITORING", 5); } }
+    { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->m->p[0].load() > 0.5f && up->snd[0].peaks.empty() && up->snd[0].id.empty()) catchSound(up.get(), true); } }   // HELD with nothing held yet: what came in
 
     if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
     if (histDirty) { histT -= ldt; if (histT <= 0) { snapshot(); histDirty = false; } }

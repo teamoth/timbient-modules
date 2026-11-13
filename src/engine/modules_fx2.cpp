@@ -129,7 +129,7 @@ struct TrigEnv : Module {
   }
 };
 static Reg rEnv(new ModuleDef{"env", "TRIG ENV", Cat::Mod, {{"TRIG", PType::Trig}}, {{"MOD", PType::Mod}},
-  {T("atk", "ATTACK", 0.002f, 8, 0.05f), T("dec", "DECAY", 0.02f, 16, 1.5f), pct("curve", "CURVE", 0.6f), pct("vsens", "VEL SENS", 0.5f), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 1)},
+  {T("atk", "ATTACK", 0.002f, 8, 0.05f), T("dec", "DECAY", 0.02f, 16, 1.5f), pct("curve", "CURVE", 0.6f), pct("vsens", "VEL SENS", 1), pct("depth", "DEPTH", 0.5f), OP("dir", "DIRECTION", {"BOTH", "UP", "DOWN"}, 1)},
   7, 68, false, [] { return new TrigEnv(); }});
 
 // ---------------- RANDOM: a new value every so often (or on each trigger), with a glide between ----------------
@@ -146,7 +146,7 @@ struct RandomMod : Module {
   }
 };
 static Reg rRand(new ModuleDef{"rand", "RANDOM", Cat::Mod, {{"TRIG", PType::Trig}}, {{"MOD", PType::Mod}},
-  {fmt(prExp("rate", "EVERY", 0.05f, 60, 2), [](float v) { return fmtSecs(v); }), T("glide", "GLIDE", 0.001f, 8, 0.05f), pct("chance", "CHANCE", 1), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 0)},
+  {fmt(prExp("rate", "EVERY", 0.05f, 60, 2), [](float v) { return fmtSecs(v); }), T("glide", "GLIDE", 0.001f, 8, 0.05f), pct("chance", "CHANCE", 1), pct("depth", "DEPTH", 0.5f), OP("dir", "DIRECTION", {"BOTH", "UP", "DOWN"}, 0)},
   7, 68, false, [] { return new RandomMod(); }});
 
 // ---------------- FOLLOWER: how loud the incoming sound is, as a modulation ----------------
@@ -165,7 +165,7 @@ struct Follower : Module {
   }
 };
 static Reg rFollow(new ModuleDef{"follow", "FOLLOWER", Cat::Mod, {{"IN", PType::Audio}}, {{"MOD", PType::Mod}, {"CLOCK", PType::Trig}},
-  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::lround(v)) + "DB"; }), T("atk", "ATTACK", 0.002f, 2, 0.02f), T("rel", "RELEASE", 0.02f, 8, 0.4f), pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 1),
+  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::lround(v)) + "DB"; }), T("atk", "ATTACK", 0.002f, 2, 0.02f), T("rel", "RELEASE", 0.02f, 8, 0.4f), pct("depth", "DEPTH", 0.5f), OP("dir", "DIRECTION", {"BOTH", "UP", "DOWN"}, 1),
    fmt(pr("thresh", "THRESHOLD", -48, 0, -30), [](float v) { return std::to_string((int)std::lround(v)) + "DB"; }), T("hold", "HOLD-OFF", 0.03f, 1, 0.1f)},
   7, 68, false, [] { return new Follower(); }});
 

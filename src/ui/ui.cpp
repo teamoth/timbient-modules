@@ -21,7 +21,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "journey", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tloop", "tape", "comp", "limit", "master", "mixer", "listen"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -285,8 +285,11 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
         if (sel) c.rect(bx, y, 5, 5, has ? 24 : 18); else c.frame(bx, y, 5, 5, has ? 24 : 21); c.text(std::to_string(k + 1), bx + 1, y, sel ? 15 : has ? 9 : 18); }
       top = y + 6; }
     const UiMod::Snd& sd = u.snd[multi ? u.shown : 0]; const int mid = multi ? top + 3 : y + 6, amp = multi ? 2 : 5;
-    if (ty == "stretch" && m->p[0].load() < 0.5f) { c.text("LIVE: WHAT COMES IN", x + 2, y + 4, 18); }
-    else if (sd.peaks.empty()) { c.text(sd.missing ? "LOAD IT AGAIN" : multi ? (u.snd[u.shown].id.empty() ? "TAP A NUMBER" : "") : smp || ty == "stretch" ? "TAP LOAD FILE" : "LISTENING", x + (multi ? 2 : 2), multi ? top : y + 4, sd.missing ? 14 : 18); }
+    if (ty == "stretch" && m->p[0].load() < 0.5f) { const std::string l = std::string(w >= Canvas::tw("LIVE: WHAT COMES IN") + 4 ? "LIVE: WHAT COMES IN" : "LIVE INPUT"); c.text(l, x + (w - Canvas::tw(l)) / 2, y + 4, 18); }   // whatever fits the width
+    else if (ty == "looper" && m->p[0].load() < 0.5f) {   // LIVE: the window it listens to (or holds, frozen)
+      const bool fz = D(40) > 1.5f; char b[32]; std::snprintf(b, 32, fz ? "FROZEN: %dS" : "LIVE: THE LAST %dS", (int)m->p[3].load()); std::string l = b; if (Canvas::tw(l) > w - 2) l = fz ? "FROZEN" : "LIVE";
+      c.text(l, x + (w - Canvas::tw(l)) / 2, y + 2, fz ? 11 : 18); for (int i = 0; i < w; i += 2) c.px(x + i, y + 10, 21); }
+    else if (sd.peaks.empty()) { c.text(sd.missing ? "LOAD IT AGAIN" : multi ? (u.snd[u.shown].id.empty() ? "TAP A NUMBER" : "") : smp ? "LOAD OR RECORD" : ty == "stretch" ? "TAP LOAD FILE" : "LISTENING", x + (multi ? 2 : 2), multi ? top : y + 4, sd.missing ? 14 : 18); }
     else {
       const float a0 = smp && kind != 1 ? m->p[5].load() : 0, b0 = smp && kind != 1 ? a0 + m->p[6].load() * (1 - a0) : 1;
       for (int i = 0; i < w; i++) { const float fx = (float)i / w; const int h = (int)std::lround(sd.peaks[std::min(sd.peaks.size() - 1, (size_t)(fx * sd.peaks.size()))] * amp), col = fx >= a0 && fx <= b0 ? 48 : 21;
@@ -295,7 +298,13 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
       else if (smp) for (float xx : {a0, b0}) for (int j = top - y; j < 12; j += 2) c.px(x + (int)std::lround(xx * (w - 1)), y + j, 24);
       if (smp) { const int n = (int)D(0); for (int k = 0; k < n && k < 12; k++) { if (multi && (int)D(20 + k) != u.shown) continue; const int px = x + (int)std::lround(clampf(D(1 + k), 0, 1) * (w - 1)); for (int j = top - y; j < 12; j++) c.px(px, y + j, 12); } }
     }
-    if (!smp && D(0) >= 0) { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, 12);
+    if (smp && (D(40) >= 0.5f || D(45) > 0.5f)) {   // SAMPLER recording: what it's doing, in red, over the sound
+      const int st = (int)std::lround(D(40)); char b[40]; const bool od = m->p[m->def->paramIndex("recmode")].load() > 0.5f && !u.snd[0].peaks.empty();   // OVERDUB needs a sound to lay over
+      if (st == 1) std::snprintf(b, 40, "WAITING FOR THE BAR"); else if (st == 3) std::snprintf(b, 40, "FINISHING");
+      else if (st == 2) { if (D(44) > 0) std::snprintf(b, 40, "%s %.1F/%.0FS", od ? "OVERDUB" : "REC", D(41), D(44)); else std::snprintf(b, 40, "%s %.1FS", od ? "OVERDUB" : "REC", D(41)); }
+      else std::snprintf(b, 40, "FEEDBACK: NOT MONITORING");
+      std::string l = b; l = l.substr(0, (size_t)std::max(4, (w - 2) / 4)); if (sd.peaks.empty()) c.rect(x, y, w, 12, 25); else c.rect(x, y, Canvas::tw(l) + 2, 7, 25); c.text(l, x + 1, y + (sd.peaks.empty() ? 3 : 1), st ? 14 : 18); }
+    if (!smp && D(0) >= 0) { const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = ty == "looper" && m->p[0].load() < 0.5f ? 8 : 0; j < 12; j++) c.px(hx, y + j, 12);   // LIVE: below its words
       const int n = (int)D(1); for (int k = 0; k < n && k < 30; k++) c.px(x + (int)std::lround(clampf(D(2 + k), 0, 1) * (w - 1)), y + 6 + (int)(std::rand() % 9) - 4, 4); }
   } else if (ty == "comp" || ty == "limit" || ty == "master") {   // how loud it is (top) and how much it's turning down (red, from the right)
     stereoMeter(c, u, x, y, w, std::pow(10.f, D(1) / 20), std::pow(10.f, D(3) / 20), dt);   // L and R: how loud
@@ -338,11 +347,6 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     else { const int hx = X(D(0)); for (int j = 0; j < H; j++) c.px(hx, y + j, st == 2 ? 14 : 9);
       for (int e2 = 0; e2 < 2; e2++) { const int lx = std::min(x + w - 2, X(e2 ? S + L : S)), col = drag.kind == D_NLOOP && drag.m == &u && drag.dir == e2 ? 4 : 12;   // the start and end lines: drag them
         for (int j = 0; j < H; j += 2) c.px(lx, y + j, col); c.rect(lx - 1, y, 3, 3, col); c.rect(lx - 1, y + H - 3, 3, 3, col); } }
-  } else if (ty == "tloop") {   // the tape: how loud each part is, the piece being played, and the head (red while recording)
-    const float a0 = D(2), n0 = D(3); for (int k = 0; k < 32; k++) { const int x0 = x + k * w / 32, x1 = x + (k + 1) * w / 32; const float fx = (k + 0.5f) / 32;
-      const int h = std::max(0, std::min(5, (int)std::lround(std::sqrt(D(4 + k)) * 5))), col = n0 < 0.999f && (fx < a0 || fx > a0 + n0) ? 21 : 48;
-      for (int xx = x0; xx < x1 - (w >= 64 ? 1 : 0); xx++) for (int j = -h; j <= h; j++) c.px(xx, y + 6 + j, col); }
-    const int hx = x + (int)std::lround(clampf(D(0), 0, 1) * (w - 1)); for (int j = 0; j < 12; j++) c.px(hx, y + j, D(1) > 0.5f ? 14 : 12);
   } else if (ty == "listen") {   // what key and scale it hears, how sure it is, the runner-up, and the 12 notes it's hearing
     const int r = (int)D(0), sc = std::max(0, std::min((int)scales().size() - 1, (int)D(1))), r2 = (int)D(3), sc2 = std::max(0, std::min((int)scales().size() - 1, (int)D(4)));
     if (D(2) <= 0 && D(18) < 1e-6f) c.text("LISTENING...", x + 1, y + 1, 18);
@@ -578,7 +582,9 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     bool idle = (q.only == "free" && clocked) || (q.only == "clock" && !clocked) || (q.only == "own" && (syncOn || clocked));
     if (q.only == "adsr" && u.m->p[6].load() < 0.5f) idle = true;
     if (q.only == "side") { bool sp = false; for (auto& cb : cables) if (cb.to == u.m->id && cb.toPort == 2) sp = true; if (!sp) idle = true; }   // DUCKER: THRESHOLD is for SIDE
-    if (q.only == "wander" && u.m->p[0].load() < 4.5f) idle = true;   // KEY JOURNEY: HOME PULL is for WANDER
+    if (q.only == "wander" && u.m->p[0].load() < 4.5f) idle = true;
+    if (q.only == "held" && u.m->p[0].load() < 0.5f) idle = true;   // GRAIN LOOPER LIVE: nothing held to edit
+    if (q.only == "overdub") { const int k = u.m->def->paramIndex("recmode"); if (k >= 0 && u.m->p[k].load() < 0.5f) idle = true; }   // SAMPLER: KEEP is for OVERDUB   // KEY JOURNEY: HOME PULL is for WANDER
     if (q.only == "file" && u.m->p[0].load() < 0.5f) idle = true;   // STRETCH: only for a loaded file   // MI VOICES: the envelope is only used in ADSR
     if (d->type == "sample") { const int kind = (int)u.m->p[1].load(); const bool once = u.m->p[3].load() > 0.5f;   // settings that don't apply to this kind of sound or way of playing
       idle = idle || (q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once); }
@@ -664,7 +670,10 @@ void Ui::draw(Canvas& c, float dt) {
   if (selOn) { const int bw = Canvas::tw("UNPLUG") + 6; ubx = std::max(2, std::min(c.W - bw - 2, ubx)); uby = std::max(TOP + 2, std::min(c.H - 11, uby));
     c.rect(ubx + 1, uby + 1, bw, 9, 26); c.rect(ubx, uby, bw, 9, 14); c.text("UNPLUG", ubx + 3, uby + 2, 15); }
   // holding - or + keeps nudging: a short wait, then steadily
-  if (drag.kind == D_STEP) { drag.holdT += dt; while (drag.holdT > 0.45f) { drag.holdT -= 0.06f; nudge(drag.m, drag.k, drag.dir); } }
+  if (drag.kind == D_STEP) { drag.holdT += dt; drag.holdSum += dt;   // held: it repeats; with many steps (STRETCH's 1000) it speeds up the longer it's held
+    const ParamDef& hq = drag.m->m->def->params[drag.k]; const bool many = hq.step > 0 && (hq.max - hq.min) / hq.step > 64;
+    const int by = !many || drag.holdSum < 1.5f ? 1 : drag.holdSum < 3 ? 5 : drag.holdSum < 5 ? 20 : 50;
+    while (drag.holdT > 0.45f) { drag.holdT -= 0.06f; nudge(drag.m, drag.k, drag.dir * by); } }
   // a cable being dragged, and the jacks it could go to
   if (drag.kind == D_CABLE) {
     drawCable(c, drag.from.x - viewX, drag.from.y - viewY, drag.wx - viewX, drag.wy - viewY, 4);
@@ -931,10 +940,10 @@ void Ui::pointerDown(float sx, float sy) {
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }
       Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + rowY(*u, pj) * ROW + 4;
-      l.pick = [this, u, pj](int i) { u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i] + (qq.key == "chan" ? (u->m->def->type == "tloop" ? "  (FOR WHAT IT RECORDS FROM NOW)" : "  (FOR THE NEXT SOUND YOU LOAD OR CATCH)") : ""), qq.key == "chan" ? 4.f : 2.f); changed(); };
+      l.pick = [this, u, pj](int i) { u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i] + (qq.key == "chan" ? (u->m->def->type == "sample" ? "  (FOR THE NEXT SOUND YOU LOAD OR RECORD)" : "  (FOR THE NEXT SOUND YOU LOAD OR CATCH)") : ""), qq.key == "chan" ? 4.f : 2.f); changed(); };
       openDropdown(l); return; }
-    if (lx >= minusX(*u, pj) - 2 && lx < minusX(*u, pj) + 5) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = -1; drag.holdT = 0; nudge(u, pj, -1); return; }
-    if (lx >= g.w - 8) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = 1; drag.holdT = 0; nudge(u, pj, 1); return; }
+    if (lx >= minusX(*u, pj) - 2 && lx < minusX(*u, pj) + 5) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = -1; drag.holdT = 0; drag.holdSum = 0; nudge(u, pj, -1); return; }
+    if (lx >= g.w - 8) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = 1; drag.holdT = 0; drag.holdSum = 0; nudge(u, pj, 1); return; }
     takeOwnTempo(u, pj, eng); drag.kind = D_PARAM; drag.m = u; drag.k = pj; drag.n0 = q.toNorm(u->m->p[pj].load()); return;
   }
   drag.kind = D_MOVE; drag.m = u; drag.ox = wx - u->x; drag.oy = wy - u->y;

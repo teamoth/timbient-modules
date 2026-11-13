@@ -35,7 +35,7 @@ struct MiVoices : Module {
     V* x = nullptr; for (int i = 0; i < MAXV; i++) if (!v[i].on) { x = &v[i]; break; }
     if (!x) { x = &v[0]; for (int i = 1; i < MAXV; i++) if (v[i].age < x->age) x = &v[i]; }   // all busy: the oldest note gives way
     x->on = true; x->age = ++ages; x->note = ev.note + e[PITCH_]; x->vel = 1 - e[VSENS] + e[VSENS] * ev.vel; x->trigBlocks = 2; x->quiet = 0; x->life = 0; x->fadeV = 1; x->fadeK = 0; x->glide = 0;
-    if (mono && ig >= 0 && e[ig] > 0.001f && lastNote >= 0) { x->n0 = lastNote; x->nT = x->note; x->gT = 0; x->glide = e[ig]; x->note = lastNote; }   // GLIDE: from the last note
+    if (ig >= 0 && e[ig] > 0.0015f && lastNote >= 0) { x->n0 = lastNote; x->nT = x->note; x->gT = 0; x->glide = e[ig]; x->note = lastNote; }   // GLIDE: from the last note
     lastNote = x->glide > 0 ? x->nT : x->note;
     x->env.atk = e[ATK]; x->env.dec = e[DEC]; x->env.sus = e[SUS]; x->env.hold = e[HOLD]; x->env.rel = e[REL]; x->env.start(); panGains(rng.bi() * e[WIDTH], x->gl, x->gr);
   }
@@ -66,7 +66,7 @@ struct MiVoices : Module {
 static Reg rMi(new ModuleDef{"mi", "MI VOICES", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
   [] { std::vector<std::string> names; for (int i = 0; i < MI_ENGINES; i++) names.push_back(miEngines()[i].name);
     std::vector<ParamDef> p = {OP("voice", "MODEL", names, 0), pct("harm", "HARMONICS", 0.4f), pct("timb", "TIMBRE", 0.5f), pct("morph", "MORPH", 0.5f),
-      pct("decay", "DECAY", 0.5f), pct("colour", "LPG COLOUR", 0.5f), OP("env", "ENVELOPE", {"NATURAL", "ADSR"}, 0), PITCH()};   // named as on Plaits
+      pct("decay", "LPG DECAY", 0.5f), pct("colour", "LPG COLOUR", 0.5f), OP("env", "ENVELOPE", {"NATURAL", "ADSR"}, 0), PITCH()};   // named as on Plaits
     p.back().label = "FREQUENCY";
     for (auto& q : envP(0.01f, 0.3f, 0.6f, 1, 1.5f)) { q.only = "adsr"; p.push_back(q); }
     p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.4f)); p.push_back(LEVEL()); return p; }(),

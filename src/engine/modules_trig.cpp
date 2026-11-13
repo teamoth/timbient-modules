@@ -75,7 +75,7 @@ struct Clump : Module {
 static Reg rClump(new ModuleDef{"clump", "CLUMP SEQ", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
   {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("steps", "STEPS", 2, 16, 8), pct("clump", "CLUMP", 0.6f),
    only(fmt([] { auto q = prExp("speed", "BPM", 0.2f, 8, 1.6f); q.step = 1 / 60.f; return q; }(), [](float v) { return std::to_string((int)std::lround(v * 60)) + " BPM"; }), "free"),   // stored as steps a second; shown as whole BPM
-   only(pctX("drift", "DRIFT", 1.6f, 0.25f), "free"), pctX("mutate", "MUTATE", 3, 0.2f), ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 7, 4)}, 14, 68, false, [] { return new Clump(); }});
+   only(pctX("drift", "DRIFT", 1.6f, 0.25f), "free"), pctX("mutate", "MUTATE", 3, 0.2f), ST("range", "RANGE", 1, 14, 7), OCTP("oct", 1, 8, 4)}, 14, 68, false, [] { return new Clump(); }});
 
 // ---------------- ORBITS ----------------
 struct Orbits : Module {
@@ -97,7 +97,7 @@ struct Orbits : Module {
   }
 };
 static Reg rOrbits(new ModuleDef{"orbits", "ORBITS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), ST("range", "RANGE", 1, 14, 5), OCTP("oct", -1, 7, 4)},
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), ST("range", "RANGE", 1, 14, 5), OCTP("oct", 1, 8, 4)},
   26, 68, false, [] { return new Orbits(); }});
 
 // ---------------- RANDOM HOPS ----------------
@@ -127,13 +127,13 @@ struct Keys : Module {
   void trig(int port, const Event& ev) override { if (port == -1) emit(0, ev); }
 };
 static Reg rKeys(new ModuleDef{"keys", "NOTE GRID", Cat::Trig, {}, {{"NOTE", PType::Trig}},
-  {noMod(pct("vel", "VELOCITY", 0.8f)), noMod(OCTP("oct", 1, 7, 3)), OP("size", "SIZE", {"SMALL", "MEDIUM", "LARGE"}, 1)}, 36, 118, false, [] { return new Keys(); }});
+  {noMod(pct("vel", "VELOCITY", 0.8f)), noMod(OCTP("oct", 1, 8, 4)), OP("size", "SIZE", {"SMALL", "MEDIUM", "LARGE"}, 1)}, 36, 118, false, [] { return new Keys(); }});
 
 // ---------------- QWERTY MIDI: the computer keyboard plays notes, three octaves of them (C-0 to B-2), on keys you choose ----------------
 // The screen sends each key press in (port -1) as a note; OCTAVE says where C-0 sits
 struct Qwerty : Module { void trig(int port, const Event& ev) override { if (port == -1) emit(0, ev); } };
 static Reg rQwerty(new ModuleDef{"qwerty", "QWERTY MIDI", Cat::Trig, {}, {{"NOTE", PType::Trig}},
-  {noMod(pct("vel", "VELOCITY", 0.8f)), noMod(fmt(ST("oct", "OCTAVE", 0, 7, 3), [](float v) { return "C-0 = C" + std::to_string((int)std::lround(v)); })), ACT("reset", "DEFAULT KEYS")}, 32, 118, false, [] { return new Qwerty(); }});
+  {noMod(pct("vel", "VELOCITY", 0.8f)), noMod(fmt(ST("oct", "OCTAVE", 1, 8, 4), [](float v) { return "C-0 = C" + std::to_string((int)std::lround(v)); })), ACT("reset", "DEFAULT KEYS")}, 32, 118, false, [] { return new Qwerty(); }});
 
 // ---------------- LFO ----------------
 struct Lfo : Module {
@@ -156,7 +156,7 @@ static Reg rLfo(new ModuleDef{"lfo", "LFO", Cat::Mod, {{"CLOCK", PType::Trig}}, 
   {OP("shape", "SHAPE", {"SINE", "TRI", "SQUARE", "RANDOM", "DRIFT"}, 4),
    only(rev(fmt(prExp("rate", "RATE", 0.05f, 300, 20), [](float v) { char b[16]; if (v < 1) std::snprintf(b, 16, "%.1fHZ", 1 / v); else if (v < 10) std::snprintf(b, 16, "1 PER %.1fS", v); else if (v < 120) std::snprintf(b, 16, "1 PER %dS", (int)v); else std::snprintf(b, 16, "1 PER %.1fM", v / 60); return std::string(b); })), "free"),
    OP("sync", "SYNC", {"1/4 BEAT", "1/2 BEAT", "1 BEAT", "2 BEATS", "4 BEATS", "8 BEATS", "16 BEATS", "32 BEATS"}, 4),   // drawn like the other settings (it is used once a clock is patched in)
-   pct("depth", "DEPTH", 0.5f), OP("dir", "MOVES", {"BOTH", "UP", "DOWN"}, 0)}, 7, 68, false, [] { return new Lfo(); }});
+   pct("depth", "DEPTH", 0.5f), OP("dir", "DIRECTION", {"BOTH", "UP", "DOWN"}, 0)}, 7, 68, false, [] { return new Lfo(); }});
 
 // ---------------- OUTPUT: crossfade A/B, LOW / MID / HIGH EQ, level, to the master ----------------
 struct Out : Module {

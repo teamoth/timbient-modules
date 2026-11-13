@@ -48,12 +48,13 @@ void registerDef(ModuleDef* d) {
     std::vector<std::string> sc = {"GLOBAL"}; for (auto& x : scales()) sc.push_back(x.name);
     ParamDef a = OP("skey", "KEY", keys, 0); ParamDef b = OP("sscale", "SCALE", sc, 0);
     d->keyIdx = (int)d->params.size(); d->params.push_back(a); d->scaleIdx = (int)d->params.size(); d->params.push_back(b); }
-  static const char* CHANNELLED[] = {"sample", "looper", "stretch", "tloop"};   // CHANNELS: MONO, or STEREO (left and right kept)
+  static const char* CHANNELLED[] = {"sample", "looper", "stretch"};   // CHANNELS: MONO, or STEREO (left and right kept)
   for (const char* k : CHANNELLED) if (d->type == k) d->params.push_back(OP("chan", "CHANNELS", {"MONO", "STEREO"}, 1));
-  static const char* LOWPASSED[] = {"looper", "stretch", "tloop", "click", "fold"};
-  for (const char* k : LOWPASSED) if (d->type == k) { d->lpCut = (int)d->params.size(); d->params.push_back(prHz("cut", "CUTOFF", 80, 20000, 20000)); d->lpRes = (int)d->params.size(); d->params.push_back(pct("res", "RES", 0)); }
-  if (d->cat == Cat::Voice) {   // VOICES: POLY (up to 12 notes at once) or MONO (one: a new note fades the last out); GLIDE slides MONO from note to note
-    d->params.push_back(OP("poly", "VOICES", {"POLY", "MONO"}, 0)); if (d->type != "sample") { ParamDef g = T("glide", "GLIDE", 0, 2, 0); g.only = "mono"; d->params.push_back(g); } }
+  static const char* LOWPASSED[] = {"looper", "stretch", "click", "fold"};
+  for (const char* k : LOWPASSED) if (d->type == k) { d->lpCut = (int)d->params.size(); d->params.push_back(prHz("cut", "CUTOFF", 40, 20000, d->type == "fold" ? 6000.f : 20000.f)); d->lpRes = (int)d->params.size(); d->params.push_back(pct("res", "RES", 0)); }
+  if (d->cat == Cat::Voice) {   // VOICES: POLY (up to 12 notes at once) or MONO (one: a new note fades the last out); GLIDE slides from note to note (MONO or POLY)
+    d->params.push_back(OP("poly", "VOICES", {"POLY", "MONO"}, 0));    // TONE has a GLIDE of its own; FORMANT's "glide" is its vowel's MOVE TO, so its pitch glide has another key
+    if (d->type != "sample" && d->type != "tone") { d->params.push_back(fmt(T(d->type == "formant" ? "pglide" : "glide", "GLIDE", 0.001f, 2, 0.001f), [](float v) { return v < 0.0015f ? std::string("OFF") : fmtSecs(v); }));} }   // GLIDE all the way left: OFF (a time slider can't start at 0)
   bool audio = false; for (auto& o : d->outs) if (o.type == PType::Audio) audio = true;
   if (audio && d->type != "mixer" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {
     ParamDef q = pr("pan", "PAN", -1, 1, 0); q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };
@@ -248,7 +249,7 @@ void Engine::block(float* L, float* R, int n) {
       float pk = 0; for (auto& op : m->out) for (auto& ch : op) for (int i = 0; i < n; i++) pk = std::max(pk, std::fabs(ch[i]));
       m->retireT += n / sr; m->quietT = pk < 1e-4f ? m->quietT + n / sr : 0;
       // voices, and modules that hold a sound (which could loop for ever), get a second for their release; effects ring out
-      const bool holds = d->cat == Cat::Voice || d->type == "looper" || d->type == "stretch" || d->type == "tloop";
+      const bool holds = d->cat == Cat::Voice || d->type == "looper" || d->type == "stretch";
       if (m->quietT > 0.3f || m->retireT > (holds ? 1.f : 20.f)) for (auto& k : cables) if (k.from == m->id && !k.dieAtZero) { k.gt = 0; k.dieAtZero = true; } }
     const bool silent = (m->mute.load(std::memory_order_relaxed) && d->cat != Cat::Out) || (anySolo && d->cat == Cat::Voice && !m->solo.load(std::memory_order_relaxed));
     if (silent) { for (auto& o : m->out) for (auto& ch : o) std::fill(ch.begin(), ch.begin() + n, 0.f); for (auto& lv : m->outLev) lv.store(0, std::memory_order_relaxed); }

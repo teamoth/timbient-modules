@@ -152,10 +152,14 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (ty == "ping") { const double r = p->num("ratio", 3.5), dc = p->num("decay", 0.35), ix = p->num("index", 0.5); m.set("type", Json::string("fm2"));
       p->set("ratio", Json::number(std::round(r * 2) / 2)); p->set("index", Json::number(std::min(10.0, (0.2 + ix * 4) / r * 3))); p->set("idec", Json::number(dc * 0.4)); p->set("isus", Json::number(0)); p->set("hold", Json::number(0.02)); p->set("rel", Json::number(dc * 1.5)); }
     if (ty == "drone") { m.set("type", Json::string("pad")); }
+    if (ty == "tloop") {   // TAPE LOOP became the SAMPLER (recording, OVERDUB keeping KEEP): its tape was never kept, so it starts empty
+      m.set("type", Json::string("sample")); Json np = Json::object(); for (const char* k : {"rec", "keep", "chan", "cut", "res", "level", "pan"}) if (const Json* v = p->get(k)) np.set(k, *v);
+      np.set("recmode", Json::number(1)); np.set("mon", Json::number(1)); m.set("p", np); }
     if (ty == "echo" && p->get("sync") && !p->get("div")) {   // ECHO's TEMPO setting became a CLOCK input: keep the same echo length, free
       static const double B[9] = {0, 0.25, 1 / 3.0, 0.5, 0.75, 1, 1.5, 2, 4}; const int sy = std::max(0, std::min(8, (int)p->num("sync")));
       if (sy > 0) { const double bpm = data.num("bpm", 72) > 0 ? data.num("bpm", 72) : 72; p->set("time", Json::number(std::max(0.05, std::min(4.0, B[sy] * 60 / bpm)))); p->set("div", Json::number(sy - 1)); } }
     if ((ty == "clock" || ty == "tracker") && !p->get("sync")) p->set("sync", Json::number(0));   // older sessions keep their own tempos
+    if (ty == "looper" && !p->get("src")) p->set("src", Json::number(1));   // GRAIN LOOPER: from before LIVE, it played what it held
   }
   // sessions from before the modules grew 8 wider for their - and + buttons: spread them out so they don't overlap
   const bool narrow = data.num("w", 0) < 2; auto mx = [narrow](const Json& m) { const double x = m.num("x"); return (int)std::lround(narrow ? x * 80.0 / 72.0 : x); };
@@ -167,7 +171,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (def->fixed) { for (auto& up : ui.mods) if (up->m->def == def) u = up.get(); if (u) { u->x = mx(m); u->y = (int)m.num("y"); } }
     if (!u) u = ui.add(ty, mx(m), (int)m.num("y"));
     if (!u) { skipped.insert(ty); continue; }
-    if (const Json* p = m.get("p")) for (size_t k = 0; k < def->params.size(); k++) { const Json* v = p->get(def->params[k].key); if (v && v->t == Json::NUM) u->m->p[k].store((float)v->n); }
+    if (const Json* p = m.get("p")) for (size_t k = 0; k < def->params.size(); k++) { const Json* v = p->get(def->params[k].key); if (v && v->t == Json::NUM) { const ParamDef& q = def->params[k]; u->m->p[k].store(q.key == "oct" ? clampf((float)v->n, q.min, q.max) : (float)v->n); } }   // OCTAVE: older sessions could go lower than 1
     if (u->m->seq) readSeq(u->m, m.get("p"));
     if (u->m->ev) evLoad(u->m, m.get("p"));
     if (const Json* p = m.get("p")) { const std::string aid = p->str("audio"); if (!aid.empty()) u->snd[0].id = aid;

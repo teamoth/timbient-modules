@@ -1,3 +1,5 @@
+#include <ctime>
+#include <thread>
 #include <cstdlib>
 // Offline test: play every module type in a small patch for a few seconds; check the sound stays finite and
 // reasonably loud, and report what each one costs. Then, if a session file is given, load it and render it.
@@ -34,7 +36,6 @@ int main(int argc, char** argv) {
       if (d->ins.size()) ui.connect(clk, "PULSE", m, d->ins[0].name);
       if (d->type == "tracker") { for (int i = 0; i < 16; i += 2) { m->m->seq[i * 2].store(60.f + i); m->m->seq[i * 2 + 1].store(0.8f); } } }
     if (d->type == "timeline") { ui.set(m, "len", 10); ui.set(m, "run", 1); for (int i = 0; i < 6; i++) { m->m->ev[i * 4].store(i * 0.5f); m->m->ev[i * 4 + 1].store(0); m->m->ev[i * 4 + 2].store(1); m->m->ev[i * 4 + 3].store(0); } m->m->evN.store(6); }
-    if (d->type == "tloop") { ui.set(m, "len", 1); ui.set(m, "rec", 1); }   // record a short loop, so it plays back within the test
     if (d->type == "stretch") ui.set(m, "src", 1);  // stretch a file
     if (d->type == "sample" || d->type == "looper" || d->type == "stretch") {   // give it a sound: a few seconds of a gliding tone with some noise
       AudioBuf* b = new AudioBuf(); b->sr = 44100; b->d.resize(44100 * 3); float ph = 0; Rng rr(5);
@@ -178,6 +179,58 @@ int main(int argc, char** argv) {
     ui.set(sm, "trig", 1); eng.trigger(sm->m->id, 0, Event{}); const float pk0 = run(eng, 0.5f).peak; const int id = sm->m->id; ui.removeGently(sm); float gone = -1;
     for (int k = 0; k < 40; k++) { run(eng, 0.1f); if (!eng.byId(id)) { gone = (k + 1) * 0.1f; break; } }
     const bool ok = gone > 0 && gone < 1.6f; if (!ok) fails++; std::printf("playing sample taken away: gone after %.1fs (was playing at %.2f)%s\n", gone, pk0, ok ? "" : "  WRONG"); }
+  // every slider: its ends and default map to and from the slider without NaN (an exponential slider can't start at 0)
+  { int bad = 0; std::string which; for (auto* d : allDefs()) for (auto& q : d->params) { if (!q.opts.empty() || q.act) continue;
+      for (float v : {q.min, q.max, q.def}) { const float n = q.toNorm(v), b = q.fromNorm(n); if (!std::isfinite(n) || !std::isfinite(b) || std::fabs(b - v) > 1e-3f * std::max(1.f, std::fabs(v))) { bad++; which += " " + d->type + "." + q.key; break; } } }
+    if (bad) fails++; std::printf("sliders map cleanly: %s%s\n", bad ? "NO:" : "all", which.c_str()); }
+  // SAMPLER: REPLACE records what comes in; 1 BAR stops by itself; OVERDUB layers on (louder each pass); MONITOR WHILE REC
+  { ui.clearPatch(); eng.tempo.bpm.store(120); UiMod* out = ui.add("out", 300, 20); UiMod* src = ui.add("tone", 0, 20); UiMod* sm = ui.add("sample", 100, 20);
+    ui.connect(src, "OUT", sm, "IN"); ui.connect(sm, "OUT", out, "A");
+    { const int at = src->m->def->paramIndex("atk"); src->m->p[at + 2].store(1); src->m->p[at + 3].store(60); }
+    Event nt; nt.note = 60; nt.vel = 1; eng.trigger(src->m->id, 0, nt); run(eng, 0.3f);
+    AudioBuf* rb = new AudioBuf(); rb->sr = 48000; rb->d.assign(48000 * 60, 0.f); rb->r.assign(48000 * 60, 0.f); eng.setBuffer(sm->m->id, rb, 99); run(eng, 0.05f);
+    ui.set(sm, "rec", 1); const float hearRec = run(eng, 1.0f).rms; ui.set(sm, "rec", 0); run(eng, 0.05f);
+    const int take1 = (int)sm->m->disp[42].load(); const float n1 = sm->m->disp[43].load(); double e1 = 0; for (long i = 0; i < (long)n1; i++) e1 += rb->d[i] * rb->d[i]; const float rms1 = (float)std::sqrt(e1 / std::max(1.f, n1));
+    const float quietAfter = run(eng, 0.3f).rms;   // MONITOR WHILE REC: quiet again (no sound kept here, in the test)
+    eng.action(sm->m->id, "taken"); ui.set(sm, "reclen", 1); ui.set(sm, "rec", 1); run(eng, 2.3f); const float n2 = sm->m->disp[43].load(); const bool stopped = sm->m->p[sm->m->def->paramIndex("rec")].load() < 0.5f;
+    eng.action(sm->m->id, "taken"); ui.set(sm, "reclen", 0);
+    AudioBuf* one = new AudioBuf(); one->sr = 48000; one->d.assign(48000, 0.f); for (int i = 0; i < 48000; i++) one->d[i] = 0.3f * std::sin(i * 0.01f); eng.setBuffer(sm->m->id, one, 0);
+    ui.set(sm, "recmode", 1); ui.set(sm, "keep", 0.8f); run(eng, 0.1f); ui.set(sm, "rec", 1); run(eng, 2.5f); ui.set(sm, "rec", 0); run(eng, 0.1f);
+    const float n3 = sm->m->disp[43].load(); double e3 = 0; for (long i = 0; i < 48000; i++) e3 += rb->d[i] * rb->d[i]; const float rms3 = (float)std::sqrt(e3 / 48000);
+    const bool ok = take1 == 1 && std::fabs(n1 - 48000) < 600 && rms1 > 0.05f && hearRec > 0.02f && quietAfter < 0.005f && std::fabs(n2 - 96000) < 300 && stopped && std::fabs(n3 - 48000) < 2 && rms3 > rms1 * 0.9f;
+    if (!ok) fails++;
+    std::printf("sampler: take %d of %.0f samples (rms %.3f), heard while recording %.3f, quiet after %.4f; 1 bar -> %.0f, stopped %d; overdub %.0f (rms %.3f)%s\n", take1, n1, rms1, hearRec, quietAfter, n2, stopped, n3, rms3, ok ? "" : "  WRONG"); }
+  // an old session's TAPE LOOP comes back as a SAMPLER set to OVERDUB, its cables kept
+  { const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"out","x":300,"y":20,"p":{}},{"id":2,"type":"tloop","x":0,"y":20,"p":{"keep":0.6,"len":8,"level":0.5}},{"id":3,"type":"tone","x":0,"y":120,"p":{}}],
+      "cables":[{"f":2,"fp":"OUT","t":1,"tp":"A","ty":"audio"},{"f":3,"fp":"OUT","t":2,"tp":"IN","ty":"audio"}]})";
+    Json j; Json::parse(old, j); ui.clearPatch(); loadPatch(ui, j); UiMod* sm = nullptr; for (auto& um : ui.mods) if (um->m->def->type == "sample") sm = um.get();
+    int cab = 0; for (auto& c : ui.cables) if (sm && (c.to == sm->m->id || c.from == sm->m->id)) cab++;
+    const bool ok = sm && std::fabs(sm->m->p[sm->m->def->paramIndex("keep")].load() - 0.6f) < 1e-4f && sm->m->p[sm->m->def->paramIndex("recmode")].load() > 0.5f && sm->m->p[sm->m->def->paramIndex("len")].load() > 0.99f && cab == 2;
+    if (!ok) fails++; std::printf("old tape loop -> sampler %d, keep and overdub kept, %d cables%s\n", sm != nullptr, cab, ok ? "" : "  WRONG"); }
+  // GRAIN LOOPER LIVE: grains straight from what comes in; FROZEN it keeps playing the window after the input stops
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* src = ui.add("tone", 0, 20); UiMod* gl = ui.add("looper", 100, 20); ui.connect(src, "OUT", gl, "IN"); ui.connect(gl, "OUT", out, "A");
+    ui.set(gl, "len", 4); const int at = src->m->def->paramIndex("atk"); src->m->p[at + 2].store(1); src->m->p[at + 3].store(3); src->m->p[at + 4].store(0.05f);
+    Event nt; nt.note = 64; nt.vel = 1; eng.trigger(src->m->id, 0, nt); run(eng, 2.5f); const float liveR = run(eng, 0.5f).rms;
+    ui.set(gl, "freeze", 1); run(eng, 3.0f); const float srcGone = src->m->disp[0].load(); (void)srcGone; const float frozenR = run(eng, 1.0f).rms;
+    ui.set(gl, "freeze", 0); run(eng, 5.0f); const float afterR = run(eng, 1.0f).rms;   // listening again: the input is silent now, so the cloud dies away
+    const bool def = gl->m->p[0].load() < 0.5f;
+    const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"out","x":300,"y":20,"p":{}},{"id":2,"type":"looper","x":0,"y":20,"p":{"len":6}}],"cables":[]})";
+    Json j; Json::parse(old, j); ui.clearPatch(); loadPatch(ui, j); bool held = false; for (auto& um : ui.mods) if (um->m->def->type == "looper") held = um->m->p[0].load() > 0.5f;
+    const bool ok = def && liveR > 0.01f && frozenR > 0.01f && afterR < frozenR * 0.2f && held; if (!ok) fails++;
+    std::printf("grain looper live: %.3f, frozen after the input stops %.3f, let go %.4f, new ones LIVE %d, old sessions HELD %d%s\n", liveR, frozenR, afterR, def, held, ok ? "" : "  WRONG"); }
+  // STRETCH: the 2.7S window sounds, and its big windows (worked out on their own thread) never hold an audio block up
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* src = ui.add("pad", 0, 20); UiMod* st = ui.add("stretch", 100, 20); ui.connect(src, "OUT", st, "IN"); ui.connect(st, "OUT", out, "A");
+    ui.set(st, "win", std::getenv("TB_WIN") ? std::atoi(std::getenv("TB_WIN")) : 6); ui.set(st, "amt", 8); const int at = src->m->def->paramIndex("atk"); src->m->p[at].store(0.01f); src->m->p[at + 2].store(1); src->m->p[at + 3].store(20);
+    Event nt; nt.note = 57; nt.vel = 1; eng.trigger(src->m->id, 0, nt);
+    std::vector<float> L(64), R(64); double worst = 0, worst2 = 0; double e2 = 0; long n = 0;
+    const auto tStart = std::chrono::steady_clock::now();   // at four times real speed (the worker needs some real time, as it gets when the app plays)
+    for (int k = 0; k < 48000 * 10 / 64; k++) { while (std::chrono::duration<double>(std::chrono::steady_clock::now() - tStart).count() < k * 64 / 48000.0 / 4) std::this_thread::sleep_for(std::chrono::microseconds(200));
+      timespec c0, c1; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &c0); eng.render(L.data(), R.data(), 64); clock_gettime(CLOCK_THREAD_CPUTIME_ID, &c1);   // this thread's own time (not the other's)
+      const double ms = (c1.tv_sec - c0.tv_sec) * 1e3 + (c1.tv_nsec - c0.tv_nsec) / 1e6;
+      if (k > 100) { if (ms > worst) { worst2 = worst; worst = ms; } else worst2 = std::max(worst2, ms); } /* the second slowest: one stray hiccup of the machine isn't the module's */ if (k > 48000 * 6 / 64) for (int i = 0; i < 64; i++) { e2 += L[i] * L[i]; n++; } }
+    const float rms = (float)std::sqrt(e2 / std::max(1L, n)); const bool whole = std::fabs(st->m->def->params[st->m->def->paramIndex("amt")].fromNorm(0.37f) - std::round(st->m->def->params[st->m->def->paramIndex("amt")].fromNorm(0.37f))) < 1e-4f;
+    const bool ok = rms > 0.002f && worst2 < 1.3 && whole; if (!ok) fails++;
+    std::printf("stretch 2.7s window: rms %.4f, slowest 64-sample blocks %.2f, %.2f ms of work (a block lasts 1.33), whole-number STRETCH %d%s\n", rms, worst, worst2, whole, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

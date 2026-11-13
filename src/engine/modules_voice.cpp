@@ -19,6 +19,7 @@ struct Pluck : Poly<PluckV> {
   }
   void voice(PluckV& x, float& l, float& r) override {
     auto rd = [&](float d) { float rp = x.w - d; while (rp < 0) rp += 8192; int i = (int)rp; float f = rp - i; return x.buf[i & 8191] + (x.buf[(i + 1) & 8191] - x.buf[i & 8191]) * f; };
+    if (x.glLen > 0) x.D = std::max(2.f, std::min(8190.f, sr / x.f - 0.5f));   // GLIDE: the string's length follows the pitch
     const float y = x.gp * 0.5f * (rd(x.D) + rd(x.D + 1));
     x.buf[x.w & 8191] = y; x.w = (x.w + 1) & 8191;
     l = r = y;
@@ -71,7 +72,7 @@ struct Pad : Poly<PadV> {
     l = L; r = R;
   }
 };
-static std::vector<ParamDef> padParams() { std::vector<ParamDef> p = {PITCH(), ST("voices", "VOICES", 2, 7, 5), pct("detune", "DETUNE", 0.35f), prHz("cut", "CUTOFF", 100, 10000, 1400), pct("res", "RES", 0), pct("fenv", "FILT ENV", 0), T("fdec", "FILT DEC", 0.05f, 10, 1.5f), pct("motion", "MOTION", 0.4f), pct("air", "AIR", 0.2f)};
+static std::vector<ParamDef> padParams() { std::vector<ParamDef> p = {PITCH(), ST("voices", "VOICES", 2, 7, 5), pct("detune", "DETUNE", 0.35f), prHz("cut", "CUTOFF", 40, 20000, 1400), pct("res", "RES", 0), pct("fenv", "FILT ENV", 0), T("fdec", "FILT DEC", 0.05f, 10, 1.5f), pct("motion", "MOTION", 0.4f), pct("air", "AIR", 0.2f)};
   for (auto& q : envP(1.6f, 1, 0.8f, 3, 3.5f)) p.push_back(q); p.push_back(pct("vsens", "VEL SENS", 1)); p.push_back(pct("width", "WIDTH", 0.8f)); p.push_back(LEVEL()); return p; }
 static Reg rPad(new ModuleDef{"pad", "PAD", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}}, padParams(), 0, 68, false, [] { return new Pad(); }});
 

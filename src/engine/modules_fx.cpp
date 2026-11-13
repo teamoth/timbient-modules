@@ -17,7 +17,7 @@ struct Filter : Module {
   }
 };
 static Reg rFilter(new ModuleDef{"filter", "FILTER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {OP("type", "TYPE", {"LOWPASS", "HIGHPASS", "BANDPASS"}, 0), prHz("cut", "CUTOFF", 40, 16000, 1800), pct("res", "RES", 0.2f), pct("mix", "MIX", 1)}, 0, 68, false, [] { return new Filter(); }});
+  {OP("type", "TYPE", {"LOWPASS", "HIGHPASS", "BANDPASS"}, 0), prHz("cut", "CUTOFF", 40, 20000, 1800), pct("res", "RES", 0.2f), pct("mix", "MIX", 1)}, 0, 68, false, [] { return new Filter(); }});
 
 // ---------------- ECHO: a ping-pong pair with a darkening feedback loop ----------------
 struct Echo : Module {
