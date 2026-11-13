@@ -50,7 +50,8 @@ class Engine;
 class Module;
 
 // a loaded or caught sound (mono), made on the screen thread and handed to a module whole
-struct AudioBuf { std::vector<float> d; float sr = 48000; double dur() const { return d.size() / (double)sr; } };
+struct AudioBuf { std::vector<float> d, r; float sr = 48000; double dur() const { return d.size() / (double)sr; }   // d: the sound (left, in stereo); r: its right, or empty (mono)
+  bool stereo() const { return r.size() == d.size() && !r.empty(); } const std::vector<float>& R() const { return stereo() ? r : d; } };
 struct ModuleDef {
   std::string type, name; Cat cat = Cat::Proc;
   std::vector<PortDef> ins, outs; std::vector<ParamDef> params;
@@ -124,7 +125,7 @@ public:
   virtual void display(float* vals, int n) {}            // copy display values for the screen (playheads, meters)
   virtual AudioBuf* swapBuf(AudioBuf* b, int slot = 0) { return b; }   // take a new sound; hand back the old one (freed off the audio thread)
   // the last few seconds of this module's input, for CATCH (written here, copied out by the screen thread)
-  std::vector<float> ring; std::atomic<long> ringW{0};
+  std::vector<float> ring, ringR; std::atomic<long> ringW{0};   // ringR: the right, for CHANNELS STEREO
 
   // helpers for modules
   void emit(int port, Event ev);                         // send a trigger down every cable from an output

@@ -140,6 +140,11 @@ int main(int argc, char** argv) {
   { ui.clearPatch(); ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); ui.set(clk, "sync", 0); ui.set(clk, "bpm", 100); UiMod* v = ui.add("click", 100, 20); UiMod* li = ui.add("listen", 200, 20);
     ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", li, "IN"); run(eng, 10); const float bp = li->m->disp[19].load();
     const bool ok = std::fabs(bp - 100) < 3 || std::fabs(bp - 50) < 2 || std::fabs(bp - 200) < 4; if (!ok) fails++; std::printf("listen tempo: %.0f BPM (clock 100), sure %.0f%%%s\n", bp, li->m->disp[20].load() * 100, ok ? "" : "  WRONG"); }
+  // CHANNELS STEREO: a sound with only a left side plays on the left
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "A");
+    AudioBuf* b = new AudioBuf(); b->sr = 48000; b->d.resize(48000); b->r.assign(48000, 0.f); for (int i = 0; i < 48000; i++) b->d[i] = 0.5f * std::sin(i * 0.05f);
+    eng.setBuffer(sm->m->id, b, 0); run(eng, 0.3f); float l = 0, r = 0; std::vector<float> L(256), R(256); for (int k = 0; k < 40; k++) { eng.render(L.data(), R.data(), 256); for (int i = 0; i < 256; i++) { l = std::max(l, std::fabs(L[i])); r = std::max(r, std::fabs(R[i])); } }
+    const bool ok = l > 0.05f && r < l * 0.05f; if (!ok) fails++; std::printf("stereo sample: left %.3f right %.4f%s\n", l, r, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

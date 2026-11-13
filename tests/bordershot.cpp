@@ -9,7 +9,7 @@ using namespace tb;
 int main(int argc, char** argv) {
   const bool border = argc > 1 && std::atoi(argv[1]); const float S = 3;
   Engine eng; eng.setSampleRate(48000); Ui ui(eng); ui.shadows = true; ui.borders = border;
-  ui.bar.push_back({"SESSIONS", [](int) {}}); ui.bar.push_back({"SETTINGS", [](int) {}}); ui.add("clump", 10, 14); ui.add("mutes", 130, 14); UiMod* nl = ui.add("nloop", 250, 14); { Module* m = nl->m; for (int i = 0; i < 14; i++) { m->ev[i * 4].store(i * 0.55f); m->ev[i * 4 + 1].store(55.f + (i * 5) % 12); m->ev[i * 4 + 2].store(0.8f); m->ev[i * 4 + 3].store(0); } m->evN.store(14); nl->m->p[nl->m->def->paramIndex("start")].store(1); nl->m->p[nl->m->def->paramIndex("lenb")].store(5); }
+  ui.bar.push_back({"SESSIONS", [](int) {}}); ui.bar.push_back({"SETTINGS", [](int) {}}); ui.add("listen", 10, 14); ui.add("ducker", 10, 150); ui.add("fold", 130, 14); UiMod* nl = ui.add("nloop", 250, 14); { Module* m = nl->m; for (int i = 0; i < 14; i++) { m->ev[i * 4].store(i * 0.55f); m->ev[i * 4 + 1].store(55.f + (i * 5) % 12); m->ev[i * 4 + 2].store(0.8f); m->ev[i * 4 + 3].store(0); } m->evN.store(14); nl->m->p[nl->m->def->paramIndex("start")].store(1); nl->m->p[nl->m->def->paramIndex("lenb")].store(5); }
   Canvas c; c.fine = true; c.resize(360, 260); applyTheme(c, Theme{}, argc > 2 ? std::atoi(argv[2]) : 0);
   { std::vector<float> L(256), R(256); for (int i = 0; i < 100; i++) eng.render(L.data(), R.data(), 256); } c.beginFrame(); ui.draw(c, 0.016f);
   const int W = (int)(c.W * S), H = (int)(c.H * S); std::vector<uint32_t> img((size_t)W * H);

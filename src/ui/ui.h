@@ -88,15 +88,15 @@ public:
   std::function<void(const std::string&)> onInfo;
   std::function<void()> onBrowseChanged;
   // the sound editor (EDIT SOUND on SAMPLE, GRAIN LOOPER, STRETCH): pick a part of the sound and keep just that (CROP)
-  struct Editor { bool open = false; int target = 0, slot = 0; std::string name; std::vector<float> d; float sr = 48000, peak = 1;
+  struct Editor { bool open = false; int target = 0, slot = 0; std::string name; std::vector<float> d, r; float sr = 48000, peak = 1;   // r: the right of a stereo sound (else empty)
     std::vector<float> mipLo, mipHi;   // every 256 samples' lowest and highest, for drawing long sounds quickly
     double a = 0, b = 0, v0 = 0, v1 = 0; bool fades = true, norm = false, playing = false; } ed;
-  void openEditor(int targetId, int slot, const std::string& name, std::vector<float>&& data, float sr);
+  void openEditor(int targetId, int slot, const std::string& name, std::vector<float>&& data, float sr, std::vector<float>&& right = {});
   void closeEditor();
   void editorWheel(float sx, float wheel);   // zoom in or out around the pointer
   void editorKey(int key);                   // Escape closes, Space plays
-  std::function<void(const std::vector<float>&, float)> onEditPlay;                     // play a piece (empty: stop)
-  std::function<void(int, int, std::vector<float>&&, float, const std::string&)> onEditCrop;   // keep this piece as the module's sound   // PREVIEW or <> switched: remember it   // look into a sound file (the answer comes back into br)
+  std::function<void(const std::vector<float>&, const std::vector<float>&, float)> onEditPlay;                     // play a piece (empty: stop)
+  std::function<void(int, int, std::vector<float>&&, std::vector<float>&&, float, const std::string&)> onEditCrop;   // keep this piece as the module's sound   // PREVIEW or <> switched: remember it   // look into a sound file (the answer comes back into br)
   void openBrowser(int targetId, int slot, const std::string& dir);   // slot -1: the next empty place (KIT / MULTI)
   void browseTo(const std::string& dir);
   void browserScroll(float rows);

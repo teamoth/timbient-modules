@@ -92,7 +92,8 @@ struct Sample : Module {
       for (auto& v : vo) { if (!v.on) continue;
         float g = v.gain; if (v.t < v.fi) g *= (float)v.t / v.fi; else if (v.t > v.d - v.fo) g *= std::max(0.f, (float)(v.d - v.t) / v.fo);
         if (v.fadeK > 0) { v.fadeV -= v.fadeK; if (v.fadeV <= 0) { v.on = false; continue; } g *= v.fadeV; }
-        const float smp = readBuf(v.b->d, v.pos) * g; L += smp * v.gl; R += smp * v.gr;
+        if (v.b->stereo()) { L += readBuf(v.b->d, v.pos) * g * v.gl * 1.41f; R += readBuf(v.b->r, v.pos) * g * v.gr * 1.41f; }   // STEREO: each side its own (WIDTH still places it)
+        else { const float smp = readBuf(v.b->d, v.pos) * g; L += smp * v.gl; R += smp * v.gr; }
         v.pos += v.rev ? -v.inc : v.inc; if (++v.t >= v.d) v.on = false; }
       if (filt) { L = lp.run(L, 0); R = lp.run(R, 1); }
       out[0][0][i] = L * e[LEVEL_]; out[0][1][i] = R * e[LEVEL_];
@@ -117,7 +118,7 @@ struct Looper : Module {
   struct Grain { double pos, inc; long t, len; float gl, gr, ex, gain, x; float win[65]; };   // each grain's window shape, worked out once when it starts
   static constexpr int MAXG = 96; Grain g[MAXG]; int ng = 0; double acc = 0; float head = 0.5f, dir = 1, lastPos = -1; Smooth dry, wet;
   ~Looper() override { delete buf; }
-  void prepare() override { ring.assign((size_t)(sr * 20), 0.f); dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX] * e[LEVEL_]); }
+  void prepare() override { ring.assign((size_t)(sr * 20), 0.f); ringR.assign((size_t)(sr * 20), 0.f); dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX] * e[LEVEL_]); }
   AudioBuf* swapBuf(AudioBuf* b, int) override { AudioBuf* old = buf; buf = b; ng = 0; return old; }
   void spawn() {
     const double dur = buf->dur(), rate = std::pow(2.0, e[PITCH] / 12.0) * (1 + rng.bi() * 0.004);
@@ -131,7 +132,7 @@ struct Looper : Module {
   void render(int a, int b) override {
     // keep the last 20 seconds of the input, for CATCH
     long w = ringW.load(std::memory_order_relaxed); const long N = (long)ring.size();
-    for (int i = a; i < b; i++, w++) ring[w % N] = 0.5f * (in[0][0][i] + in[0][1][i]);
+    for (int i = a; i < b; i++, w++) { ring[w % N] = 0.5f * (in[0][0][i] + in[0][1][i]); ringR[w % N] = in[0][1][i]; }   // ring: the two mixed; ringR: the right (so CATCH in STEREO can have both)
     ringW.store(w, std::memory_order_release);
     if (e[POS] != lastPos) { head = e[POS]; lastPos = e[POS]; }   // POSITION places the playhead; CRAWL moves it on
     if (!eng->freeze.load(std::memory_order_relaxed)) head += dir * e[CRAWL] * 0.02f * (b - a) / sr;   // FREEZE holds it where it is
@@ -142,10 +143,11 @@ struct Looper : Module {
     for (int i = a; i < b; i++) {
       float L = 0, R = 0;
       if (run) { acc += dens / sr; if (acc >= 1) { acc -= 1; if (ng < MAXG) spawn(); }
-        const float* bd = buf->d.data(); const double last = (double)buf->d.size() - 2;
+        const float* bd = buf->d.data(); const float* bdr = buf->R().data(); const bool st = buf->stereo(); const double last = (double)buf->d.size() - 2;
         for (int k = 0; k < ng; ) { Grain& q = g[k];
           if (q.pos >= 0 && q.pos <= last) { const long ip = (long)q.pos; const float fr = (float)(q.pos - ip), u = 64.f * q.t / q.len; const int wi = std::min(63, (int)u);
-            const float s = (bd[ip] + (bd[ip + 1] - bd[ip]) * fr) * (q.win[wi] + (q.win[wi + 1] - q.win[wi]) * (u - wi)); L += s * q.gl; R += s * q.gr; }
+            const float wv = q.win[wi] + (q.win[wi + 1] - q.win[wi]) * (u - wi), s = (bd[ip] + (bd[ip + 1] - bd[ip]) * fr) * wv;
+            if (st) { const float s2 = (bdr[ip] + (bdr[ip + 1] - bdr[ip]) * fr) * wv; L += s * q.gl * 1.41f; R += s2 * q.gr * 1.41f; } else { L += s * q.gl; R += s * q.gr; } }
           q.pos += q.inc;
           if (++q.t >= q.len) { g[k] = g[--ng]; } else k++; } }
       const float d = dry.tick(), wv = wet.tick();
@@ -184,13 +186,13 @@ struct Stretch : Module {
   static constexpr int NMAX = 65536, R = 1 << 20;
   static constexpr int SIZES[6] = {2048, 4096, 8192, 16384, 32768, 65536};   // at 88.2K and up each WINDOW is one size bigger: the same length of time
   FFT* ffts[6] = {}; int N = 4096, HOP = 2048, cur = -1;
-  std::vector<float> rg, win, re, im, mag, mag2, r2, i2, acc[2], q[2]; long wpos = 0; double rpos = -4096, trav = 0; int qpos = 1 << 30;
+  std::vector<float> rg, rgR, win, re, im, mag, mag2, r2, i2, acc[2], q[2]; long wpos = 0; int iChan = -1; double rpos = -4096, trav = 0; int qpos = 1 << 30;
   Biquad hp; Smooth dry, wet; AudioBuf* buf = nullptr; bool lastFz = false;
   ~Stretch() override { for (auto* f : ffts) delete f; }
   AudioBuf* swapBuf(AudioBuf* b, int) override { AudioBuf* old = buf; buf = b; trav = 0; return old; }
   void prepare() override {
     for (int k = 0; k < 6; k++) if (!ffts[k]) ffts[k] = new FFT(SIZES[k]);
-    rg.assign(R, 0.f); win.assign(NMAX, 0); re.assign(NMAX, 0); im.assign(NMAX, 0); mag.assign(NMAX / 2 + 1, 0); mag2.assign(NMAX / 2 + 1, 0); r2.assign(NMAX, 0); i2.assign(NMAX, 0);
+    rg.assign(R, 0.f); rgR.assign(R, 0.f); iChan = pi("chan"); win.assign(NMAX, 0); re.assign(NMAX, 0); im.assign(NMAX, 0); mag.assign(NMAX / 2 + 1, 0); mag2.assign(NMAX / 2 + 1, 0); r2.assign(NMAX, 0); i2.assign(NMAX, 0);
     for (int c = 0; c < 2; c++) { acc[c].assign(NMAX, 0); q[c].assign(NMAX / 2, 0); }
     hp.set(Biquad::HP, 60, 0.707f, sr); dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX] * 0.9f); setSize();
   }
@@ -201,26 +203,31 @@ struct Stretch : Module {
   void trig(int port, const Event&) override { if (port == 1) p[FREEZE].store(p[FREEZE].load() > 0.5f ? 0.f : 1.f); }   // FREEZE in: each trigger flips it
   void frame() {
     setSize(); const bool fz = frozen(), file = fileMode();
-    double ratio = std::pow(2.0, e[PITCHK] / 12.0);
+    const bool st = iChan >= 0 && e[iChan] > 0.5f && (!file || buf->stereo());   // CHANNELS STEREO: left and right stretched each from its own side
+    double ratio = std::pow(2.0, e[PITCHK] / 12.0); long fileAt = 0, len = 1, base = 0;
     if (file) {   // read through the file: from POSITION, moving on 1/STRETCH as fast as it plays, round and round
-      const long len = (long)buf->d.size(); ratio *= buf->sr / sr;
+      len = (long)buf->d.size(); ratio *= buf->sr / sr;
       if (!fz) trav += (double)HOP / std::max(1.f, e[AMT]) * (buf->sr / sr);
-      double at = e[POS] * len + trav; at = std::fmod(at, (double)len); if (at < 0) at += len;
+      double at = e[POS] * len + trav; at = std::fmod(at, (double)len); if (at < 0) at += len; fileAt = (long)at;
       disp[0].store((float)(at / len), std::memory_order_relaxed);
-      for (int i = 0; i < N; i++) { re[i] = buf->d[(size_t)(((long)at + i) % len)] * win[i]; im[i] = 0; }
     } else {
       if (!fz) { rpos += (double)HOP / std::max(1.f, e[AMT]); const double lag = wpos - rpos; if (lag > R - N - HOP) rpos = wpos - N * 3; if (lag < N) rpos = wpos - N; if (rpos < 0) rpos = 0; }
-      const long base = (long)std::floor(rpos); disp[0].store(-1, std::memory_order_relaxed);
-      for (int i = 0; i < N; i++) { re[i] = rg[(size_t)((base + i) & (R - 1))] * win[i]; im[i] = 0; }
+      base = (long)std::floor(rpos); disp[0].store(-1, std::memory_order_relaxed);
     }
-    FFT& fft = *ffts[cur]; fft.run(re.data(), im.data(), false);
-    const int H = N / 2; for (int k = 0; k <= H; k++) mag[k] = std::hypot(re[k], im[k]);
-    const float sh = e[SHIM];   // each output frequency takes its level from the frequency PITCH and the octave below it
-    for (int k = 0; k <= H; k++) { const double s1 = k / ratio, s2 = k / (ratio * 2); float v = 0;
-      if (s1 < H) { const int i0 = (int)s1; const float f = (float)(s1 - i0); v = mag[i0] * (1 - f) + mag[std::min(H, i0 + 1)] * f; }
-      if (sh > 0 && s2 < H) { const int i0 = (int)s2; v += sh * 0.8f * mag[i0]; }
-      mag2[k] = v; }
+    FFT& fft = *ffts[cur]; const int H = N / 2; const float sh = e[SHIM];
+    auto analyse = [&](int side) {   // side 0: left (or the mix, in mono), 1: right
+      const std::vector<float>& src = file ? (side ? buf->R() : buf->d) : (side ? rgR : rg);
+      if (file) for (int i = 0; i < N; i++) { re[i] = src[(size_t)((fileAt + i) % len)] * win[i]; im[i] = 0; }
+      else for (int i = 0; i < N; i++) { re[i] = src[(size_t)((base + i) & (R - 1))] * win[i]; im[i] = 0; }
+      fft.run(re.data(), im.data(), false);
+      for (int k = 0; k <= H; k++) mag[k] = std::hypot(re[k], im[k]);
+      for (int k = 0; k <= H; k++) { const double s1 = k / ratio, s2 = k / (ratio * 2); float v = 0;   // each output frequency takes its level from the frequency PITCH and the octave below it
+        if (s1 < H) { const int i0 = (int)s1; const float f = (float)(s1 - i0); v = mag[i0] * (1 - f) + mag[std::min(H, i0 + 1)] * f; }
+        if (sh > 0 && s2 < H) { const int i0 = (int)s2; v += sh * 0.8f * mag[i0]; }
+        mag2[k] = v; } };
+    if (!st) analyse(0);
     for (int c = 0; c < 2; c++) {
+      if (st) analyse(c);
       std::fill(r2.begin(), r2.begin() + N, 0.f); std::fill(i2.begin(), i2.begin() + N, 0.f);
       for (int k = 1; k < H; k++) { const float ph = rng.uni() * TAU; r2[k] = mag2[k] * std::cos(ph); i2[k] = mag2[k] * std::sin(ph); r2[N - k] = r2[k]; i2[N - k] = -i2[k]; }
       fft.run(r2.data(), i2.data(), true);
@@ -232,7 +239,7 @@ struct Stretch : Module {
   void render(int a, int b) override {
     dry.t = 1 - e[MIX]; wet.t = e[MIX] * 0.9f; const bool fz = frozen();
     for (int i = a; i < b; i++) {
-      if (!fz) { rg[(size_t)(wpos & (R - 1))] = 0.5f * (in[0][0][i] + in[0][1][i]); wpos++; }
+      if (!fz) { const bool st = iChan >= 0 && e[iChan] > 0.5f; rg[(size_t)(wpos & (R - 1))] = st ? in[0][0][i] : 0.5f * (in[0][0][i] + in[0][1][i]); rgR[(size_t)(wpos & (R - 1))] = in[0][1][i]; wpos++; }   // STEREO: left here, right in rgR
       if (qpos >= HOP) frame();
       const float d = dry.tick(), w = wet.tick();
       for (int c = 0; c < 2; c++) out[0][c][i] = in[0][c][i] * d + hp.run(sane(q[c][qpos]), c) * w;
@@ -253,9 +260,9 @@ static Reg rStretch(new ModuleDef{"stretch", "STRETCH", Cat::Proc, {{"IN", PType
 struct TapeLoop : Module {
   enum { REC, LEN, BEATS, KEEP, INLV, SPEED, WANDER, WSPD, RAND, CLEAR, LEVEL };
   static constexpr int SEGS = 32;
-  std::vector<float> tape[2]; long cap = 0; double head = 0; long L = 1; float spd = 1, spdMul = 1; double winA = 0, winN = 0; int lastSeg = -1;
+  std::vector<float> tape[2]; long cap = 0; int iChan = -1; double head = 0; long L = 1; float spd = 1, spdMul = 1; double winA = 0, winN = 0; int lastSeg = -1;
   double last = -1; float cp = 0, ppb = 1; double lph[2] = {0, 0.37}; float segPk[SEGS] = {}; Smooth lev, panS, recG;
-  void prepare() override { cap = (long)(60.5 * sr); for (auto& t : tape) t.assign(cap, 0.f); lev.setTime(0.05f, sr); panS.setTime(0.05f, sr); recG.setTime(0.01f, sr); lev.snap(1); }
+  void prepare() override { iChan = pi("chan"); cap = (long)(60.5 * sr); for (auto& t : tape) t.assign(cap, 0.f); lev.setTime(0.05f, sr); panS.setTime(0.05f, sr); recG.setTime(0.01f, sr); lev.snap(1); }
   void blockStart(int) override { clockedIn.store(patched(1)); }
   long clearAt = -1;   // CLEAR TAPE wipes a piece each block, so it never holds the sound up
   void action(const std::string& k) override { if (k == "clear") { clearAt = 0; for (float& v : segPk) v = 0; } }
@@ -281,7 +288,8 @@ struct TapeLoop : Module {
       const float yl = tape[0][i0] + (tape[0][i1] - tape[0][i0]) * fr, yr = tape[1][i0] + (tape[1][i1] - tape[1][i0]) * fr;
       const float rg = recG.tick();
       if (rg > 0.0001f) { const float k0 = 1 - rg * (1 - keep);   // recording: what was there fades to KEEP, what comes in goes on top
-        tape[0][i0] = sane(tape[0][i0] * k0 + in[0][0][i] * inl * rg); tape[1][i0] = sane(tape[1][i0] * k0 + in[0][1][i] * inl * rg);
+        const bool mono = iChan >= 0 && e[iChan] < 0.5f; const float il = mono ? 0.5f * (in[0][0][i] + in[0][1][i]) : in[0][0][i], ir = mono ? il : in[0][1][i];   // CHANNELS MONO: the two mixed, on both tracks
+        tape[0][i0] = sane(tape[0][i0] * k0 + il * inl * rg); tape[1][i0] = sane(tape[1][i0] * k0 + ir * inl * rg);
         const int sg = (int)(i0 * SEGS / L); if (sg != lastSeg) { segPk[sg] = 0; lastSeg = sg; }
         segPk[sg] = std::max(segPk[sg], std::max(std::fabs(tape[0][i0]), std::fabs(tape[1][i0]))); }
       const float pn = panS.tick(), lv = lev.tick() * e[LEVEL];

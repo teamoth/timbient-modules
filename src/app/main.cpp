@@ -21,7 +21,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.30.0";
+static const char* VERSION = "0.31.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -137,16 +137,17 @@ int main(int argc, char** argv) {
   };
   auto restoreSound = [&](UiMod* u) {
     for (int k = 0; k < UiMod::SLOTS; k++) { UiMod::Snd& sd = u->snd[k]; if (sd.id.empty()) continue; std::string err;
-      AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err);
+      AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err, true);
       if (b) giveSound(u, b, false, k); else { sd.missing = true; ui.status(u->m->def->name + ": A SOUND IS NOT HERE. LOAD IT AGAIN", 6); } }
   };
   auto catchSound = [&](UiMod* u, bool quiet) {   // GRAIN LOOPER: CATCH takes the last LENGTH seconds of what came in
     Module* m = u->m; if (m->ring.empty()) return; const long N = (long)m->ring.size(), w = m->ringW.load(std::memory_order_acquire);
     const long n = std::min(std::min(N, w), (long)(m->p[m->def->paramIndex("len")].load() * engine.sr)); if (n < 256) { if (!quiet) ui.status("NOTHING TO CATCH YET"); return; }
-    AudioBuf* b = new AudioBuf(); b->sr = engine.sr; b->d.resize(n); float mx = 0;
-    for (long i = 0; i < n; i++) { b->d[i] = m->ring[(w - n + i) % N]; mx = std::max(mx, std::fabs(b->d[i])); }
+    AudioBuf* b = new AudioBuf(); b->sr = engine.sr; b->d.resize(n); float mx = 0; const int ci = m->def->paramIndex("chan"); const bool st = ci >= 0 && m->p[ci].load() > 0.5f && m->ringR.size() == m->ring.size();
+    if (st) b->r.resize(n);   // CHANNELS STEREO: left and right
+    for (long i = 0; i < n; i++) { const long k = (w - n + i) % N; b->d[i] = st ? 2 * m->ring[k] - m->ringR[k] : m->ring[k]; mx = std::max(mx, std::fabs(b->d[i])); if (st) { b->r[i] = m->ringR[k]; mx = std::max(mx, std::fabs(b->r[i])); } }
     if (mx < 0.002f) { delete b; if (!quiet) ui.status("NOTHING TO CATCH YET"); return; }
-    for (auto& v : b->d) v *= 0.8f / mx;
+    for (auto& v : b->d) v *= 0.8f / mx; for (auto& v : b->r) v *= 0.8f / mx;
     giveSound(u, b, true); ui.status("CAUGHT " + std::to_string((int)std::lround(n / engine.sr)) + "S");
   };
   auto loadData = [&](const Json& data, const std::string& what) {
@@ -162,7 +163,7 @@ int main(int argc, char** argv) {
     const int vx = ui.viewX, vy = ui.viewY; restoring = true; std::vector<std::pair<UiMod*, int>> sc; applyPatch(ui, j, sc);   // only what changed: sequencers keep going
     for (auto& [u, k] : sc) { UiMod::Snd& sd = u->snd[k];
       if (sd.id.empty()) { engine.setBuffer(u->m->id, nullptr, k); sd.peaks.clear(); continue; }
-      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (b) giveSound(u, b, false, k); else sd.missing = true; }
+      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err, true); if (b) giveSound(u, b, false, k); else sd.missing = true; }
     restoring = false;
     ui.viewX = vx; ui.viewY = vy; dirty = true; saveT = 0.5f; ui.status(back ? "UNDONE" : "REDONE", 1.2f);
   };
@@ -177,7 +178,7 @@ int main(int argc, char** argv) {
     copy.set("id", Json::number(nid)); copy.set("x", Json::number(src->x + 12)); copy.set("y", Json::number(src->y + 12)); mods->push(copy);
     std::vector<std::pair<UiMod*, int>> sc; applyPatch(ui, data, sc);
     for (auto& [u, k] : sc) { UiMod::Snd& sd = u->snd[k]; if (sd.id.empty()) continue;
-      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (b) giveSound(u, b, false, k); else sd.missing = true; }
+      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err, true); if (b) giveSound(u, b, false, k); else sd.missing = true; }
     ui.lastTouched = nid; ui.status("DUPLICATED " + src->m->def->name, 2); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.1f;
   };
   // ---- RECORD on the Output: straight to a WAV file in Music / Timbient Modules ----
@@ -188,8 +189,8 @@ int main(int argc, char** argv) {
   auto browseDir = [&]() -> std::string { const std::string d = settings.str("browseDir"); if (!d.empty()) return d; const char* mu = SDL_GetUserFolder(SDL_FOLDER_MUSIC); return mu ? mu : store.dir; };
   ui.onPreview = [&](const std::string& path) {
     if (path.empty()) { engine.preview(nullptr); return; }
-    std::string err; AudioBuf* b = decodeAudio(path, 1200, err); if (!b) { engine.preview(nullptr); ui.status(err, 4); return; }
-    float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f && mx < 0.5f) for (auto& v : b->d) v *= 0.5f / mx;   // quiet files a little louder, so you can hear them
+    std::string err; AudioBuf* b = decodeAudio(path, 1200, err, true); if (!b) { engine.preview(nullptr); ui.status(err, 4); return; }   // heard as it is, stereo or not
+    float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); for (float v : b->r) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f && mx < 0.5f) { for (auto& v : b->d) v *= 0.5f / mx; for (auto& v : b->r) v *= 0.5f / mx; }   // quiet files a little louder, so you can hear them
     engine.preview(b); };
   // the sound browser's details: worked out on a thread of their own, so the screen never waits (only the newest ask matters)
   struct InfoJob { std::mutex mx; std::condition_variable cv; std::string want; bool stop = false; bool ready = false; std::string path; SoundInfo info; int ch = 0; float rate = 0; double secs = 0; bool failed = false; };
@@ -211,9 +212,9 @@ int main(int argc, char** argv) {
       Ctx* c = (Ctx*)ud; SDL_PathInfo info; std::string full = d; if (!full.empty() && full.back() != '/' && full.back() != '\\') full += "/"; full += name;
       const bool folder = SDL_GetPathInfo(full.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY; c->out->push_back({name, folder}); return SDL_ENUM_CONTINUE; }, &ctx); };
   ui.br.autoPreview = settings.num("autoPreview", 1) > 0.5; ui.br.wide = settings.num("browseWide", 0) > 0.5;
-  ui.onEditPlay = [&](const std::vector<float>& d, float sr) { if (d.empty()) { engine.preview(nullptr); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = d; engine.preview(b); };
-  ui.onEditCrop = [&](int id, int slot, std::vector<float>&& d, float sr, const std::string& name) {   // CROP: the part becomes the module's sound (kept, so sessions bring it back)
-    UiMod* u = ui.byId(id); if (!u) return; AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = std::move(d); const double secs = b->d.size() / sr;
+  ui.onEditPlay = [&](const std::vector<float>& d, const std::vector<float>& r, float sr) { if (d.empty()) { engine.preview(nullptr); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = d; b->r = r; engine.preview(b); };
+  ui.onEditCrop = [&](int id, int slot, std::vector<float>&& d, std::vector<float>&& rr, float sr, const std::string& name) {   // CROP: the part becomes the module's sound (kept, so sessions bring it back)
+    UiMod* u = ui.byId(id); if (!u) return; AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = std::move(d); b->r = std::move(rr); const double secs = b->d.size() / sr;
     giveSound(u, b, true, slot, name.empty() ? "CROPPED" : (name.size() > 4 && name.substr(name.size() - 4) == " (C)" ? name : name + " (C)"));
     if (u->m->def->type == "sample") { const int ks = u->m->def->paramIndex("start"), kl = u->m->def->paramIndex("len"); if (ks >= 0) u->m->p[ks].store(0); if (kl >= 0) u->m->p[kl].store(1); }   // the whole of the new sound
     char t[48]; std::snprintf(t, 48, "CROPPED TO %.2fS", secs); ui.status(t, 4); histDirty = true; histT = 0.1f; dirty = true; saveT = 0.3f; };
@@ -239,8 +240,8 @@ int main(int argc, char** argv) {
     if ((ty == "sample" || ty == "looper" || ty == "stretch") && k == "edit") {   // EDIT SOUND: the editor, with this module's sound (for SAMPLE, the place on show)
       const int slot = ty == "sample" ? std::max(0, std::min(UiMod::SLOTS - 1, u->shown)) : 0; const UiMod::Snd& sd = u->snd[slot];
       if (sd.id.empty()) { ui.status("THERE'S NO SOUND TO EDIT YET: LOAD ONE FIRST", 4); return true; }
-      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err); if (!b) { ui.status(err, 4); return true; }
-      ui.openEditor(u->m->id, slot, sd.name, std::move(b->d), b->sr); delete b; return true; }
+      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err, true); if (!b) { ui.status(err, 4); return true; }
+      ui.openEditor(u->m->id, slot, sd.name, std::move(b->d), b->sr, std::move(b->r)); delete b; return true; }
     if ((ty == "sample" || ty == "looper" || ty == "stretch") && (k == "load" || k.rfind("load:", 0) == 0)) {   // LOAD FILE: KIT and MULTI take several at once, into the empty places
       const bool many = ty == "sample" && u->m->p[1].load() >= 2 && k == "load"; const int slot = k == "load" ? (many ? -1 : 0) : std::atoi(k.c_str() + 5);
       ui.openBrowser(u->m->id, slot, browseDir()); return true; }
@@ -272,9 +273,9 @@ int main(int argc, char** argv) {
     if (const Json* ms = data.get("mods")) if (ms->t == Json::ARR) for (auto& m : ms->a) if (const Json* p = m.get("p")) { want(p->str("audio"));
       if (const Json* sn = p->get("sounds")) if (sn->t == Json::ARR) for (auto& e : sn->a) if (e.t == Json::ARR && !e.a.empty() && e.a[0].t == Json::STR) want(e.a[0].s); }
     Json pack = Json::object(); for (auto& id : ids) {   // the sounds go inside it
-      std::string err; AudioBuf* b = decodeAudio(audioDir + id + ".wav", 3600, err); if (!b) continue;
-      std::vector<unsigned char> raw(b->d.size() * 2); for (size_t i = 0; i < b->d.size(); i++) { const int16_t v = (int16_t)std::lround(clampf(b->d[i], -1, 1) * 32767); raw[i * 2] = (unsigned char)v; raw[i * 2 + 1] = (unsigned char)(v >> 8); }
-      Json a = Json::object(); a.set("sr", Json::number(b->sr)); a.set("b64", Json::string(b64(raw.data(), raw.size()))); pack.set(id, a); delete b; }
+      std::string err; AudioBuf* b = decodeAudio(audioDir + id + ".wav", 3600, err, true); if (!b) continue; const int ch = b->stereo() ? 2 : 1;   // a stereo sound: left and right, interleaved
+      std::vector<unsigned char> raw(b->d.size() * 2 * ch); for (size_t i = 0; i < b->d.size() * ch; i++) { const float x = ch == 2 ? (i & 1 ? b->r[i / 2] : b->d[i / 2]) : b->d[i]; const int16_t v = (int16_t)std::lround(clampf(x, -1, 1) * 32767); raw[i * 2] = (unsigned char)v; raw[i * 2 + 1] = (unsigned char)(v >> 8); }
+      Json a = Json::object(); a.set("sr", Json::number(b->sr)); if (ch == 2) a.set("ch", Json::number(2)); a.set("b64", Json::string(b64(raw.data(), raw.size()))); pack.set(id, a); delete b; }
     if (!pack.o.empty()) f.set("audio", pack);
     return f.dump();
   };
@@ -513,8 +514,9 @@ int main(int argc, char** argv) {
         if (r.folder) { if (ui.br.open) ui.browseTo(r.path); settings.set("browseDir", Json::string(r.path)); saveSettings(); continue; }
         if (r.target) { UiMod* u = ui.byId(r.target); if (!u) continue; std::string err;   // a sound for a Sample or Grain Looper
           int slot = r.slot; if (slot < 0) { for (int k = 0; k < UiMod::SLOTS; k++) if (u->snd[k].id.empty()) { slot = k; break; } if (slot < 0) { ui.status("ALL 8 PLACES ARE FULL: TAP A NUMBER TO REPLACE ONE", 5); continue; } }
-          AudioBuf* b = decodeAudio(r.path, u->m->def->type == "looper" ? 60 : 600, err); if (!b) { ui.status(err, 5); continue; }
-          if (u->m->def->type == "sample" || u->m->def->type == "stretch") { float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f) for (auto& v : b->d) v *= 0.9f / mx; }   // quiet recordings come in at full level
+          const int ci = u->m->def->paramIndex("chan"); const bool st = ci >= 0 && u->m->p[ci].load() > 0.5f;   // CHANNELS: STEREO keeps a file's left and right
+          AudioBuf* b = decodeAudio(r.path, u->m->def->type == "looper" ? 60 : 600, err, st); if (!b) { ui.status(err, 5); continue; }
+          if (u->m->def->type == "sample" || u->m->def->type == "stretch") { float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); for (float v : b->r) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f) { for (auto& v : b->d) v *= 0.9f / mx; for (auto& v : b->r) v *= 0.9f / mx; } }   // quiet recordings come in at full level
           std::string nm = r.path.substr(r.path.find_last_of("/\\") + 1); for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch);
           const int rn = noteInName(r.path); u->snd[slot].root = rn >= 0 ? (float)rn : 60.f; u->shown = slot;   // MULTI: the ROOT note from the file name, if it names one
           const int secs = (int)std::lround(b->dur()); giveSound(u, b, true, slot, nm);
@@ -522,7 +524,7 @@ int main(int argc, char** argv) {
         if (r.open) { Json f; if (!Json::parse(readFile(r.path), f)) { ui.status("THAT FILE COULD NOT BE READ", 5); continue; }
           if (const Json* pack = f.get("audio")) if (pack->t == Json::OBJ) for (auto& kv : pack->o) {   // a web export with its sounds packed in
             const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
-            AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000)); if (b) { writeWavMono16(fn, *b); delete b; } }
+            AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000), (int)kv.second.num("ch", 1)); if (b) { writeWavMono16(fn, *b); delete b; } }
           const Json* data = patchIn(f); if (!data) { ui.status("THAT IS NOT A TIMBIENT SESSION", 5); continue; }
           loadData(*data, fileName(r.path)); curFile = r.path;
           if (f.str("timbient") == "sessions") ui.status("THAT FILE HOLDS " + std::to_string(f.get("sessions")->a.size()) + " SESSIONS: THIS IS THE FIRST", 6); }

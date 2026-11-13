@@ -911,7 +911,7 @@ void Ui::pointerDown(float sx, float sy) {
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }
       Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + rowY(*u, pj) * ROW + 4;
-      l.pick = [this, u, pj](int i) { u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i]); changed(); };
+      l.pick = [this, u, pj](int i) { u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i] + (qq.key == "chan" ? (u->m->def->type == "tloop" ? "  (FOR WHAT IT RECORDS FROM NOW)" : "  (FOR THE NEXT SOUND YOU LOAD OR CATCH)") : ""), qq.key == "chan" ? 4.f : 2.f); changed(); };
       openDropdown(l); return; }
     if (lx >= minusX(*u, pj) - 2 && lx < minusX(*u, pj) + 5) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = -1; drag.holdT = 0; nudge(u, pj, -1); return; }
     if (lx >= g.w - 8) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = 1; drag.holdT = 0; nudge(u, pj, 1); return; }

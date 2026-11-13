@@ -47,6 +47,8 @@ void registerDef(ModuleDef* d) {
     std::vector<std::string> sc = {"GLOBAL"}; for (auto& x : scales()) sc.push_back(x.name);
     ParamDef a = OP("skey", "KEY", keys, 0); ParamDef b = OP("sscale", "SCALE", sc, 0);
     d->keyIdx = (int)d->params.size(); d->params.push_back(a); d->scaleIdx = (int)d->params.size(); d->params.push_back(b); }
+  static const char* CHANNELLED[] = {"sample", "looper", "stretch", "tloop"};   // CHANNELS: MONO, or STEREO (left and right kept)
+  for (const char* k : CHANNELLED) if (d->type == k) d->params.push_back(OP("chan", "CHANNELS", {"MONO", "STEREO"}, 1));
   static const char* LOWPASSED[] = {"looper", "stretch", "tloop", "click", "fold"};
   for (const char* k : LOWPASSED) if (d->type == k) { d->lpCut = (int)d->params.size(); d->params.push_back(prHz("cut", "CUTOFF", 80, 20000, 20000)); d->lpRes = (int)d->params.size(); d->params.push_back(pct("res", "RES", 0)); }
   if (d->cat == Cat::Voice) {   // VOICES: POLY (up to 12 notes at once) or MONO (one: a new note fades the last out); GLIDE slides MONO from note to note
@@ -251,9 +253,10 @@ void Engine::block(float* L, float* R, int n) {
     recW.store(w, std::memory_order_release); }
   if (prevBuf) {   // the sound browser's preview, added after the recorder so it never ends up in a recording
     const AudioBuf& b = *prevBuf; const double step = b.sr / sr; const long len = (long)b.d.size();
-    for (int i = 0; i < n; i++) { const long k = (long)prevPos; if (k + 1 >= len) break; const float fr = (float)(prevPos - k), x = (b.d[k] + (b.d[k + 1] - b.d[k]) * fr) * 0.7f;
+    const std::vector<float>& br = b.R();   // a stereo sound: its right; mono: the same again
+    for (int i = 0; i < n; i++) { const long k = (long)prevPos; if (k + 1 >= len) break; const float fr = (float)(prevPos - k), x = (b.d[k] + (b.d[k + 1] - b.d[k]) * fr) * 0.7f, xr = (br[k] + (br[k + 1] - br[k]) * fr) * 0.7f;
       const float fade = std::min(1.f, std::min((float)k, (float)(len - k)) / 64.f);
-      L[i] = clampf(L[i] + x * fade, -1, 1); R[i] = clampf(R[i] + x * fade, -1, 1); prevPos += step; }
+      L[i] = clampf(L[i] + x * fade, -1, 1); R[i] = clampf(R[i] + xr * fade, -1, 1); prevPos += step; }
     if ((long)prevPos + 1 >= len) { bufGarbage.push(prevBuf); prevBuf = nullptr; previewAt.store(-1, std::memory_order_relaxed); }
     else previewAt.store((float)(prevPos / len), std::memory_order_relaxed); }
   outPeak.store(std::max(pk, outPeak.load(std::memory_order_relaxed) * 0.995f), std::memory_order_relaxed);

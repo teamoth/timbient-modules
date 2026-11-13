@@ -9,21 +9,21 @@ static const int TOP = 10, WH = 48;   // the top bar; the waveform's height
 
 static std::string tText(double t) { char b[24]; if (t >= 60) std::snprintf(b, 24, "%d:%05.2f", (int)(t / 60), t - 60 * (int)(t / 60)); else std::snprintf(b, 24, "%.2fS", t); return b; }
 
-void Ui::openEditor(int targetId, int slot, const std::string& name, std::vector<float>&& data, float sr) {
+void Ui::openEditor(int targetId, int slot, const std::string& name, std::vector<float>&& data, float sr, std::vector<float>&& right) {
   dd.reset(); menuOpen = false; tp.open = false; if (br.open) closeBrowser();
-  ed = Editor(); ed.open = true; ed.target = targetId; ed.slot = slot; ed.name = name; ed.d = std::move(data); ed.sr = sr;
+  ed = Editor(); ed.open = true; ed.target = targetId; ed.slot = slot; ed.name = name; ed.d = std::move(data); ed.r = std::move(right); if (ed.r.size() != ed.d.size()) ed.r.clear(); ed.sr = sr;
   const size_t n = ed.d.size(); ed.mipLo.assign(n / 256 + 1, 0.f); ed.mipHi.assign(n / 256 + 1, 0.f); float pk = 1e-6f;
-  for (size_t i = 0; i < n; i++) { const float v = ed.d[i]; float& lo = ed.mipLo[i / 256]; float& hi = ed.mipHi[i / 256]; lo = std::min(lo, v); hi = std::max(hi, v); pk = std::max(pk, std::fabs(v)); }
+  for (size_t i = 0; i < n; i++) for (int c = 0; c < (ed.r.empty() ? 1 : 2); c++) { const float v = c ? ed.r[i] : ed.d[i]; float& lo = ed.mipLo[i / 256]; float& hi = ed.mipHi[i / 256]; lo = std::min(lo, v); hi = std::max(hi, v); pk = std::max(pk, std::fabs(v)); }
   ed.peak = pk; const double dur = n / sr; ed.a = 0; ed.b = dur; ed.v0 = 0; ed.v1 = dur;
 }
-void Ui::closeEditor() { if (onEditPlay) onEditPlay({}, ed.sr); ed = Editor(); }   // closing (or CROP) always stops what it was playing
+void Ui::closeEditor() { if (onEditPlay) onEditPlay({}, {}, ed.sr); ed = Editor(); }   // closing (or CROP) always stops what it was playing
 
-static std::vector<float> piece(const Ui::Editor& e, bool forKeeping) {   // the chosen part; for keeping, with its fades and normalising
+// the chosen part (left, and right for a stereo sound); for keeping, with its fades and normalising
+static void piece(const Ui::Editor& e, bool forKeeping, std::vector<float>& L, std::vector<float>& R) {
   const size_t n = e.d.size(), i0 = (size_t)std::max(0.0, std::min((double)n, e.a * e.sr)), i1 = (size_t)std::max((double)i0, std::min((double)n, e.b * e.sr));
-  std::vector<float> p(e.d.begin() + i0, e.d.begin() + i1); if (p.empty()) return p;
-  if (e.fades) { const size_t f = std::min(p.size() / 2, (size_t)(0.01 * e.sr)); for (size_t i = 0; i < f; i++) { const float g = (float)i / f; p[i] *= g; p[p.size() - 1 - i] *= g; } }   // 10 ms each end: no clicks at the cuts
-  if (forKeeping && e.norm) { float pk = 1e-6f; for (float v : p) pk = std::max(pk, std::fabs(v)); const float g = 0.95f / pk; for (float& v : p) v *= g; }
-  return p;
+  L.assign(e.d.begin() + i0, e.d.begin() + i1); R.clear(); if (!e.r.empty()) R.assign(e.r.begin() + i0, e.r.begin() + i1); if (L.empty()) return;
+  for (auto* p : {&L, &R}) if (!p->empty() && e.fades) { const size_t f = std::min(p->size() / 2, (size_t)(0.01 * e.sr)); for (size_t i = 0; i < f; i++) { const float g = (float)i / f; (*p)[i] *= g; (*p)[p->size() - 1 - i] *= g; } }   // 10 ms each end: no clicks at the cuts
+  if (forKeeping && e.norm) { float pk = 1e-6f; for (float v : L) pk = std::max(pk, std::fabs(v)); for (float v : R) pk = std::max(pk, std::fabs(v)); const float g = 0.95f / pk; for (float& v : L) v *= g; for (float& v : R) v *= g; }
 }
 
 double Ui::edTimeAt(float sx) const { const int wx = edX + 4, ww = edW - 8; return ed.v0 + (ed.v1 - ed.v0) * clampf((sx - wx) / std::max(1, ww - 1), 0, 1); }
@@ -35,7 +35,7 @@ void Ui::editorWheel(float sx, float wheel) {
 
 void Ui::editorKey(int key) {
   if (key == 27) closeEditor();
-  else if (key == ' ') { if (ed.playing) { if (onEditPlay) onEditPlay({}, ed.sr); ed.playing = false; } else { if (onEditPlay) onEditPlay(piece(ed, false), ed.sr); ed.playing = true; } }
+  else if (key == ' ') { if (ed.playing) { if (onEditPlay) onEditPlay({}, {}, ed.sr); ed.playing = false; } else { std::vector<float> L, R; piece(ed, false, L, R); if (onEditPlay) onEditPlay(L, R, ed.sr); ed.playing = true; } }
 }
 
 void Ui::drawEditor(Canvas& c) {
@@ -53,7 +53,7 @@ void Ui::drawEditor(Canvas& c) {
   for (int k = 0; k < ww; k++) { const double t0 = ed.v0 + (ed.v1 - ed.v0) * k / ww, t1 = ed.v0 + (ed.v1 - ed.v0) * (k + 1) / ww; float lo = 0, hi = 0;
     const size_t i0 = (size_t)std::max(0.0, t0 * ed.sr), i1 = std::min(ed.d.size(), (size_t)std::max(0.0, t1 * ed.sr) + 1);
     if (spc >= 512) { for (size_t q = i0 / 256; q <= std::min(ed.mipLo.size() - 1, i1 / 256); q++) { lo = std::min(lo, ed.mipLo[q]); hi = std::max(hi, ed.mipHi[q]); } }
-    else for (size_t q = i0; q < i1; q++) { lo = std::min(lo, ed.d[q]); hi = std::max(hi, ed.d[q]); }
+    else for (size_t q = i0; q < i1; q++) { lo = std::min(lo, ed.d[q]); hi = std::max(hi, ed.d[q]); if (!ed.r.empty()) { lo = std::min(lo, ed.r[q]); hi = std::max(hi, ed.r[q]); } }
     const bool in = t1 > ed.a && t0 < ed.b; const int ya = mid - (int)std::lround(hi / ed.peak * (WH / 2 - 1)), yb = mid - (int)std::lround(lo / ed.peak * (WH / 2 - 1));
     if (in) c.rect(wx + k, wy, 1, WH, 26);
     for (int yy = ya; yy <= yb; yy++) c.px(wx + k, yy, in ? 48 : 21); }
@@ -99,9 +99,9 @@ bool Ui::editorDown(float sx, float sy) {
     else if (sx >= wx + 128 && sx < wx + 155) editorKey(' ');
     else if (sx >= wx + 158 && sx < wx + 193) ed.fades = !ed.fades;
     else if (sx >= wx + 196 && sx < wx + 239) ed.norm = !ed.norm;
-    else if (sx >= wx + ww - 33) { std::vector<float> p = piece(ed, true);
+    else if (sx >= wx + ww - 33) { std::vector<float> p, pr; piece(ed, true, p, pr);
       if (p.size() < 64) { status("CHOOSE A LONGER PART", 3); return true; }
-      const int id = ed.target, sl = ed.slot; const float sr = ed.sr; const std::string nm = ed.name; closeEditor(); if (onEditCrop) onEditCrop(id, sl, std::move(p), sr, nm); }
+      const int id = ed.target, sl = ed.slot; const float sr = ed.sr; const std::string nm = ed.name; closeEditor(); if (onEditCrop) onEditCrop(id, sl, std::move(p), std::move(pr), sr, nm); }
   }
   return true;
 }
@@ -111,7 +111,7 @@ void Ui::editorMove(float sx, float) {
   if (drag.k == 2) { const int ww = edW - 8; const double span = ed.v1 - ed.v0; double v0 = drag.n0 + (sx - drag.sx) / std::max(1, ww) * dur; v0 = std::max(0.0, std::min(dur - span, v0)); ed.v0 = v0; ed.v1 = v0 + span; return; }
   const double t = std::max(0.0, std::min(dur, edTimeAt(sx)));
   if (drag.k == 0) ed.a = std::min(t, ed.b - 0.01); else ed.b = std::max(t, ed.a + 0.01);
-  if (ed.playing && onEditPlay) { onEditPlay({}, ed.sr); ed.playing = false; }   // the part changed: stop hearing the old one
+  if (ed.playing && onEditPlay) { onEditPlay({}, {}, ed.sr); ed.playing = false; }   // the part changed: stop hearing the old one
 }
 
 }  // namespace tb

@@ -6,7 +6,7 @@
 
 namespace tb {
 
-AudioBuf* decodeAudio(const std::string& path, double maxSecs, std::string& err) {
+AudioBuf* decodeAudio(const std::string& path, double maxSecs, std::string& err, bool stereo) {
   ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, 0);
   ma_decoder dec;
   if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS) { err = "COULD NOT READ THAT FILE"; return nullptr; }
@@ -17,7 +17,8 @@ AudioBuf* decodeAudio(const std::string& path, double maxSecs, std::string& err)
   while (b->d.size() < maxN) {
     ma_uint64 got = 0; if (ma_decoder_read_pcm_frames(&dec, chunk.data(), 4096, &got) != MA_SUCCESS && got == 0) break;
     if (got == 0) break;
-    for (ma_uint64 i = 0; i < got && b->d.size() < maxN; i++) { float s = 0; for (int c = 0; c < ch; c++) s += chunk[i * ch + c]; b->d.push_back(s / ch); }
+    if (stereo && ch >= 2) for (ma_uint64 i = 0; i < got && b->d.size() < maxN; i++) { b->d.push_back(chunk[i * ch]); b->r.push_back(chunk[i * ch + 1]); }
+    else for (ma_uint64 i = 0; i < got && b->d.size() < maxN; i++) { float s = 0; for (int c = 0; c < ch; c++) s += chunk[i * ch + c]; b->d.push_back(s / ch); }
   }
   ma_decoder_uninit(&dec);
   if (b->d.size() < 64) { delete b; err = "THAT FILE HAS NO SOUND IN IT"; return nullptr; }
@@ -41,26 +42,27 @@ static void wavHeader(FILE* f, int ch, int bits, uint32_t sr, uint32_t dataBytes
 
 bool writeWavMono16(const std::string& path, const AudioBuf& b) {
   FILE* f = std::fopen(path.c_str(), "wb"); if (!f) return false;
-  wavHeader(f, 1, 16, (uint32_t)b.sr, (uint32_t)(b.d.size() * 2));
-  std::vector<int16_t> o(b.d.size()); for (size_t i = 0; i < b.d.size(); i++) o[i] = (int16_t)std::lround(clampf(b.d[i], -1, 1) * 32767);
+  const int ch = b.stereo() ? 2 : 1; wavHeader(f, ch, 16, (uint32_t)b.sr, (uint32_t)(b.d.size() * 2 * ch));
+  std::vector<int16_t> o(b.d.size() * ch); for (size_t i = 0; i < b.d.size(); i++) for (int c = 0; c < ch; c++) o[i * ch + c] = (int16_t)std::lround(clampf(c ? b.r[i] : b.d[i], -1, 1) * 32767);
   const bool ok = std::fwrite(o.data(), 2, o.size(), f) == o.size(); std::fclose(f); return ok;
 }
 
 std::vector<float> peaksOf(const AudioBuf& b, int n) {
   std::vector<float> out(n, 0.f); const double step = (double)b.d.size() / n; float mx = 0;
-  for (int i = 0; i < n; i++) { float m = 0; for (size_t j = (size_t)(i * step); j < (size_t)((i + 1) * step) && j < b.d.size(); j += 8) m = std::max(m, std::fabs(b.d[j])); out[i] = m; mx = std::max(mx, m); }
+  for (int i = 0; i < n; i++) { float m = 0; for (size_t j = (size_t)(i * step); j < (size_t)((i + 1) * step) && j < b.d.size(); j += 8) m = std::max(m, std::max(std::fabs(b.d[j]), std::fabs(b.R()[j]))); out[i] = m; mx = std::max(mx, m); }
   for (auto& v : out) v /= mx > 0 ? mx : 1;
   return out;
 }
 
-AudioBuf* fromBase64Pcm16(const std::string& s, float sr) {
+AudioBuf* fromBase64Pcm16(const std::string& s, float sr, int ch) {
   static int T[256]; static bool init = false;
   if (!init) { for (int& v : T) v = -1; const char* A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; for (int i = 0; i < 64; i++) T[(unsigned char)A[i]] = i; init = true; }
   std::vector<unsigned char> bytes; bytes.reserve(s.size() * 3 / 4); int val = 0, bits = -8;
   for (unsigned char c : s) { if (T[c] < 0) continue; val = (val << 6) + T[c]; bits += 6; if (bits >= 0) { bytes.push_back((unsigned char)((val >> bits) & 0xFF)); bits -= 8; } }
   if (bytes.size() < 128 || sr < 1000) return nullptr;
-  AudioBuf* b = new AudioBuf(); b->sr = sr; b->d.resize(bytes.size() / 2);
-  for (size_t i = 0; i < b->d.size(); i++) b->d[i] = (int16_t)(bytes[i * 2] | (bytes[i * 2 + 1] << 8)) / 32767.f;
+  AudioBuf* b = new AudioBuf(); b->sr = sr; const size_t n = bytes.size() / 2 / (ch == 2 ? 2 : 1); b->d.resize(n); if (ch == 2) b->r.resize(n);
+  auto at = [&](size_t k) { return (int16_t)(bytes[k * 2] | (bytes[k * 2 + 1] << 8)) / 32767.f; };
+  for (size_t i = 0; i < n; i++) { if (ch == 2) { b->d[i] = at(i * 2); b->r[i] = at(i * 2 + 1); } else b->d[i] = at(i); }
   return b;
 }
 

@@ -7,14 +7,14 @@
 
 namespace tb {
 
-// any WAV, AIFF, FLAC or MP3, mixed to mono, at its own sample rate; at most maxSecs long
-AudioBuf* decodeAudio(const std::string& path, double maxSecs, std::string& err);
-bool writeWavMono16(const std::string& path, const AudioBuf& b);
+// any WAV, AIFF, FLAC or MP3, at its own sample rate; at most maxSecs long. Mixed to mono, unless stereo (then left and right, when it has two)
+AudioBuf* decodeAudio(const std::string& path, double maxSecs, std::string& err, bool stereo = false);
+bool writeWavMono16(const std::string& path, const AudioBuf& b);   // 16-bit: one channel, or two for a stereo sound
 // a sound file's channels, rate and length, without reading it all
 bool soundFileInfo(const std::string& path, int& channels, float& rate, double& secs);
 std::vector<float> peaksOf(const AudioBuf& b, int n = 128);
-// a web export's packed audio: 16-bit mono as base64
-AudioBuf* fromBase64Pcm16(const std::string& b64, float sr);
+// a session's packed audio: 16-bit as base64 (ch 2: left and right, interleaved)
+AudioBuf* fromBase64Pcm16(const std::string& b64, float sr, int ch = 1);
 
 // RECORD: the master output streamed to a 24-bit stereo WAV as it plays
 struct Recorder {
