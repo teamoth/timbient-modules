@@ -137,7 +137,15 @@ struct Tombola : Module {
   enum { VEL, CHANCE, SPIN, SPEED, BOUNCE, DISSOLVE, MAXB, SIDES, WALLS, FREEZE, CLEAR };
   static constexpr int MAXN = 12; static constexpr float RB = 0.07f, G = 3.2f;
   struct Ball { float x, y, vx, vy, age, cool, flash; float midi; };
-  Ball b[MAXN]; int n = 0; float ang = 0;
+  Ball b[MAXN]; int n = 0; float ang = 0; int seen = 0;
+  Tombola() { allocEv(); }
+  // its balls' notes are kept in ev (saved as the session's "notes"), so a session opens with the same notes in the drum
+  void keepBalls() {
+    const int v = seqVer.load(); if (v & 1) return;   // the screen is writing them in
+    if (v != seen) { seen = v; const int m = std::min(MAXN, evN.load()); n = 0; for (int i = 0; i < m; i++) { const float midi = ev[i * 4].load(); if (midi >= 0 && midi < 128) addBall(midi); } return; }
+    for (int i = 0; i < n; i++) if (ev[i * 4].load(std::memory_order_relaxed) != b[i].midi) { ev[i * 4].store(b[i].midi); ev[i * 4 + 1].store(0); ev[i * 4 + 2].store(0); ev[i * 4 + 3].store(0); }
+    if (evN.load(std::memory_order_relaxed) != n) evN.store(n);
+  }
   void addBall(float midi) {
     if (n >= std::min(MAXN, (int)e[MAXB])) { for (int i = 1; i < n; i++) b[i - 1] = b[i]; n--; }   // full: the oldest makes room
     Ball& q = b[n++]; q.x = rng.range(-0.3f, 0.3f); q.y = rng.range(-0.5f, -0.1f); q.vx = rng.range(-0.6f, 0.6f); q.vy = 0; q.age = 0; q.cool = 0.3f; q.flash = 0; q.midi = midi;
@@ -151,6 +159,7 @@ struct Tombola : Module {
   void play(Ball& q, float vn) { if (q.cool > 0) return; q.cool = 0.12f; q.flash = 0.15f;   // (CHANCE is applied as every sequencer's is)
     Event ev; ev.note = q.midi; ev.vel = clampf(vn / 2.5f, 0.15f, 1) * e[VEL] * fadeOf(q); if (ev.vel > 0.02f) emit(0, ev); }
   void render(int a, int bEnd) override {
+    keepBalls();
     const float dt = (bEnd - a) / sr, bt = dt * e[SPEED]; eng->pos = a;   // SPEED: the balls in slow (or quick) motion
     const int S = (int)e[SIDES], wm = (int)e[WALLS]; const float w = (e[FREEZE] > 0.5f ? 0.f : e[SPIN]) * TAU, ap = std::cos(PI / S), rest = 0.35f + e[BOUNCE] * 0.6f, L = life();
     ang += w * dt; ang = std::fmod(ang, TAU); if (ang < 0) ang += TAU;

@@ -47,6 +47,10 @@ void registerDef(ModuleDef* d) {
     std::vector<std::string> sc = {"GLOBAL"}; for (auto& x : scales()) sc.push_back(x.name);
     ParamDef a = OP("skey", "KEY", keys, 0); ParamDef b = OP("sscale", "SCALE", sc, 0);
     d->keyIdx = (int)d->params.size(); d->params.push_back(a); d->scaleIdx = (int)d->params.size(); d->params.push_back(b); }
+  static const char* LOWPASSED[] = {"looper", "stretch", "tloop", "click", "fold"};
+  for (const char* k : LOWPASSED) if (d->type == k) { d->lpCut = (int)d->params.size(); d->params.push_back(prHz("cut", "CUTOFF", 80, 20000, 20000)); d->lpRes = (int)d->params.size(); d->params.push_back(pct("res", "RES", 0)); }
+  if (d->cat == Cat::Voice) {   // VOICES: POLY (up to 12 notes at once) or MONO (one: a new note fades the last out); GLIDE slides MONO from note to note
+    d->params.push_back(OP("poly", "VOICES", {"POLY", "MONO"}, 0)); if (d->type != "sample") { ParamDef g = T("glide", "GLIDE", 0, 2, 0); g.only = "mono"; d->params.push_back(g); } }
   bool audio = false; for (auto& o : d->outs) if (o.type == PType::Audio) audio = true;
   if (audio && d->type != "mixer" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {
     ParamDef q = pr("pan", "PAN", -1, 1, 0); q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };
@@ -211,6 +215,11 @@ void Engine::block(float* L, float* R, int n) {
       if (q.port[i] == SWITCH_PORT) { const int a = q.ev[i].sw >= 0 ? q.ev[i].sw : 2; m->mute.store(a == 0 ? true : a == 1 ? false : !m->mute.load()); continue; }   // the SWITCH socket: a Timeline says ON (1) or OFF (0); any other trigger turns it over
       m->trig(q.port[i], q.ev[i]); }
     if (at < n) { pos = at; m->render(at, n); }
+    if (d->lpCut >= 0 && !m->out.empty()) {   // CUTOFF and RES (fully open: nothing)
+      const float fc = m->e[d->lpCut], rs = m->e[d->lpRes];
+      if (fc < 19500 || rs > 0.01f) { if (fc != m->lpSig[0] || rs != m->lpSig[1]) { m->lpSig[0] = fc; m->lpSig[1] = rs; m->postLp.set(Biquad::LP, fc, 0.7f + rs * rs * 9, sr); }
+        for (int ch = 0; ch < 2; ch++) { float* o = m->out[0][ch].data(); for (int i = 0; i < n; i++) o[i] = (float)m->postLp.run(o[i], ch); } }
+      else m->lpSig[0] = -1; }
     { const float b1 = m->bypass.load(std::memory_order_relaxed) ? 1.f : 0.f, b0 = m->byNow;   // BYPASS: fade over to the dry sound
       if ((b0 > 0 || b1 > 0) && !d->ins.empty() && d->ins[0].type == PType::Audio && !m->out.empty()) { const float step = n / sr / 0.08f, bb = b1 > b0 ? std::min(b1, b0 + step) : std::max(b1, b0 - step); m->byNow = bb;
         for (int ch = 0; ch < 2; ch++) { float* o = m->out[0][ch].data(); const float* x = m->in[0][ch].data(); for (int i = 0; i < n; i++) { const float t = b0 + (bb - b0) * (i + 1) / n; o[i] = o[i] * (1 - t) + x[i] * t; } } } }

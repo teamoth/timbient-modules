@@ -117,6 +117,21 @@ int main(int argc, char** argv) {
     int lit = 0; for (int k = 0; k < 8; k++) if (ms->m->seq[Module::si(k, 1)].load() >= 0) lit++;
     const bool ok = onSteps >= 9 && onSteps <= 11 && offSteps >= 5 && lit >= 2 && lit <= 3; if (!ok) fails++;
     std::printf("mute sequencer: on %d off %d of 16 steps, held for 2 steps -> %d lit%s\n", onSteps, offSteps, lit, ok ? "" : "  WRONG"); }
+  // TOMBOLA: its balls' notes go into the session and come back
+  { ui.clearPatch(); ui.add("out", 300, 20); UiMod* tb = ui.add("tombola", 0, 20); for (float nt : {60.f, 64.f, 67.f}) { Event ev; ev.note = nt; eng.trigger(tb->m->id, tb->m->def->inIndex("ADD"), ev); }
+    run(eng, 0.2f); const std::string S = serializePatch(ui).dump(); Json j; Json::parse(S, j); ui.clearPatch(); loadPatch(ui, j); run(eng, 0.2f);
+    int balls = 0; for (auto& um : ui.mods) if (um->m->def->type == "tombola") balls = (int)um->m->disp[2].load();
+    const bool ok = balls == 3; if (!ok) fails++; std::printf("tombola balls kept: %d%s\n", balls, ok ? "" : "  WRONG"); }
+  // DUCKER: a loud sound into SIDE pushes IN down
+  { float lv[2]; for (int k = 0; k < 2; k++) { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* tn = ui.add("tone", 0, 20); UiMod* dk = ui.add("ducker", 100, 20); UiMod* clk = ui.add("clock", 0, 120); ui.set(clk, "sync", 0);
+      ui.connect(clk, "PULSE", tn, "TRIG"); ui.connect(tn, "OUT", dk, "IN"); ui.connect(dk, "OUT", out, "A"); ui.set(dk, "depth", 1);
+      if (k) { UiMod* ns = ui.add("pluck", 0, 200); UiMod* c2 = ui.add("clock", 0, 260); ui.set(c2, "sync", 0); ui.set(c2, "bpm", 240); ui.connect(c2, "PULSE", ns, "TRIG"); ui.connect(ns, "OUT", dk, "SIDE"); }
+      run(eng, 1); lv[k] = dk->m->outLev[0].load(); Result r = run(eng, 3); lv[k] = r.rms; }
+    const bool ok = lv[1] < lv[0] * 0.8f; if (!ok) fails++; std::printf("ducker side: without %.4f, with %.4f%s\n", lv[0], lv[1], ok ? "" : "  WRONG"); }
+  // VOICES: MONO plays one note at a time (POLY overlaps them); GLIDE slides between notes
+  { float rm[2]; for (int k = 0; k < 2; k++) { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* v = ui.add("pad", 100, 20); ui.connect(v, "OUT", out, "A"); ui.set(v, "poly", (float)k);
+      for (int i = 0; i < 6; i++) { Event ev; ev.note = 48.f + i * 4; eng.trigger(v->m->id, 0, ev); run(eng, 0.05f); } rm[k] = run(eng, 0.3f).rms; }
+    const bool ok = rm[1] < rm[0] * 0.7f; if (!ok) fails++; std::printf("voices: poly rms %.4f, mono rms %.4f%s\n", rm[0], rm[1], ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

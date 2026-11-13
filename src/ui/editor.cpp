@@ -16,7 +16,7 @@ void Ui::openEditor(int targetId, int slot, const std::string& name, std::vector
   for (size_t i = 0; i < n; i++) { const float v = ed.d[i]; float& lo = ed.mipLo[i / 256]; float& hi = ed.mipHi[i / 256]; lo = std::min(lo, v); hi = std::max(hi, v); pk = std::max(pk, std::fabs(v)); }
   ed.peak = pk; const double dur = n / sr; ed.a = 0; ed.b = dur; ed.v0 = 0; ed.v1 = dur;
 }
-void Ui::closeEditor() { if (ed.playing && onEditPlay) onEditPlay({}, ed.sr); ed = Editor(); }
+void Ui::closeEditor() { if (onEditPlay) onEditPlay({}, ed.sr); ed = Editor(); }   // closing (or CROP) always stops what it was playing
 
 static std::vector<float> piece(const Ui::Editor& e, bool forKeeping) {   // the chosen part; for keeping, with its fades and normalising
   const size_t n = e.d.size(), i0 = (size_t)std::max(0.0, std::min((double)n, e.a * e.sr)), i1 = (size_t)std::max((double)i0, std::min((double)n, e.b * e.sr));

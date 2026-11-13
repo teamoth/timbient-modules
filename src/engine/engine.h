@@ -58,6 +58,7 @@ struct ModuleDef {
   std::function<Module*()> make;
   int labelEnd = 39;   // where its sliders start: after its longest name (the module is widened to keep its sliders full length)
   int keyIdx = -1, scaleIdx = -1;   // sequencers: their own KEY and SCALE (0 = GLOBAL, the session's)
+  int lpCut = -1, lpRes = -1;   // GRAIN LOOPER, STRETCH, TAPE LOOP, NOISE CLICK, WAVEFOLD: CUTOFF and RES, a low-pass the engine puts on their output
   int panIdx = -1;   // PAN: every module with an audio output (but MIXER, which pans each channel) has one, added last
   int paramIndex(const std::string& k) const { for (size_t i = 0; i < params.size(); i++) if (params[i].key == k) return (int)i; return -1; }
   int inIndex(const std::string& n) const { for (size_t i = 0; i < ins.size(); i++) if (ins[i].name == n) return (int)i; return -1; }
@@ -88,6 +89,7 @@ public:
   std::atomic<float> flash{0};     // lights the header when it fires (shown on screen)
   std::atomic<unsigned> fires[8] = {};
   float panNow = 0;   // PAN as last applied (the engine ramps from it)
+  Biquad postLp; float lpSig[2] = {-1, -1};   // the CUTOFF and RES some modules get from the engine
   std::atomic<float> outLev[8] = {};   // how loud each audio output is (peak, falling slowly): the screen shows it flowing along the cables
   std::atomic<bool> bypass{false}; float byNow = 0;   // BYPASS: an effect fades over to its dry input
   bool retiring = false; float retireT = 0, quietT = 0;   // being taken away, letting its tail ring out   // how many triggers each output has sent: the screen sends a pulse along its cables
@@ -182,7 +184,7 @@ public:
   void clear() { send({Command::CLEAR}); }
   void setBuffer(int id, AudioBuf* b, int slot = 0) { Command k{Command::SETBUF}; k.id = id; k.buf = b; k.port = slot; send(k); }
   // the sound browser: play a file straight to the speakers, outside the patch (nullptr stops it). Not recorded
-  void preview(AudioBuf* b) { Command k{Command::PREVIEW}; k.buf = b; send(k); }
+  void preview(AudioBuf* b) { previewAt.store(b ? 0.f : -1.f); Command k{Command::PREVIEW}; k.buf = b; send(k); }   // playing from now (so the screen doesn't think it's already finished)
   std::atomic<float> previewAt{-1};   // how far through the preview is (0..1), or -1 when nothing is playing
   // recording the master output: the audio thread writes here, the screen thread drains it to a file
   static constexpr int MIDI_INS = 8;

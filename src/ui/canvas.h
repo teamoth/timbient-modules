@@ -76,22 +76,25 @@ struct Canvas {
       for (int j = 0; j < 9; j++) for (int k = 0; k < 5; k++) if (FONT57[i].bits[j * 5 + k] == '1') a[(size_t)(cy + j) * aw + cx + k] = 0xffffffffu; }
     const int sc = FONT57_N; for (int j = 0; j < CELL_H; j++) for (int k = 0; k < CELL_W; k++) a[(size_t)((sc / ATLAS_COLS) * CELL_H + j) * aw + (sc % ATLAS_COLS) * CELL_W + k] = 0xffffffffu;
     return a; }
-  void fineQuads(float s, std::vector<Quad>& out) const {
-    out.clear(); const int d = fineDot(s), xoff = std::max(0, (int)std::floor((4 * s - 6 * d) / 2)), yoff = (int)std::lround(5 * s - 7 * d);
+  // the size of a letter's dot in window pixels: a whole number from 3x up (crisp), two thirds of an art pixel below (2x on a small screen)
+  static float fineDotF(float s) { return s >= 2.95f ? (float)fineDot(s) : 2 * s / 3; }
+  void fineQuads(float s, std::vector<Quad>& out, bool dotsOnly = false) const {   // dotsOnly: no letter texture (the window couldn't make one)
+    out.clear(); const float d = fineDotF(s), xoff = std::max(0.f, std::floor((4 * s - 6 * d) / 2)), yoff = std::round(5 * s - 7 * d);
     const int rowsDown = (int)std::ceil((yoff + 9 * d) / s);
+    auto R = [](float v) { return (int)std::lround(v); };
     for (const TextRun& r : runs) { const uint32_t col = pal[r.c & 127];
       for (size_t k = 0; k < r.s.size(); k++) {
         unsigned char ch = (unsigned char)r.s[k]; if (ch < 128) ch = (unsigned char)(letterCase == 1 ? std::toupper(ch) : std::tolower(ch));
         int gi = atlasIndex(ch); if (gi < 0) gi = atlasIndex((unsigned char)std::toupper(ch)); if (gi < 0 || ch == ' ') continue;
-        const int ax = r.x + 4 * (int)k, X = (int)std::lround(ax * s) + xoff, Y = (int)std::lround(r.y * s) + yoff;
-        bool whole = ax >= 0 && ax + 4 <= W && r.y >= 0 && r.y + rowsDown <= H;   // nothing drawn over it since: one rectangle
+        const int ax = r.x + 4 * (int)k; const float X = std::round(ax * s) + xoff, Y = std::round(r.y * s) + yoff;
+        bool whole = !dotsOnly && ax >= 0 && ax + 4 <= W && r.y >= 0 && r.y + rowsDown <= H;   // nothing drawn over it since: one rectangle
         for (int j = 0; whole && j < rowsDown; j++) for (int i = 0; i < 4; i++) if (stamp[(size_t)(r.y + j) * W + ax + i] > r.t) { whole = false; break; }
-        if (whole) { out.push_back({X, Y, 5 * d, 9 * d, (gi % ATLAS_COLS) * CELL_W, (gi / ATLAS_COLS) * CELL_H, col}); continue; }
-        const char* b = FONT57[gi].bits;
+        if (whole) { out.push_back({R(X), R(Y), R(X + 5 * d) - R(X), R(Y + 9 * d) - R(Y), (gi % ATLAS_COLS) * CELL_W, (gi / ATLAS_COLS) * CELL_H, col}); continue; }
+        const char* b = FONT57[gi].bits;   // dot by dot: only those that still show
         for (int j = 0; j < 9; j++) for (int i = 0; i < 5; i++) { if (b[j * 5 + i] != '1') continue;
-          const int px = (int)std::floor((X + i * d + d * 0.5f) / s), py = (int)std::floor((Y + j * d + d * 0.5f) / s);
+          const float x0 = X + i * d, y0 = Y + j * d; const int px = (int)std::floor((x0 + d * 0.5f) / s), py = (int)std::floor((y0 + d * 0.5f) / s);
           if (px < 0 || py < 0 || px >= W || py >= H || stamp[(size_t)py * W + px] > r.t) continue;
-          out.push_back({X + i * d, Y + j * d, d, d, -1, 0, col}); } } }
+          out.push_back({R(x0), R(y0), R(x0 + d) - R(x0), R(y0 + d) - R(y0), -1, 0, col}); } } }
   }
   // finish a frame: palette indices to colours
   void toRGBA() { const size_t n = buf.size(); for (size_t i = 0; i < n; i++) rgba[i] = pal[buf[i]]; }

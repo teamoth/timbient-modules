@@ -12,9 +12,9 @@ namespace tb {
 
 // NOTE LOOPER: its notes as [when, note, velocity, layer]
 static Json evSave(Module* m) { Json a = Json::array(); const int n = m->evN.load(); for (int i = 0; i < n; i++) { Json e = Json::array(); for (int c = 0; c < 4; c++) e.push(Json::number(m->ev[i * 4 + c].load())); a.push(e); } return a; }
-static void evLoad(Module* m, const Json* p) { const Json* a = p ? p->get("notes") : nullptr; int n = 0;
+static void evLoad(Module* m, const Json* p) { const Json* a = p ? p->get("notes") : nullptr; int n = 0; m->seqVer.fetch_add(1);   // odd while it's being written (a TOMBOLA waits)
   if (a && a->t == Json::ARR) for (auto& e : a->a) { if (n >= Module::EV_MAX) break; if (e.t != Json::ARR || e.a.size() < 4) continue; for (int c = 0; c < 4; c++) m->ev[n * 4 + c].store(e.a[c].t == Json::NUM ? (float)e.a[c].n : 0); n++; }
-  m->evN.store(n); }
+  m->evN.store(n); m->seqVer.fetch_add(1); }
 
 // the Tracker's steps, a column at a time: [note, velocity] or null, up to the last one used (column 1 is "seq", as the web version keeps it)
 static Json seqCol(Module* m, int col) {

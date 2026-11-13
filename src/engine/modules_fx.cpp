@@ -145,8 +145,9 @@ static Reg rHall(new ModuleDef{"hall", "INFINITE HALL", Cat::Proc, {{"IN", PType
 
 // ---------------- DUCKER: dips on each KEY trigger, then breathes back (CURVE), optionally timed in beats ----------------
 struct Ducker : Module {
-  float g = 1, low = 1, relT = 1, tSince = 1e9f, atkT = 0.01f; bool rising = false; Smooth dry, wet;
-  enum { DEPTH, ATK, REL, RBEATS, CURVE, MIX };
+  float g = 1, low = 1, relT = 1, tSince = 1e9f, atkT = 0.01f, sEnv = 0, gs = 1; bool rising = false, side = false; Smooth dry, wet;
+  enum { DEPTH, ATK, REL, RBEATS, CURVE, MIX, THRESH };
+  void blockStart(int) override { side = patched(2); }
   void prepare() override { dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX]); }
   void trig(int port, const Event& ev) override {
     if (port != 1) return;
@@ -163,15 +164,20 @@ struct Ducker : Module {
       else if (tSince < atkT + relT) { const float u = (tSince - atkT) / std::max(0.02f, relT);
         const float f = (1 - k) * (1 - std::exp(-5 * u)) / (1 - std::exp(-5.f)) + k * (1 - std::cos(PI * u)) / 2; g = low + (1 - low) * f; }
       else g += (1 - g) * 0.001f;
+      float gg = g;
+      if (side) {   // SIDE: the louder that sound is past THRESHOLD (up to 12 dB past), the further IN goes down, up to DEPTH; ATTACK and RELEASE shape it
+        const float lv = std::max(std::fabs(in[2][0][i]), std::fabs(in[2][1][i])); sEnv = lv > sEnv ? lv : sEnv * (1 - dt / 0.05f);   // a quick peak follower (catches short hits)
+        const float over = clampf((20 * std::log10(std::max(1e-6f, sEnv)) - e[THRESH]) / 12, 0, 1), to = 1 - e[DEPTH] * over;
+        gs += (to - gs) * (1 - std::exp(-dt * 3 / std::max(0.002f, to < gs ? e[ATK] : e[REL]))); gg = std::min(g, gs); }   // down at ATTACK, back up at RELEASE
       const float d = dry.tick(), w = wet.tick();
-      for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i]; out[0][ch][i] = x * d + x * g * w; }
+      for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i]; out[0][ch][i] = x * d + x * gg * w; }
     }
-    disp[0].store(1 - g);
+    disp[0].store(1 - (side ? std::min(g, gs) : g));
   }
 };
-static Reg rDucker(new ModuleDef{"ducker", "DUCKER", Cat::Proc, {{"IN", PType::Audio}, {"KEY", PType::Trig}}, {{"OUT", PType::Audio}},
+static Reg rDucker(new ModuleDef{"ducker", "DUCKER", Cat::Proc, {{"IN", PType::Audio}, {"KEY", PType::Trig}, {"SIDE", PType::Audio}}, {{"OUT", PType::Audio}},
   {pct("depth", "DEPTH", 0.6f), T("atk", "ATTACK", 0.002f, 2, 0.01f), T("rel", "RELEASE", 0.05f, 12, 0.9f), OP("rbeats", "BEAT REL", {"OFF", "1/2", "1", "2", "3", "4", "8"}, 0),
-   pct("curve", "CURVE", 0), pct("mix", "MIX", 1)}, 10, 68, false, [] { return new Ducker(); }});
+   pct("curve", "CURVE", 0), pct("mix", "MIX", 1), only(fmt(pr("thresh", "THRESHOLD", -48, 0, -30), [](float v) { return std::to_string((int)std::lround(v)) + "DB"; }), "side")}, 10, 68, false, [] { return new Ducker(); }});
 
 // ---------------- AMP: up to +36 dB, with a soft limiter ----------------
 struct Amp : Module {
@@ -180,12 +186,12 @@ struct Amp : Module {
   void render(int a, int b) override {
     g.t = dbToGain(e[0]); const bool lim = e[1] > 0.5f;
     for (int i = a; i < b; i++) { const float k = g.tick();
-      for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i] * k; out[0][ch][i] = lim ? std::tanh(x * 0.25f * 4) * 0.9f : x; peak[ch] = std::max(peak[ch] * 0.9999f, std::fabs(out[0][ch][i])); } }
+      for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i] * k; const float ax = std::fabs(x); out[0][ch][i] = lim && ax > 0.8f ? std::copysign(0.8f + 0.2f * std::tanh((ax - 0.8f) / 0.2f), x) : x; /* LIMIT: untouched below 0.8, rounded off above (so at 0 dB it changes nothing) */ peak[ch] = std::max(peak[ch] * 0.9999f, std::fabs(out[0][ch][i])); } }
     disp[0].store(peak[0]); disp[1].store(peak[1]);   // L, R
   }
 };
 static Reg rAmp(new ModuleDef{"amp", "AMP", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {fmt(pr("gain", "GAIN", -12, 36, 12), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::round(v)) + "DB"; }), OP("limit", "LIMIT", {"OFF", "ON"}, 1)}, 13, 68, false, [] { return new Amp(); }});
+  {fmt(pr("gain", "GAIN", -12, 36, 0), [](float v) { return (v > 0 ? "+" : "") + std::to_string((int)std::round(v)) + "DB"; }), OP("limit", "LIMIT", {"OFF", "ON"}, 1)}, 13, 68, false, [] { return new Amp(); }});
 
 // ---------------- MIXER: four channels, each with level, pan and a send ----------------
 struct Mixer : Module {

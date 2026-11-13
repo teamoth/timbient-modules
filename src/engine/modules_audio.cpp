@@ -13,7 +13,8 @@ static inline float readBuf(const std::vector<float>& d, double pos) {   // line
 // MULTI: up to eight recordings of one instrument, each with the note it was recorded at (ROOT); a note uses the nearest and is shifted the rest of the way.
 // It loops (crossfading each pass) or plays once per trigger; the PLAY style runs forwards, backwards, back and forth, or from a random place.
 struct Sample : Module {
-  enum { LOAD, KIND, SLICES, MODE, NOTES, START, LEN, PITCH, STYLE, ATK, REL, FADE, DRIFT, CUT, RES, VSENS, WIDTH, LEVEL_ };
+  enum { LOAD, KIND, SLICES, MODE, NOTES, START, LEN, PITCH, STYLE, ATK, REL, FADE, DRIFT, CUT, RES, VSENS, WIDTH, LEVEL_, EDIT_, EVERY };
+  long clkN = 0;
   static constexpr int NS = 8;
   AudioBuf* buf[NS] = {nullptr};
   struct Seg { bool on = false, rev = false; const AudioBuf* b = nullptr; double pos = 0, inc = 1; long t = 0, d = 0, fi = 1, fo = 1; float gain = 1, gl = 1, gr = 1, fadeV = 1, fadeK = 0; };
@@ -58,10 +59,19 @@ struct Sample : Module {
     v->gain = gain; v->fadeV = 1; v->fadeK = 0; panGains(rng.bi() * e[WIDTH], v->gl, v->gr);
     if (e[DRIFT] > 0 && (int)e[KIND] != 1) { const double dur = b->dur(); wob = clampf((float)(wob + rng.bi() * e[DRIFT] * std::min(len, 4.0) * 0.5), (float)(-e[START] * dur), (float)((1 - e[START]) * dur * 0.9)); } else wob = 0;
   }
-  void trig(int, const Event& ev) override {
+  void blockStart(int) override { clockedIn.store(patched(1)); }
+  void trig(int port, const Event& ev) override {
+    if (port == 1) {   // CLOCK: RESTART EVERY so many beats (or bars of four) it starts again from the top, in time
+      static const int BEATS[6] = {0, 1, 4, 8, 16, 32}; const int nb = BEATS[std::max(0, std::min(5, (int)e[EVERY]))]; if (!nb || !count()) return;
+      const long every = std::max(1L, std::lround(nb * (ev.ppb > 0 ? ev.ppb : 1.f))); const bool now0 = clkN % every == 0; clkN++; if (!now0) return;
+      const double now = t + eng->pos / sr;
+      if (e[MODE] < 0.5f) { fadeAll(0.03f); wob = 0; nextAt = now; if (patched(0)) looping = true; }   // LOOP: the loop from its start
+      else { double d, f; seg(patched(0) ? noteIn : -1.f, 1, d, f); }   // ONCE: plays it once
+      return; }
     if (!count()) return;
     const double now = t + eng->pos / sr; noteIn = ev.note; const float vel = 1 - e[VSENS] + e[VSENS] * ev.vel;
     if (e[MODE] < 0.5f) { fadeAll(0.03f); looping = true; loopVel = vel; wob = 0; nextAt = now; return; }
+    { const int ip = pi("poly"); if (ip >= 0 && e[ip] > 0.5f) fadeAll(0.015f); }   // MONO: the last one fades out
     double d, f; seg(ev.note, vel, d, f);
   }
   void render(int a, int b) override {
@@ -91,12 +101,13 @@ struct Sample : Module {
       disp[1 + n].store((float)(v.pos / v.b->sr / v.b->dur())); disp[20 + n].store((float)slot); n++; } disp[0].store((float)n);
   }
 };
-static Reg rSample(new ModuleDef{"sample", "SAMPLE", Cat::Voice, {{"TRIG", PType::Trig}}, {{"OUT", PType::Audio}},
+static Reg rSample(new ModuleDef{"sample", "SAMPLE", Cat::Voice, {{"TRIG", PType::Trig}, {"CLOCK", PType::Trig}}, {{"OUT", PType::Audio}},
   {ACT("load", "LOAD FILE"), OP("kind", "SOUNDS", {"ONE", "SLICES", "KIT", "MULTI"}, 0), only(stepper(noMod(ST("slices", "SLICES", 2, 32, 8))), "slices"),
    OP("mode", "TRIG", {"LOOP", "ONCE"}, 0), only(OP("notes", "NOTES", {"OFF", "ON"}, 0), "one"), only(fine(pct("start", "START", 0)), "region"), fmt(prExp("len", "LENGTH", 0.0005f, 1, 1), [](float v) { char b[16]; std::snprintf(b, 16, v < 0.1f ? "%.1f%%" : "%.0f%%", v * 100); return std::string(b); }),   // the screen shows these as times
    ST("pitch", "PITCH", -24, 24, 0), OP("rev", "PLAY", {"FWD", "BACK", "BOUNCE", "RANDOM"}, 0),
    only(T("atk", "ATTACK", 0.002f, 4, 0.01f), "once"), only(T("rel", "RELEASE", 0.005f, 8, 0.3f), "once"), only(T("fade", "FADE", 0.005f, 4, 0.4f), "loop"),
-   only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 80, 20000, 20000), pct("res", "RES", 0), pct("vsens", "VEL SENS", 1), pct("width", "WIDTH", 0), LEVEL(), ACT("edit", "EDIT SOUND")},
+   only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 80, 20000, 20000), pct("res", "RES", 0), pct("vsens", "VEL SENS", 1), pct("width", "WIDTH", 0), LEVEL(), ACT("edit", "EDIT SOUND"),
+   only(OP("every", "RESTART", {"OFF", "EVERY BEAT", "EVERY BAR", "2 BARS", "4 BARS", "8 BARS"}, 2), "clock")},
   12, 68, false, [] { return new Sample(); }});
 
 // ---------------- GRAIN LOOPER: catches the last seconds of its input (or a file) and plays it as a cloud of grains ----------------

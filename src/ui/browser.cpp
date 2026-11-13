@@ -19,7 +19,7 @@ static std::string joinPath(const std::string& dir, const std::string& name) {
 void Ui::openBrowser(int targetId, int slot, const std::string& dir) {
   dd.reset(); menuOpen = false; tp.open = false; br.open = true; br.target = targetId; br.slot = slot; browseTo(dir);
 }
-void Ui::closeBrowser() { if (br.playing >= 0 && onPreview) onPreview(""); br.open = false; br.playing = -1; }
+void Ui::closeBrowser() { if (onPreview) onPreview(""); br.open = false; br.playing = -1; }   // whatever's previewing stops
 
 static std::string parentOf(std::string d) {   // the folder above ("/a/b/" -> "/a", "C:\\x" -> "C:\\"), or "" at the top
   while (d.size() > 1 && (d.back() == '/' || d.back() == '\\') && !(d.size() == 3 && d[1] == ':')) d.pop_back();
@@ -56,7 +56,7 @@ void Ui::browserPick(int i) {   // a tap on a row: open a folder, or hear a soun
 }
 void Ui::browserLoad() {   // LOAD IT: stop the preview, and put the sound in the module
   if (br.sel < 0 || br.sel >= (int)br.items.size() || br.items[br.sel].folder) return;
-  if (br.playing >= 0 && onPreview) onPreview(""); br.playing = -1;
+  if (onPreview) onPreview(""); br.playing = -1;   // LOAD always stops the preview
   const int t = br.target, sl = br.slot; const std::string p = joinPath(br.dir, br.items[br.sel].name); closeBrowser();   // loaded: the browser closes
   if (onBrowseLoad) onBrowseLoad(t, sl, p);
 }

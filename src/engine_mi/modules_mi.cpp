@@ -21,21 +21,27 @@ struct MiVoices : Module {
   struct V {
     plaits::Voice pv; char ram[16384]; plaits::Voice::Frame fr[BS]; float buf[BS]; int pos = BS;
     NoteEnv env; float note = 60, vel = 1, gl = 0.7f, gr = 0.7f, quiet = 0, life = 0; int trigBlocks = 0; bool on = false; long age = 0;
+    float fadeV = 1, fadeK = 0, n0 = 60, nT = 60, gT = 0, glide = 0;   // MONO's fade; GLIDE from n0 to nT
   };
-  std::unique_ptr<V[]> v; long ages = 0; float comp = 0;
+  std::unique_ptr<V[]> v; long ages = 0; float comp = 0, lastNote = -1;
   void prepare() override {
     v.reset(new V[MAXV]);
     for (int i = 0; i < MAXV; i++) { stmlib::BufferAllocator a(v[i].ram, sizeof(v[i].ram)); v[i].pv.Init(&a); v[i].env.sr = sr; }
     comp = 12 * std::log2(47872.34f / sr);   // Plaits works at its own sample rate: keep notes in tune at ours
   }
   void trig(int, const Event& ev) override {
+    const int ip = pi("poly"), ig = pi("glide"); const bool mono = ip >= 0 && e[ip] > 0.5f;
+    if (mono) for (int i = 0; i < MAXV; i++) if (v[i].on && v[i].fadeK == 0) v[i].fadeK = 1.f / std::max(1.f, 0.015f * sr);   // MONO: the last note fades out quickly
     V* x = nullptr; for (int i = 0; i < MAXV; i++) if (!v[i].on) { x = &v[i]; break; }
     if (!x) { x = &v[0]; for (int i = 1; i < MAXV; i++) if (v[i].age < x->age) x = &v[i]; }   // all busy: the oldest note gives way
-    x->on = true; x->age = ++ages; x->note = ev.note + e[PITCH_]; x->vel = 1 - e[VSENS] + e[VSENS] * ev.vel; x->trigBlocks = 2; x->quiet = 0; x->life = 0;
+    x->on = true; x->age = ++ages; x->note = ev.note + e[PITCH_]; x->vel = 1 - e[VSENS] + e[VSENS] * ev.vel; x->trigBlocks = 2; x->quiet = 0; x->life = 0; x->fadeV = 1; x->fadeK = 0; x->glide = 0;
+    if (mono && ig >= 0 && e[ig] > 0.001f && lastNote >= 0) { x->n0 = lastNote; x->nT = x->note; x->gT = 0; x->glide = e[ig]; x->note = lastNote; }   // GLIDE: from the last note
+    lastNote = x->glide > 0 ? x->nT : x->note;
     x->env.atk = e[ATK]; x->env.dec = e[DEC]; x->env.sus = e[SUS]; x->env.hold = e[HOLD]; x->env.rel = e[REL]; x->env.start(); panGains(rng.bi() * e[WIDTH], x->gl, x->gr);
   }
   void block(V& x) {   // the next few samples of one note, in Plaits' own block size (its timing depends on it)
     const MiEngine& me = miEngines()[std::max(0, std::min(MI_ENGINES - 1, (int)e[VOICE]))]; const bool adsr = e[ENV] > 0.5f;
+    if (x.glide > 0) { x.gT += BS / sr; const float u = std::min(1.f, x.gT / x.glide); x.note = x.n0 + (x.nT - x.n0) * u; if (u >= 1) x.glide = 0; }
     plaits::Patch p = {}; p.note = x.note + comp; p.harmonics = e[HARM]; p.timbre = e[TIMB]; p.morph = e[MORPH]; p.engine = me.plaits; p.decay = e[LPGDEC]; p.lpg_colour = e[COLOUR];
     plaits::Modulations m = {}; m.trigger_patched = true; m.trigger = x.trigBlocks > 0 ? 1.f : 0.f; if (x.trigBlocks > 0) x.trigBlocks--;
     float lev = 1;
@@ -51,7 +57,8 @@ struct MiVoices : Module {
     const float lev = e[LEVEL_] * 0.6f;
     for (int i = a; i < b; i++) {
       float L = 0, R = 0;
-      for (int k = 0; k < MAXV; k++) { V& x = v[k]; if (!x.on) continue; if (x.pos >= BS) { block(x); if (!x.on) continue; } const float s = x.buf[x.pos++]; L += s * x.gl; R += s * x.gr; }
+      for (int k = 0; k < MAXV; k++) { V& x = v[k]; if (!x.on) continue; if (x.pos >= BS) { block(x); if (!x.on) continue; } float s = x.buf[x.pos++];
+        if (x.fadeK > 0) { x.fadeV -= x.fadeK; if (x.fadeV <= 0) { x.on = false; x.fadeK = 0; x.fadeV = 1; continue; } s *= x.fadeV; } L += s * x.gl; R += s * x.gr; }
       out[0][0][i] = L * lev; out[0][1][i] = R * lev;
     }
   }

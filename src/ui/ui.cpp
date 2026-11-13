@@ -561,6 +561,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     int syncI = d->paramIndex("sync"); const bool syncOn = syncI >= 0 && d->params[syncI].tog && u.m->p[syncI].load() > 0.5f;
     bool idle = (q.only == "free" && clocked) || (q.only == "clock" && !clocked) || (q.only == "own" && (syncOn || clocked));
     if (q.only == "adsr" && u.m->p[6].load() < 0.5f) idle = true;
+    if (q.only == "side") { bool sp = false; for (auto& cb : cables) if (cb.to == u.m->id && cb.toPort == 2) sp = true; if (!sp) idle = true; }   // DUCKER: THRESHOLD is for SIDE
     if (q.only == "file" && u.m->p[0].load() < 0.5f) idle = true;   // STRETCH: only for a loaded file   // MI VOICES: the envelope is only used in ADSR
     if (d->type == "sample") { const int kind = (int)u.m->p[1].load(); const bool once = u.m->p[3].load() > 0.5f;   // settings that don't apply to this kind of sound or way of playing
       idle = idle || (q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once); }

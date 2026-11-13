@@ -314,6 +314,7 @@ int main(int argc, char** argv) {
   auto setTheme = [&](const Theme& t) { theme = t; applyTheme(canvas, theme, menus); settings.set("theme", themeJson(theme)); saveSettings(); };
   int letters = std::max(0, std::min(2, (int)settings.num("letters", 0)));   // 0 fine lowercase, 1 fine capitals, 2 the classic small capitals
   static const char* LETTERS[3] = {"LOWERCASE", "CAPITALS", "CLASSIC"};
+  std::function<std::string()> letterReport = [] { return std::string(); };   // what LETTERS is doing on this screen (set once the window is made)
   ui.shadows = settings.num("shadows", 1) > 0.5; ui.borders = settings.num("borders", 0) > 0.5;
   std::function<void(int)> openTheme = [&](int x0) {
     auto nameOf = [](const std::vector<Choice>& list, const std::string& v) { for (auto& c : list) if (v == c.second) return std::string(c.first); return std::string("CUSTOM"); };
@@ -325,7 +326,7 @@ int main(int argc, char** argv) {
     d.pick = [&, x0, labels](int i) {
       if (i == 6) { Dropdown q; q.x = x0; q.y = 11 + i * 8; q.items = {"LOWERCASE  (FINER LETTERS)", "CAPITALS  (FINER LETTERS)", "CLASSIC  (THE ORIGINAL SMALL CAPITALS)"}; q.cur = letters;
         q.pick = [&](int j) { letters = j; settings.set("letters", Json::number(j)); saveSettings();
-          ui.status(j == 2 ? "THE CLASSIC LETTERS" : "FINER LETTERS (ON A SMALL SCREEN, ZOOM IN WITH CTRL + IF THEY DON'T SHOW)", 4); }; ui.openDropdown(q); return; }
+          ui.status(letterReport(), 6); }; ui.openDropdown(q); return; }
       if (i == 7) { Dropdown q; q.x = x0; q.y = 11 + i * 8; q.items = {"MATCH  (A SHADE OF THE BACKGROUND)", "BLACK", "DARK  (A DARK SHADE OF THE BACKGROUND)"}; q.cur = menus;
         q.pick = [&](int j) { menus = j; settings.set("menus", Json::number(j)); saveSettings(); applyTheme(canvas, theme, menus); ui.status(std::string("MENUS ") + MENUS[j], 2); }; ui.openDropdown(q); return; }
       if (i == 8) { ui.shadows = !ui.shadows; settings.set("shadows", Json::number(ui.shadows ? 1 : 0)); saveSettings(); ui.status(ui.shadows ? "SHADOWS UNDER THE MODULES" : "NO SHADOWS", 2); openTheme(x0); return; }
@@ -408,10 +409,16 @@ int main(int argc, char** argv) {
   SDL_SetRenderVSync(ren, 1);
   SDL_Texture* tex = nullptr; int texW = 0, texH = 0; float scale = 3;
   // FINER LETTERS: a texture of the 5 x 7 letters, drawn over the scaled canvas, tinted, at two thirds of an art pixel
-  int atlasW = 0, atlasH = 0; SDL_Texture* atlas = nullptr;
+  int atlasW = 0, atlasH = 0; SDL_Texture* atlas = nullptr; static std::string atlasErr;
   { const std::vector<uint32_t> a = Canvas::fontAtlas(atlasW, atlasH); atlas = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, atlasW, atlasH);
-    if (atlas) { SDL_UpdateTexture(atlas, nullptr, a.data(), atlasW * 4); SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(atlas, SDL_SCALEMODE_NEAREST); } }
+    if (atlas && (!SDL_UpdateTexture(atlas, nullptr, a.data(), atlasW * 4) || !SDL_SetTextureBlendMode(atlas, SDL_BLENDMODE_BLEND))) { SDL_DestroyTexture(atlas); atlas = nullptr; }
+    if (atlas) SDL_SetTextureScaleMode(atlas, SDL_SCALEMODE_NEAREST); else atlasErr = SDL_GetError(); }   // without it, the letters go dot by dot
   std::vector<Canvas::Quad> quads; std::vector<SDL_Vertex> verts; std::vector<int> vidx;
+  letterReport = [&]() -> std::string { char sc[16]; std::snprintf(sc, 16, "%.1fX", scale);
+    if (letters == 2) return "THE CLASSIC LETTERS";
+    if (scale < 1.95f) return std::string("THE WINDOW IS DRAWN AT ") + sc + ": TOO SMALL FOR THE FINER LETTERS, SO THE CLASSIC ONES (ZOOM IN WITH CTRL +)";
+    std::string e = atlasErr; for (auto& ch : e) ch = (char)std::toupper((unsigned char)ch); if (e.size() > 60) e = e.substr(0, 60);
+    return std::string(letters == 1 ? "FINER CAPITALS" : "FINER LOWERCASE") + " AT " + sc + (atlas ? "" : "  (DRAWN DOT BY DOT: " + (e.empty() ? std::string("NO LETTER TEXTURE") : e) + ")"); };
   bool texting = false;
   // ZOOM: small steps of about 8%, remembered between launches. The pixels are scaled up sharply at any size.
   int zoom = std::max(-18, std::min(18, (int)settings.num("zoom", 0)));
@@ -540,7 +547,7 @@ int main(int argc, char** argv) {
       if (since < every) { SDL_WaitEventTimeout(nullptr, (Sint32)std::max(1.f, std::min(100.f, (every - since) * 1000))); continue; } }
     const Uint64 now = SDL_GetTicksNS(); const float dt = std::min(0.1f, (now - last) / 1e9f); last = now;
     if (W != canvas.W || H != canvas.H) canvas.resize(W, H);
-    canvas.fine = atlas && letters < 2 && Canvas::fineDot(scale) >= 2; canvas.letterCase = letters;   // too small a scale for them: the classic ones
+    canvas.fine = letters < 2 && scale >= 1.95f; canvas.letterCase = letters;   // below 2x: the classic ones (they'd be too small to read)
     ui.shiftHeld = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
     canvas.beginFrame();
     ui.draw(canvas, dt);
@@ -548,14 +555,14 @@ int main(int argc, char** argv) {
     SDL_UpdateTexture(tex, nullptr, canvas.rgba.data(), W * 4);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
     SDL_FRect dst{0, 0, (float)(W * scale), (float)(H * scale)}; SDL_RenderTexture(ren, tex, nullptr, &dst);
-    if (canvas.fine) { canvas.fineQuads(scale, quads); verts.clear(); vidx.clear();
+    if (canvas.fine) { canvas.fineQuads(scale, quads, !atlas); verts.clear(); vidx.clear();
       const float iu = 1.f / atlasW, iv = 1.f / atlasH; const int sc = FONT57_N, su = (sc % Canvas::ATLAS_COLS) * Canvas::CELL_W, sv = (sc / Canvas::ATLAS_COLS) * Canvas::CELL_H;
       for (auto& q : quads) { const SDL_FColor col{(q.rgba & 255) / 255.f, ((q.rgba >> 8) & 255) / 255.f, ((q.rgba >> 16) & 255) / 255.f, 1.f};
         float u0, v0, u1, v1; if (q.u >= 0) { u0 = q.u * iu; v0 = q.v * iv; u1 = (q.u + 5) * iu; v1 = (q.v + 9) * iv; } else { u0 = (su + 1) * iu; v0 = (sv + 1) * iv; u1 = (su + 2) * iu; v1 = (sv + 2) * iv; }
         const int b = (int)verts.size(); const float x0 = (float)q.x, y0 = (float)q.y, x1 = (float)(q.x + q.w), y1 = (float)(q.y + q.h);
         verts.push_back({{x0, y0}, col, {u0, v0}}); verts.push_back({{x1, y0}, col, {u1, v0}}); verts.push_back({{x1, y1}, col, {u1, v1}}); verts.push_back({{x0, y1}, col, {u0, v1}});
         for (int k : {0, 1, 2, 0, 2, 3}) vidx.push_back(b + k); }
-      if (!verts.empty()) SDL_RenderGeometry(ren, atlas, verts.data(), (int)verts.size(), vidx.data(), (int)vidx.size()); }
+      if (!verts.empty() && !SDL_RenderGeometry(ren, atlas, verts.data(), (int)verts.size(), vidx.data(), (int)vidx.size()) && atlas) { SDL_DestroyTexture(atlas); atlas = nullptr; atlasErr = SDL_GetError(); } }   // it failed: dot by dot from now on
     SDL_RenderPresent(ren);
   }
   store.writeAutosave(serializePatch(ui));

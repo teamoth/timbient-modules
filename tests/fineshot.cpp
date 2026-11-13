@@ -17,11 +17,10 @@ int main(int argc, char** argv) {
   Canvas c; c.fine = true; c.letterCase = lc; c.resize(460, 460); c.beginFrame(); ui.draw(c, 0.016f);
   const int W = (int)(c.W * S), H = (int)(c.H * S); std::vector<uint32_t> img((size_t)W * H);
   for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) img[(size_t)y * W + x] = c.rgba[(size_t)(int)(y / S) * c.W + (int)(x / S)];
-  int aw, ah; const std::vector<uint32_t> atlas = Canvas::fontAtlas(aw, ah); std::vector<Canvas::Quad> q; c.fineQuads(S, q);
-  const int d = Canvas::fineDot(S);
+  int aw, ah; const std::vector<uint32_t> atlas = Canvas::fontAtlas(aw, ah); std::vector<Canvas::Quad> q; c.fineQuads(S, q, std::getenv("TB_DOTS") != nullptr);
   for (auto& r : q) for (int y = 0; y < r.h; y++) for (int x = 0; x < r.w; x++) {
     const int X = r.x + x, Y = r.y + y; if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
-    if (r.u >= 0 && !(atlas[(size_t)(r.v + y / d) * aw + r.u + x / d] >> 24)) continue; img[(size_t)Y * W + X] = r.rgba; }
+    if (r.u >= 0 && !(atlas[(size_t)(r.v + y * 9 / r.h) * aw + r.u + x * 5 / r.w] >> 24)) continue; img[(size_t)Y * W + X] = r.rgba; }
   FILE* f = std::fopen("fine.ppm", "wb"); std::fprintf(f, "P6 %d %d 255\n", W, H);
   for (auto p : img) { unsigned char rgb[3] = {(unsigned char)(p & 255), (unsigned char)((p >> 8) & 255), (unsigned char)((p >> 16) & 255)}; std::fwrite(rgb, 1, 3, f); }
   std::fclose(f); std::printf("%zu quads\n", q.size()); eng.collectGarbage(); return 0;
