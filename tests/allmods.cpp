@@ -1,3 +1,4 @@
+#include <set>
 #include <ctime>
 #include <thread>
 #include <cstdlib>
@@ -147,24 +148,24 @@ int main(int argc, char** argv) {
     AudioBuf* b = new AudioBuf(); b->sr = 48000; b->d.resize(48000); b->r.assign(48000, 0.f); for (int i = 0; i < 48000; i++) b->d[i] = 0.5f * std::sin(i * 0.05f);
     eng.setBuffer(sm->m->id, b, 0); run(eng, 0.3f); float l = 0, r = 0; std::vector<float> L(256), R(256); for (int k = 0; k < 40; k++) { eng.render(L.data(), R.data(), 256); for (int i = 0; i < 256; i++) { l = std::max(l, std::fabs(L[i])); r = std::max(r, std::fabs(R[i])); } }
     const bool ok = l > 0.05f && r < l * 0.05f; if (!ok) fails++; std::printf("stereo sample: left %.3f right %.4f%s\n", l, r, ok ? "" : "  WRONG"); }
-  // KEY JOURNEY: FIFTHS UP every bar into a sequencer's KEY socket; it saves and loads; unplugged, the sequencer's own key again
+  // KEY JOURNEY: a sequence of keys into a sequencer's KEY socket, one a bar; saved and loaded with the steps; unplugged, the sequencer's own
   { ui.clearPatch(); ui.add("out", 300, 20); eng.tempo.bpm.store(120); eng.key.root.store(0); eng.key.scale.store(0);
-    UiMod* j = ui.add("journey", 0, 20); UiMod* cl = ui.add("clump", 100, 20); ui.set(j, "path", 0); ui.set(j, "dir", 0); ui.set(j, "every", 1); ui.set(j, "soft", 1);
-    const bool plugged = ui.connect(j, 0, cl, KEY_PORT); const bool refused = !ui.connect(cl, 0, j, KEY_PORT);
-    run(eng, 0.2f); const int k0 = cl->m->keyIn.load(); run(eng, 2.0f); const int k1 = cl->m->keyIn.load(), soft = cl->m->softIn; run(eng, 2.0f); const int k2 = cl->m->keyIn.load(), sess = eng.key.root.load();
-    const std::string S = serializePatch(ui).dump(); Json jj; Json::parse(S, jj); ui.clearPatch(); loadPatch(ui, jj); bool back = false; for (auto& cb : ui.cables) if (cb.toPort == KEY_PORT) back = true;
-    UiMod* c2 = nullptr; for (auto& um : ui.mods) if (um->m->def->type == "clump") c2 = um.get(); run(eng, 0.1f); const bool follows = c2 && c2->m->keyIn.load() >= 0;
-    if (c2) for (size_t i = 0; i < ui.cables.size(); i++) if (ui.cables[i].toPort == KEY_PORT) { ui.unplug(ui.cables[i]); break; } run(eng, 0.1f); const bool own = c2 && c2->m->keyIn.load() < 0;
-    const bool ok = plugged && refused && k0 == 0 && k1 == 7 && k2 == 2 && soft != 0 && sess == 0 && back && follows && own; if (!ok) fails++;
-    std::printf("key journey: keys %d %d %d (C G D), soft %d, session stays C %d, saved %d, follows %d, unplugged %d%s\n", k0, k1, k2, soft != 0, sess == 0, back, follows, own, ok ? "" : "  WRONG"); }
-  // KEY JOURNEY: WANDER moving the session's key; MODES ping-pong between Lydian and Phrygian
-  { ui.clearPatch(); ui.add("out", 300, 20); eng.tempo.bpm.store(240); eng.key.root.store(2); eng.key.scale.store(0);
-    UiMod* j = ui.add("journey", 0, 20); ui.set(j, "moves", 1); ui.set(j, "every", 1); int moves = 0, last = -1;   // a bar a second
-    for (int k = 0; k < 40; k++) { run(eng, 1.0f); const int now = eng.key.root.load() * 100 + eng.key.scale.load(); if (now != last) moves++; last = now; }
-    ui.clearPatch(); eng.key.root.store(0); eng.key.scale.store(0); UiMod* m = ui.add("journey", 0, 20); ui.set(m, "moves", 1); ui.set(m, "every", 1); ui.set(m, "path", 1); ui.set(m, "dir", 1);
-    std::string seen; for (int k = 0; k < 12; k++) { run(eng, 1.0f); seen += std::string(scales()[eng.key.scale.load()].name).substr(0, 2) + " "; }
-    const bool ok = moves >= 30 && seen.find("PH") != std::string::npos && seen.find("LY") != std::string::npos && eng.key.root.load() == 0; if (!ok) fails++;
-    std::printf("key journey: wander moved %d of 40 bars; modes down then back: %s%s\n", moves, seen.c_str(), ok ? "" : "  WRONG"); eng.key.root.store(2); eng.key.scale.store(0); }
+    UiMod* j = ui.add("journey", 0, 20); UiMod* cl = ui.add("clump", 100, 20); ui.set(j, "every", 1); ui.set(j, "steps", 3);
+    const int keysWanted[3] = {2, 7, 9}; for (int i = 0; i < 8; i++) { j->m->seq[Module::si(i, 0)].store(i < 3 ? (float)keysWanted[i] : -1.f); j->m->seq[Module::si(i, 0) + 1].store(i == 2 ? 10.f + 4 : 0.8f); }   // D, G, A (step 3 in scale 4)
+    const bool plugged = ui.connect(j, 0, cl, KEY_PORT);
+    run(eng, 0.2f); const int k0 = cl->m->keyIn.load(); run(eng, 2.0f); const int k1 = cl->m->keyIn.load(); run(eng, 2.0f); const int k2 = cl->m->keyIn.load(), s2 = cl->m->scaleIn.load(); run(eng, 2.0f); const int k3 = cl->m->keyIn.load();
+    const std::string S = serializePatch(ui).dump(); Json jj; Json::parse(S, jj); ui.clearPatch(); loadPatch(ui, jj); UiMod* j2 = nullptr; for (auto& um : ui.mods) if (um->m->def->type == "journey") j2 = um.get();
+    const bool steps = j2 && std::lround(j2->m->seq[Module::si(1, 0)].load()) == 7 && std::lround(j2->m->seq[Module::si(2, 0) + 1].load()) == 14;
+    const bool ok = plugged && k0 == 2 && k1 == 7 && k2 == 9 && s2 == 4 && k3 == 2 && steps; if (!ok) fails++;
+    std::printf("key journey: %d %d %d (scale %d) %d (D G A, D again), steps saved %d%s\n", k0, k1, k2, s2, k3, steps, ok ? "" : "  WRONG"); }
+  // KEY JOURNEY: SUGGEST fills smooth steps (each a fifth from the last); SHUFFLE plays each once before repeating; an old session gets steps
+  { ui.clearPatch(); eng.key.root.store(2); eng.key.scale.store(0); UiMod* j = ui.add("journey", 0, 20); ui.set(j, "steps", 8); run(eng, 0.05f); eng.action(j->m->id, "suggest"); run(eng, 0.05f);
+    bool smooth = true; for (int i = 0; i < 8; i++) { const int a = (int)std::lround(j->m->seq[Module::si(i, 0)].load()), b2 = (int)std::lround(j->m->seq[Module::si((i + 1) % 8, 0)].load()); const int dk = ((b2 - a) % 12 + 12) % 12; if (!(dk == 0 || dk == 5 || dk == 7)) smooth = false; }   /* each a fifth from the last, round the end too */
+    ui.set(j, "order", 3); ui.set(j, "moves", 1); ui.set(j, "every", 1); eng.tempo.bpm.store(240); std::set<int> seen; for (int k = 0; k < 48; k++) { run(eng, 0.25f); seen.insert((int)j->m->disp[8].load()); }   /* twelve bars: SHUFFLE has played every step by then */
+    const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"journey","x":0,"y":20,"p":{"path":2,"dir":0,"every":3}}],"cables":[]})";
+    Json jj; Json::parse(old, jj); ui.clearPatch(); loadPatch(ui, jj); run(eng, 0.1f); int filled = 0; for (auto& um : ui.mods) if (um->m->def->type == "journey") for (int i = 0; i < 4; i++) if (um->m->seq[Module::si(i, 0)].load() >= 0) filled++;
+    const bool ok = smooth && seen.size() == 8 && filled == 4; if (!ok) fails++; eng.key.root.store(2); eng.key.scale.store(0);
+    std::printf("key journey: suggest smooth %d, shuffle visited %zu of 8 steps in 12 bars, an old one gets %d steps%s\n", smooth, seen.size(), filled, ok ? "" : "  WRONG"); }
   // SOUND EDITOR: FADE OUT twice is steeper, DELETE shortens with a smooth join, NORMALISE, its UNDO; app UNDO leaves it open
   { ui.clearPatch(); UiMod* sm = ui.add("sample", 0, 20); std::vector<float> L(48000, 0.25f); ui.openEditor(sm->m->id, 0, "TEST", std::move(L), 48000);
     Canvas cv; cv.resize(400, 300); auto press = [&](int id) { cv.beginFrame(); ui.draw(cv, 0.016f); for (auto& b : ui.edBtns) if (b.id == id) { ui.pointerDown(b.x + 2, b.y + 2); ui.pointerUp(b.x + 2, b.y + 2); return true; } return false; };
@@ -267,8 +268,22 @@ int main(int argc, char** argv) {
     ui.clearPatch(); UiMod* pd = ui.add("pad", 100, 40); UiMod* lf = ui.add("lfo", 10, 40); ui.connect(lf, 0, pd, pd->m->def->paramIndex("cut"));
     Canvas cv; cv.resize(400, 300); cv.beginFrame(); ui.draw(cv, 0.016f);
     const std::string onTitle = ui.helpAt(110 - ui.viewX, 43 - ui.viewY), onRow = ui.helpAt(140 - ui.viewX + 0.f, (float)(pd->y + 30 - ui.viewY));
-    const bool ok = missing.empty() && onTitle.rfind("Pad|", 0) == 0 && !onRow.empty(); if (!ok) fails++;
+    ui.setAddMenu(true); cv.beginFrame(); ui.draw(cv, 0.016f); std::string inMenu; { int mx, my; if (ui.menuItemAt("reverb", mx, my)) inMenu = ui.helpAt((float)mx + 2, (float)my + 2); } ui.setAddMenu(false);
+    const bool ok = inMenu.rfind("Reverb|", 0) == 0 && missing.empty() && onTitle.rfind("Pad|", 0) == 0 && onRow.find("JUMP STRAIGHT TO -24") != std::string::npos;   /* the row under it is PITCH: its note tells of the octave jumps */ if (!ok) fails++;
     std::printf("help: %d notes, missing:%s; title %s; a row %s%s\n", n, missing.empty() ? " none" : missing.c_str(), onTitle.substr(0, 12).c_str(), onRow.substr(0, 20).c_str(), ok ? "" : "  WRONG"); }
+  // MI VOICES: the chosen model's own names on its three rows (and help), and the LPG rows only where Plaits uses its gate
+  { ui.clearPatch(); UiMod* mi = ui.add("mi", 0, 20); Canvas cv; cv.resize(300, 300);
+    auto rows = [&] { return ui.shownRows(*mi).size(); }; ui.set(mi, "voice", 0); const size_t nA = rows(); ui.set(mi, "voice", 18); const size_t nK = rows();
+    cv.beginFrame(); ui.draw(cv, 0.016f); std::string note; const auto o = ui.shownRows(*mi);
+    for (size_t r = 0; r < o.size(); r++) if (mi->m->def->params[o[r]].key == "harm") { for (int y = 0; y < 200 && note.empty(); y++) { const std::string h = ui.helpAt((float)(mi->x - ui.viewX + 30), (float)(mi->y - ui.viewY + y)); if (h.rfind("DRIVE|", 0) == 0) note = h; } }
+    const bool ok = nA == nK + 2 && !note.empty(); if (!ok) fails++; std::printf("mi voices: ANALOG %zu rows, KICK %zu (no LPG), KICK's first control: %s%s\n", nA, nK, note.substr(0, 40).c_str(), ok ? "" : "  WRONG"); }
+  // SAMPLER LOOP keeps time: a pass every LENGTH exactly, however long FADE is (it used to come round FADE early)
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "A");
+    AudioBuf* b = new AudioBuf(); b->sr = 48000; b->d.assign(48000, 0.f); for (int i = 0; i < 2400; i++) b->d[i] = 0.8f; eng.setBuffer(sm->m->id, b, 0); ui.set(sm, "fade", 0.2f);
+    std::vector<float> L(64), R(64); std::vector<long> starts; bool above = false; long n = 0;
+    for (int k = 0; k < 48000 * 6 / 64; k++) { eng.render(L.data(), R.data(), 64); for (int i = 0; i < 64; i++, n++) { const bool on = std::fabs(L[i]) > 0.05f; if (on && !above) starts.push_back(n); above = on; } }
+    double per = 0; int cnt = 0; for (size_t i = 2; i < starts.size(); i++) { per += starts[i] - starts[i - 1]; cnt++; } per = cnt ? per / cnt / 48000.0 : 0;
+    const bool ok = std::fabs(per - 1.0) < 0.003; if (!ok) fails++; std::printf("sampler loop: a pass every %.4fs (its length 1s, FADE 0.2s)%s\n", per, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

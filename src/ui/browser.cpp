@@ -112,14 +112,14 @@ void Ui::drawBrowser(Canvas& c) {
       c.text(b, ix, iy + 11, 9);
       std::string l3;
       if (f.noteKnown) { const int nn = (int)std::lround(f.note), cents = (int)std::lround((f.note - nn) * 100); l3 += "NOTE " + noteName(nn) + (std::abs(cents) >= 8 ? (cents > 0 ? " +" : " ") + std::to_string(cents) : ""); }
-      if (f.keyKnown) { if (!l3.empty()) l3 += "  "; l3 += std::string("KEY ") + NOTE_NAMES[f.root] + " " + scales()[f.scale].name;
+      if (f.keyKnown) { if (!l3.empty()) l3 += "  "; l3 += std::string("KEY ") + KEY_NAMES[f.root] + " " + scales()[f.scale].name;
         const bool fits = [&] { const auto& st = scales()[eng.key.scale.load()].steps; const int r0 = eng.key.root.load();
           for (int dd : scales()[f.scale].steps) { const int pc = (f.root + dd) % 12; bool in = false; for (int q : st) if ((r0 + q) % 12 == pc) in = true; if (!in) return false; } return true; }();
         if (fits) l3 += " *"; }
       if (f.tempoKnown) { if (!l3.empty()) l3 += "  "; l3 += "ABOUT " + std::to_string((int)std::lround(f.bpm)) + " BPM"; }
       if (l3.empty()) l3 = f.peakDb < -40 ? "VERY QUIET" : "NO CLEAR NOTE, KEY OR BEAT";
       c.text(l3, ix, iy + 18, 18);
-      if (f.keyKnown && f.altClose) c.text(std::string("(OR ") + NOTE_NAMES[f.altRoot] + " " + scales()[f.altScale].name + ")", ix, iy + 25, 21);
+      if (f.keyKnown && f.altClose) c.text(std::string("(OR ") + KEY_NAMES[f.altRoot] + " " + scales()[f.altScale].name + ")", ix, iy + 25, 21);
       else if (f.keyKnown) { bool fits = l3.find(" *") != std::string::npos; if (fits) c.text("* FITS THE SESSION'S KEY", ix, iy + 25, 21); } } }
   // the buttons
   const int by = y + h - 19; auto btn = [&](int bx, int bw, const std::string& l, int col) { c.frame(bx, by - 1, bw, 9, col); c.text(l, bx + (bw - Canvas::tw(l)) / 2, by + 1, col); };

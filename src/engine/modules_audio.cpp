@@ -75,7 +75,7 @@ struct Sample : Module {
     if (!v) { v = &vo[0]; for (auto& x : vo) if (x.t > v->t) v = &x; }   // twelve at once at most: the oldest goes
     const int style = (int)e[STYLE]; bool rv = style == 1; if (style == 2) { bounce = !bounce; rv = bounce; }   // BOUNCE: alternate directions
     v->on = true; v->b = b; v->rev = rv; v->inc = rate * b->sr / sr; v->pos = rv ? (s + len) * b->sr : s * b->sr;
-    v->t = 0; v->d = (long)(d * sr);
+    v->t = 0; v->d = (long)((once ? d : d + f) * sr);   // LOOP: each pass rings on FADE past its end, fading out under the next (which starts right on time)
     if (once) { v->fi = std::max(1L, (long)(std::min((double)e[ATK], d / 2) * sr)); v->fo = std::max(1L, (long)(std::min((double)e[REL], d / 2) * sr)); }
     else { v->fi = v->fo = std::max(1L, (long)(f * sr)); }
     v->gain = gain; v->fadeV = 1; v->fadeK = 0; panGains(rng.bi() * e[WIDTH], v->gl, v->gr);
@@ -141,7 +141,7 @@ struct Sample : Module {
     const bool filt = e[CUT] < 19000 || e[RES] > 0.01f; if (filt && (e[CUT] != lpSig[0] || e[RES] != lpSig[1])) { lpSig[0] = e[CUT]; lpSig[1] = e[RES]; lp.set(Biquad::LP, e[CUT], 0.7f + e[RES] * e[RES] * 9, sr); }
     for (int i = a; i < b; i++) {
       if (run) { const double now = t + i / sr; if (nextAt < 0 || nextAt < now - 0.5) nextAt = now + 0.005;
-        if (now >= nextAt) { double d, f; seg(trigged ? noteIn : -1.f, loopVel, d, f); nextAt += std::max(0.05, d - f); } }
+        if (now >= nextAt) { double d, f; seg(trigged ? noteIn : -1.f, loopVel, d, f); nextAt += std::max(0.05, d); } }   // exactly its length: the loop keeps time (it used to start each pass FADE early, and crept ahead)
       float L = 0, R = 0;
       for (auto& v : vo) { if (!v.on) continue;
         float g = v.gain; if (v.t < v.fi) g *= (float)v.t / v.fi; else if (v.t > v.d - v.fo) g *= std::max(0.f, (float)(v.d - v.t) / v.fo);

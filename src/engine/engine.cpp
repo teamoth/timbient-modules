@@ -8,6 +8,7 @@
 namespace tb {
 
 const char* NOTE_NAMES[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+const char* KEY_NAMES[12] = {"C", "D\x02", "D", "E\x02", "E", "F", "F#", "G", "A\x02", "A", "B\x02", "B"};
 const std::vector<ScaleDef>& scales() {
   static const std::vector<ScaleDef> s = {
     {"YO", {0, 2, 5, 7, 9}}, {"IN", {0, 1, 5, 7, 8}}, {"MIN PENTA", {0, 3, 5, 7, 10}}, {"MAJ PENTA", {0, 2, 4, 7, 9}},
@@ -44,7 +45,7 @@ void registerDef(ModuleDef* d) {
   d->width += 8;   // room for the - and + beside every slider
   static const char* KEYED[] = {"clump", "orbits", "hops", "keys", "bursts", "walker", "tools"};   // sequencers that pick notes from a key
   for (const char* k : KEYED) if (d->type == k) {
-    std::vector<std::string> keys = {"GLOBAL"}; for (int i = 0; i < 12; i++) keys.push_back(NOTE_NAMES[i]);
+    std::vector<std::string> keys = {"GLOBAL"}; for (int i = 0; i < 12; i++) keys.push_back(KEY_NAMES[i]);
     std::vector<std::string> sc = {"GLOBAL"}; for (auto& x : scales()) sc.push_back(x.name);
     ParamDef a = OP("skey", "KEY", keys, 0); ParamDef b = OP("sscale", "SCALE", sc, 0);
     d->keyIdx = (int)d->params.size(); d->params.push_back(a); d->scaleIdx = (int)d->params.size(); d->params.push_back(b); }

@@ -153,7 +153,9 @@ public:
   bool helpOn = true;       // HELP (the ? in the top bar): a little note on whatever the pointer rests on
   std::function<void(bool)> onHelpToggle;   // the app keeps the choice
   float hoverT = 0, hoverX = -100, hoverY = -100; int infoX0 = 0, infoX1 = 0;   // how long the pointer has rested, and where; the AUDIO % reading's place
-  std::string helpAt(float sx, float sy);   // the note for what's at this point of the screen ("TITLE|text"), or nothing
+  std::string helpAt(float sx, float sy);
+  void setAddMenu(bool open);                                   // open or close the ADD menu (for tests)
+  bool menuItemAt(const std::string& type, int& x, int& y) const;   // where a module's name sits in the open ADD menu   // the note for what's at this point of the screen ("TITLE|text"), or nothing
   void drawHelp(Canvas& c, float dt);
   bool jacksIn = true;     // sockets inside the frame (false: on its edges, half outside)
   bool headOut = false;    // a module's only output sits in its title bar

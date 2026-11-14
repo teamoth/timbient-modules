@@ -22,7 +22,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.35.0";
+static const char* VERSION = "0.36.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -399,12 +399,12 @@ int main(int argc, char** argv) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + KEY_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
-      if (i == 0) { for (int k = 0; k < 12; k++) q.items.push_back(std::string("KEY ") + NOTE_NAMES[k]); q.cur = engine.key.root.load();
-        q.pick = [&](int j) { engine.key.root.store(j); ui.status(std::string("KEY ") + NOTE_NAMES[j]); dirty = true; saveT = 0.5f; }; }
+      if (i == 0) { for (int k = 0; k < 12; k++) q.items.push_back(std::string("KEY ") + KEY_NAMES[k]); q.cur = engine.key.root.load();
+        q.pick = [&](int j) { engine.key.root.store(j); ui.status(std::string("KEY ") + KEY_NAMES[j]); dirty = true; saveT = 0.5f; }; }
       else if (i == 1) { for (auto& s : scales()) q.items.push_back(s.name); q.cur = engine.key.scale.load();
         q.pick = [&](int j) { engine.key.scale.store(j); ui.status(std::string("SCALE ") + scales()[j].name); dirty = true; saveT = 0.5f; }; }
       else if (i == 2) { ui.openTempo(x0, 11 + 2 * 8); return; }

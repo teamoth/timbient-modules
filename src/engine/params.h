@@ -36,7 +36,7 @@ inline std::string fmtParam(const ParamDef& q, float v, int root) {
   char b[32];
   if (q.act) return "TAP";
   if (!q.opts.empty()) { int i = (int)std::round(v); return q.opts[std::max(0, std::min((int)q.opts.size() - 1, i))]; }
-  if (q.fmt) { std::string s = q.fmt(v); if (!s.empty() && s[0] == '@') s = std::string(NOTE_NAMES[root]) + s.substr(1); return s; }
+  if (q.fmt) { std::string s = q.fmt(v); if (!s.empty() && s[0] == '@') s = std::string(KEY_NAMES[root]) + s.substr(1); return s; }
   if (q.pctFmt) { std::snprintf(b, 32, "%d%%", (int)std::round(v * 100)); return b; }
   if (q.time) return fmtSecs(v);
   if (q.hz) { if (v < 1000) std::snprintf(b, 32, "%dHZ", (int)std::round(v)); else std::snprintf(b, 32, "%.1fK", v / 1000); return b; }

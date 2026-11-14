@@ -249,6 +249,7 @@ KeyMatch matchKey(const float chroma[12]);
 inline int degOf(int oct, int step, int scale) { return (oct - 2) * (int)scales()[scale].steps.size() + step; }
 inline int nearDeg(float note, int root, int scale) { int best = 0; float bd = 1e9f; for (int i = -12; i < 90; i++) { const float d = std::fabs(midiOf(i, root, scale) - note); if (d < bd) { bd = d; best = i; } } return best; }
 extern const char* NOTE_NAMES[12];
+extern const char* KEY_NAMES[12];   // keys as musicians name them: D\x02 is D flat (\x02 draws as a flat sign)
 inline std::string noteName(int n) { return std::string(NOTE_NAMES[((n % 12) + 12) % 12]) + std::to_string(n / 12 - 1); }
 
 }  // namespace tb
