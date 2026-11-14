@@ -174,7 +174,7 @@ static Reg rSample(new ModuleDef{"sample", "SAMPLER", Cat::Voice, {{"TRIG", PTyp
 // FREEZE (or a trigger into FREEZE) stops LIVE listening, so the window holds; on HELD it holds the playhead.
 struct Looper : Module {
   enum { SRC, CATCH, LOAD, LEN, POS, CRAWL, SIZE, DENS, PITCH, SCATTER, REV, TEX, MIX, LEVEL_, EDIT_, FRZ };
-  int iChan = -1; bool liveG = false;
+  int iChan = -1; bool liveG = false; float cols[64] = {}, colMax = 0; int colI = 0; long colN = 0;   // cols: the live window's outline (the loudest of each 64th of LENGTH)
   AudioBuf* buf = nullptr;
   struct Grain { double pos, inc; long t, len; float gl, gr, ex, gain, x; float win[65]; };   // each grain's window shape, worked out once when it starts
   static constexpr int MAXG = 96; Grain g[MAXG]; int ng = 0; double acc = 0; float head = 0.5f, dir = 1, lastPos = -1; Smooth dry, wet;
@@ -196,7 +196,9 @@ struct Looper : Module {
     // keep the last 20 seconds of the input, for CATCH
     long w = ringW.load(std::memory_order_relaxed); const long N = (long)ring.size();
     const bool frozen = e[FRZ] > 0.5f, live = e[SRC] < 0.5f;
-    if (!(live && frozen)) { for (int i = a; i < b; i++, w++) { ring[w % N] = 0.5f * (in[0][0][i] + in[0][1][i]); ringR[w % N] = in[0][1][i]; }   // ring: the two mixed; ringR: the right (so CATCH in STEREO can have both)
+    if (!(live && frozen)) { const long per = std::max(1L, (long)(e[LEN] * sr / 64));
+      for (int i = a; i < b; i++, w++) { ring[w % N] = 0.5f * (in[0][0][i] + in[0][1][i]); ringR[w % N] = in[0][1][i];
+        colMax = std::max(colMax, std::max(std::fabs(in[0][0][i]), std::fabs(in[0][1][i]))); if (++colN >= per) { cols[colI] = colMax; colI = (colI + 1) % 64; colMax = 0; colN = 0; } }   // ring: the two mixed; ringR: the right (so CATCH in STEREO can have both)
       ringW.store(w, std::memory_order_release); }   // LIVE FROZEN: it stops listening, so the window holds
     if (e[POS] != lastPos) { head = e[POS]; lastPos = e[POS]; }   // POSITION places the playhead; CRAWL moves it on
     if (!eng->freeze.load(std::memory_order_relaxed) && !(frozen && !live)) head += dir * e[CRAWL] * 0.02f * (b - a) / sr;   // FREEZE holds it where it is
@@ -227,7 +229,7 @@ struct Looper : Module {
       const float d = dry.tick(), wv = wet.tick();
       out[0][0][i] = in[0][0][i] * d + sane(L) * wv; out[0][1][i] = in[0][1][i] * d + sane(R) * wv;
     }
-    disp[0].store(head); disp[40].store(live ? (frozen ? 2.f : 1.f) : 0.f); const int show = std::min(ng, 30); disp[1].store((float)show); for (int k = 0; k < show; k++) disp[2 + k].store(g[ng - 1 - k].x);
+    disp[0].store(head); disp[40].store(live ? (frozen ? 2.f : 1.f) : 0.f); for (int k = 0; k < 64; k++) disp[64 + k].store(cols[(colI + k) % 64]); const int show = std::min(ng, 30); disp[1].store((float)show); for (int k = 0; k < show; k++) disp[2 + k].store(g[ng - 1 - k].x);
   }
 };
 static Reg rLooper(new ModuleDef{"looper", "GRAIN LOOPER", Cat::Proc, {{"IN", PType::Audio}, {"FREEZE", PType::Trig}}, {{"OUT", PType::Audio}},
@@ -263,7 +265,8 @@ struct Stretch : Module {
   std::vector<float> rg, rgR, win, re, im, mag, mag2, r2, i2, acc[2], q[2], qb[2], wl, wr; long wpos = 0; int iChan = -1; double rpos = -4096, trav = 0; int qpos = 1 << 30;
   Biquad hp; Smooth dry, wet; AudioBuf* buf = nullptr; Rng wrng;
   // each window is worked out on a thread of its own, a window ahead, from a copy of the sound (so a big one never holds the audio up)
-  struct Job { bool st; double ratio; float sh; } job{}; std::atomic<int> state{0};   // 0: free, 1: asked, 2: done (in qb)
+  struct Job { bool st; double ratio; float sh; } job{}; std::atomic<int> state{0};
+  float bands[32] = {}, bandsB[32] = {};   // the display: 32 bands, low to high, of the window the worker made (bandsB), shown when it comes in (bands)   // 0: free, 1: asked, 2: done (in qb)
   std::atomic<bool> quit{false}; std::thread th;
   ~Stretch() override { quit.store(true); if (th.joinable()) th.join(); for (auto* f : ffts) delete f; delete buf; }
   AudioBuf* swapBuf(AudioBuf* b, int) override { AudioBuf* old = buf; buf = b; trav = 0; return old; }
@@ -316,11 +319,14 @@ struct Stretch : Module {
       float* a = acc[c].data(); for (int i = 0; i < N; i++) a[i] += (r2[i] / N) * win[i];
       std::copy(a, a + HOP, qb[c].begin()); std::copy(a + HOP, a + N, a); std::fill(a + N - HOP, a + N, 0.f);
     }
+    for (int k = 0; k < 32; k++) {   // the display: how much of each band (40 Hz to 16 kHz, spaced like notes), in dB, 0..1
+      const double f0 = 40 * std::pow(400.0, k / 32.0), f1 = 40 * std::pow(400.0, (k + 1) / 32.0); const int b0 = std::max(1, (int)(f0 * N / sr)), b1 = std::min(H, std::max(b0 + 1, (int)(f1 * N / sr)));
+      float m = 0; for (int b = b0; b < b1; b++) m = std::max(m, mag2[b]); const float db = 20 * std::log10(m / (N * 0.25f) + 1e-9f); bandsB[k] = clampf((db + 78) / 66, 0, 1); }
   }
   void frame() {   // a hop's worth played: the worker's window comes in, and the next is asked for
     const int st = state.load(std::memory_order_acquire);
     if (st == 0) { ask(); compute(); }   // the very first: worked out here
-    if (st != 1) { std::swap(q[0], qb[0]); std::swap(q[1], qb[1]); ask(); state.store(1, std::memory_order_release); }   // the worker is free: take its window, ask for the next
+    if (st != 1) { std::swap(q[0], qb[0]); std::swap(q[1], qb[1]); std::copy(bandsB, bandsB + 32, bands); ask(); state.store(1, std::memory_order_release); }   // the worker is free: take its window, ask for the next
     // still being worked out (it never should be): the last hop again, rather than wait
     qpos = 0;
   }
@@ -333,6 +339,7 @@ struct Stretch : Module {
       for (int c = 0; c < 2; c++) out[0][c][i] = in[0][c][i] * d + hp.run(sane(q[c][std::min(qpos, (int)q[c].size() - 1)]), c) * w;
       qpos++;
     }
+    for (int k = 0; k < 32; k++) disp[64 + k].store(bands[k], std::memory_order_relaxed); disp[40].store(fz ? 1.f : 0.f, std::memory_order_relaxed);
   }
 };
 static Reg rStretch(new ModuleDef{"stretch", "STRETCH", Cat::Proc, {{"IN", PType::Audio}, {"FREEZE", PType::Trig}}, {{"OUT", PType::Audio}},

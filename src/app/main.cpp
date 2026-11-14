@@ -22,7 +22,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.34.0";
+static const char* VERSION = "0.35.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -392,6 +392,8 @@ int main(int argc, char** argv) {
   static const int FPS[3] = {60, 30, 20};
   int fpsIdx = std::max(0, std::min(2, (int)settings.num("fps", 1)));
   ui.cableMotion = settings.num("cableMotion", 1) > 0.5;
+  ui.helpOn = settings.num("help", 1) > 0.5;   // HELP starts on; switched off, it stays off
+  ui.onHelpToggle = [&](bool on) { settings.set("help", Json::number(on ? 1 : 0)); saveSettings(); };
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;

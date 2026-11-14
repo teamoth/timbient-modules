@@ -5,6 +5,7 @@
 // reasonably loud, and report what each one costs. Then, if a session file is given, load it and render it.
 #include "../src/ui/ui.h"
 #include "../src/ui/session.h"
+#include "../src/ui/help.h"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -255,6 +256,19 @@ int main(int argc, char** argv) {
   { ui.clearPatch(); UiMod* ob = ui.add("orbits", 0, 20); ui.set(ob, "speed", 1); run(eng, 10); bool moved0 = false; for (int r = 0; r < 8; r++) if (std::fabs(ob->m->disp[17 + r].load()) > 0.5f) moved0 = true;
     ui.set(ob, "mutate", 1); run(eng, 20); int moved = 0; for (int r = 0; r < 5; r++) if (std::fabs(ob->m->disp[17 + r].load()) > 0.5f) moved++;
     const bool ok = !moved0 && moved >= 2; if (!ok) fails++; std::printf("orbits mutate: still at 0 %d, rings moved at full %d of 5%s\n", !moved0, moved, ok ? "" : "  WRONG"); }
+  // HELP: every module, setting and socket has a note; the pointer resting on things finds them
+  { std::string missing; int n = 0;
+    for (auto* d : allDefs()) { if (helpModule(d->type).empty()) missing += " " + d->type; n++;
+      for (auto& q : d->params) { if (helpParam(d, q).empty()) missing += " " + d->type + "." + q.key; n++; }
+      for (int k = 0; k < (int)d->ins.size(); k++) { if (helpPort(d, false, k).empty()) missing += " " + d->type + "<" + d->ins[k].name; n++; }
+      for (int k = 0; k < (int)d->outs.size(); k++) { if (helpPort(d, true, k).empty()) missing += " " + d->type + ">" + d->outs[k].name; n++; } }
+    for (const char* o : {"M", "S", "B", "ON", "FOLD", "SWITCH", "KEYSOCKET", "CLOSE", "MODRING", "CABLE", "+ ADD", "SESSIONS", "SETTINGS", "UNDO", "REDO", "FOLD ALL", "OPEN ALL", "?", "FULLSCREEN", "WINDOW", "ZOOM", "AUDIO"})
+      { if (helpOther(o).empty()) missing += std::string(" ") + o; n++; }
+    ui.clearPatch(); UiMod* pd = ui.add("pad", 100, 40); UiMod* lf = ui.add("lfo", 10, 40); ui.connect(lf, 0, pd, pd->m->def->paramIndex("cut"));
+    Canvas cv; cv.resize(400, 300); cv.beginFrame(); ui.draw(cv, 0.016f);
+    const std::string onTitle = ui.helpAt(110 - ui.viewX, 43 - ui.viewY), onRow = ui.helpAt(140 - ui.viewX + 0.f, (float)(pd->y + 30 - ui.viewY));
+    const bool ok = missing.empty() && onTitle.rfind("Pad|", 0) == 0 && !onRow.empty(); if (!ok) fails++;
+    std::printf("help: %d notes, missing:%s; title %s; a row %s%s\n", n, missing.empty() ? " none" : missing.c_str(), onTitle.substr(0, 12).c_str(), onRow.substr(0, 20).c_str(), ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

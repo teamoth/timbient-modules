@@ -16,7 +16,8 @@ void keysCell(const UiMod& u, int& cw, int& ch);   // NOTE GRID: how big its but
 struct UiMod {
   int colScroll = 0;   // TRACKER: the first of the columns on show
   int tlSel = -1;      // TIMELINE: the event picked (its place in the list), or -1
-  const std::vector<UiCable>* cables = nullptr; float clearAsk = 0;   // clearAsk: CLEAR was tapped once (a second tap within this long clears)   // its Ui's cables (a row can wait on one)
+  const std::vector<UiCable>* cables = nullptr; std::vector<float> spec; float clearAsk = 0, shakeT = 0;   // spec: STRETCH's spectrum as shown (gliding)
+  int valK = -1; float valT = 0;   // valK, valT: the row - or + last moved, and how much longer its value shows   // clearAsk: CLEAR was tapped once (a second tap within this long clears)   // its Ui's cables (a row can wait on one)
   int lastTake = 0, fbSent = -1; float recGiveT = 0;   // SAMPLER: the last take copied out; the feedback warning sent; when it was last given somewhere to record
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
@@ -149,6 +150,11 @@ public:
   int trFocus = 0;          // the Tracker last touched: the arrow keys and Delete work on it
   bool trackerKey(int key); // 1 up, 2 down, 3 left, 4 right, 5 delete
   std::string inputName;  // AUDIO IN: the input device's name (shown on the module)
+  bool helpOn = true;       // HELP (the ? in the top bar): a little note on whatever the pointer rests on
+  std::function<void(bool)> onHelpToggle;   // the app keeps the choice
+  float hoverT = 0, hoverX = -100, hoverY = -100; int infoX0 = 0, infoX1 = 0;   // how long the pointer has rested, and where; the AUDIO % reading's place
+  std::string helpAt(float sx, float sy);   // the note for what's at this point of the screen ("TITLE|text"), or nothing
+  void drawHelp(Canvas& c, float dt);
   bool jacksIn = true;     // sockets inside the frame (false: on its edges, half outside)
   bool headOut = false;    // a module's only output sits in its title bar
   bool outInHead(const UiMod& u) const { return headOut && u.m->def->outs.size() == 1; }

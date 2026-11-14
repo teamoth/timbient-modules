@@ -97,7 +97,7 @@ public:
   std::atomic<float> outLev[8] = {};   // how loud each audio output is (peak, falling slowly): the screen shows it flowing along the cables
   std::atomic<bool> bypass{false}; float byNow = 0;   // BYPASS: an effect fades over to its dry input
   bool retiring = false; float retireT = 0, quietT = 0;   // being taken away, letting its tail ring out   // how many triggers each output has sent: the screen sends a pulse along its cables
-  std::atomic<float> disp[64];     // values the screen draws (playheads, meters, shapes), written by the audio thread
+  std::atomic<float> disp[160];     // values the screen draws (playheads, meters, shapes), written by the audio thread
   std::atomic<bool> clockedIn{false};   // something is patched into a CLOCK input
   float sr = 48000; double t = 0;  // sample rate and running time in seconds
   long processed = -1;             // the last block this module was processed in
