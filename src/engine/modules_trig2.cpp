@@ -75,9 +75,9 @@ struct Tools : Module {
     disp[0].store((float)nh); disp[1].store((float)hist);
   }
 };
-static Reg rTools(new ModuleDef{"tools", "TRIG TOOLS", Cat::Trig, {{"IN", PType::Trig}}, {{"OUT", PType::Trig}},
+static Reg rTools(new ModuleDef{"tools", "TRIG TOOLS", Cat::Trig, {{"NOTES IN", PType::Trig}}, {{"NOTES OUT", PType::Trig}},
   {pct("chance", "CHANCE", 1), ST("div", "DIVIDE", 1, 16, 1), ST("rep", "REPEATS", 0, 8, 0), T("gap", "REP GAP", 0.03f, 1, 0.12f), pct("fall", "REP FALL", 0.3f),
-   ST("steps", "SHIFT", -7, 7, 0), ST("oct", "OCTAVE", -3, 3, 0), OP("quant", "QUANTISE", {"OFF", "ON"}, 0)}, 4, 68, false, [] { return new Tools(); }});
+   ST("steps", "SHIFT", -7, 7, 0), ST("oct", "OCTAVE", -3, 3, 0), OP("quant", "QUANTISE", {"OFF", "ON"}, 0)}, 4, 88, false, [] { return new Tools(); }});
 
 // ---------------- TRACKER: notes typed in step by step ----------------
 static const int TRK_DIV[3] = {1, 2, 4};
@@ -296,7 +296,7 @@ struct NoteLooper : Module {
   }
 };
 static std::string beatsText(float v) { char b[24]; std::snprintf(b, 24, v < 10 && std::fabs(v - std::round(v)) > 0.01f ? "%.2f BEATS" : "%.0f BEATS", v); return b; }
-static Reg rNoteLooper(new ModuleDef{"nloop", "NOTE LOOPER", Cat::Trig, {{"NOTES", PType::Trig}, {"CLOCK", PType::Trig}, {"REC", PType::Trig}}, {{"NOTES", PType::Trig}},
+static Reg rNoteLooper(new ModuleDef{"nloop", "NOTE LOOPER", Cat::Trig, {{"NOTES IN", PType::Trig}, {"CLOCK", PType::Trig}, {"REC", PType::Trig}}, {{"NOTES OUT", PType::Trig}},
   {OP("rec", "RECORD", {"OFF", "ON"}, 0), OP("thru", "THRU", {"OFF", "ON"}, 1),
    fine(fmt(pr("start", "START", 0, 128, 0), beatsText)), fmt(prExp("lenb", "LENGTH", 0.25f, 128, 16), beatsText),
    OP("dir", "PLAYS", {"FORWARDS", "BACKWARDS", "PING-PONG"}, 0),
@@ -304,7 +304,7 @@ static Reg rNoteLooper(new ModuleDef{"nloop", "NOTE LOOPER", Cat::Trig, {{"NOTES
    ST("trans", "TRANSPOSE", -24, 24, 0),
    OP("quant", "QUANTISE", {"OFF", "1/16", "1/8", "1/4"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("undo", "UNDO LAYER"), ACT("rrhythm", "RANDOM RHYTHM"), ACT("rorder", "RANDOM ORDER"), ACT("urand", "UNDO RANDOM"), ACT("clear", "CLEAR"),
-   pctX("drift", "DRIFT", 2, 0)}, 30, 68, false, [] { return new NoteLooper(); }});
+   pctX("drift", "DRIFT", 2, 0)}, 30, 88, false, [] { return new NoteLooper(); }});
 
 
 // ---------------- TIMELINE: a stretch of time (5 minutes, say) with events placed along it ----------------
@@ -487,6 +487,6 @@ static Reg rJourney(new ModuleDef{"journey", "KEY JOURNEY", Cat::Trig, {{"NEXT",
   {OP("path", "PATH", {"FIFTHS", "MODES", "RELATIVE", "PARALLEL", "THIRDS", "WANDER"}, 5), OP("dir", "DIRECTION", {"UP", "DOWN", "BOTH"}, 2),
    OP("every", "EVERY", {"NEXT ONLY", "1 BAR", "2 BARS", "4 BARS", "8 BARS", "16 BARS"}, 3), pct("chance", "CHANCE", 1), only(pct("pull", "HOME PULL", 0.5f), "wander"),
    OP("hkey", "HOME KEY", keyNamesH(), 0), OP("hscale", "HOME SCALE", scaleNamesH(), 0), OP("soft", "SOFT CHANGE", {"OFF", "ON"}, 1),
-   OP("moves", "MOVES", {"PATCHED", "SESSION KEY"}, 0), ACT("reset", "GO HOME")}, 25, 70, false, [] { return new KeyJourney(); }});
+   OP("moves", "MOVES", {"PATCHED", "SESSION KEY"}, 0), ACT("reset", "GO HOME")}, 25, 96, false, [] { return new KeyJourney(); }});
 
 }  // namespace tb

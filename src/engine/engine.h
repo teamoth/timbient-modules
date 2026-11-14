@@ -164,13 +164,19 @@ struct Tempo { std::atomic<float> bpm{72}; };
 struct MidiMsg { uint8_t st = 0, d1 = 0, d2 = 0; };
 struct MidiOutMsg { int slot = 0, n = 0; uint8_t b[3] = {0, 0, 0}; double at = 0; };   // at: when to send, in seconds on the steady clock
 double wallSeconds();
-struct Key { std::atomic<int> root{2}, scale{0}; int soft = 0; };   // soft: a KEY JOURNEY moving the session's key, just after a change
+struct Key { std::atomic<int> root{2}, scale{0}; int soft = 0; };
+// AUDIO IN: what the input device brings, its channels side by side, round a ring; written by the input device's own
+// thread, read by every AUDIO IN module (each a little behind, so the two devices' timing can differ a little)
+struct AudioInput { std::vector<float> buf; size_t frames = 0; std::atomic<int> ch{0}, lag{1024}; std::atomic<uint64_t> w{0}; std::atomic<bool> live{false};
+  void write(const float* in, unsigned n) { const int c = ch.load(std::memory_order_relaxed); uint64_t at = w.load(std::memory_order_relaxed);
+    for (unsigned i = 0; i < n; i++, at++) { float* d = &buf[(size_t)(at % frames) * c]; for (int k = 0; k < c; k++) d[k] = in[(size_t)i * c + k]; }
+    w.store(at, std::memory_order_release); } };   // soft: a KEY JOURNEY moving the session's key, just after a change
 
 class Engine {
 public:
   Engine() { mods.reserve(512); cables.reserve(4096); order.reserve(512); }
   float sr = 48000;
-  Tempo tempo; Key key;
+  Tempo tempo; Key key; AudioInput input;
   std::atomic<bool> freeze{false};
   std::atomic<int> noteLimit{48};
   // what the screen reads back

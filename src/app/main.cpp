@@ -22,7 +22,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.33.0";
+static const char* VERSION = "0.34.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -51,15 +51,36 @@ static const int BUFFERS[5] = {128, 256, 512, 1024, 2048};
 // 96K and 88.2K (about twice the work of 48K) only in the 64-bit versions; the 32-bit one is for older, slower computers
 static const unsigned RATES[7] = {0, 48000, 44100, 32000, 24000, 96000, 88200};
 static const int NRATES = sizeof(void*) == 8 ? 7 : 5;
+// the sound devices: one context to list them (by name: what SETTINGS keeps), the output it plays to, the input AUDIO IN hears
+static ma_context gCtx; static bool gCtxOk = false;
+static void initContext() { if (!gCtxOk) gCtxOk = ma_context_init(nullptr, 0, nullptr, &gCtx) == MA_SUCCESS; }
+static std::vector<std::pair<std::string, ma_device_id>> listDevices(bool capture) {
+  std::vector<std::pair<std::string, ma_device_id>> v; initContext(); if (!gCtxOk) return v;
+  ma_device_info *pl = nullptr, *cp = nullptr; ma_uint32 np = 0, nc = 0; if (ma_context_get_devices(&gCtx, &pl, &np, &cp, &nc) != MA_SUCCESS) return v;
+  const ma_device_info* in = capture ? cp : pl; const ma_uint32 n = capture ? nc : np; for (ma_uint32 i = 0; i < n; i++) v.push_back({in[i].name, in[i].id}); return v; }
+static bool findDevice(bool capture, const std::string& name, ma_device_id& id) { if (name.empty()) return false; for (auto& d : listDevices(capture)) if (d.first == name) { id = d.second; return true; } return false; }
+static void inputCallback(ma_device*, void*, const void* input, ma_uint32 frames) { if (gEngine && input && gEngine->input.live.load(std::memory_order_relaxed)) gEngine->input.write((const float*)input, frames); }
+struct Capture {
+  ma_device dev; bool open = false; std::string name;
+  bool start(Engine& e, const std::string& want, int period) {
+    stop(); initContext(); ma_device_config cfg = ma_device_config_init(ma_device_type_capture); ma_device_id id; const bool named = findDevice(true, want, id);
+    cfg.capture.format = ma_format_f32; cfg.capture.channels = 0; cfg.capture.pDeviceID = named ? &id : nullptr; cfg.sampleRate = (ma_uint32)e.sr;
+    cfg.dataCallback = inputCallback; cfg.periodSizeInFrames = (ma_uint32)period; cfg.periods = 3;
+    if (ma_device_init(gCtxOk ? &gCtx : nullptr, &cfg, &dev) != MA_SUCCESS) return false;
+    const int ch = std::max(1, std::min(8, (int)dev.capture.channels)); AudioInput& I = e.input; I.live.store(false); I.ch.store(ch); I.frames = 65536; I.buf.assign(I.frames * (size_t)ch, 0.f); I.w.store(0);
+    I.lag.store(period * 2); name = named ? want : std::string(dev.capture.name); open = true; I.live.store(true);
+    if (ma_device_start(&dev) != MA_SUCCESS) { stop(); return false; } return true; }
+  void stop() { if (open) { if (gEngine) gEngine->input.live.store(false); ma_device_uninit(&dev); open = false; } }
+};
 struct Sound {
-  ma_device dev; bool open = false; int bufIdx = 2;
+  ma_device dev; bool open = false; int bufIdx = 2; std::string want, name;   // want: the output chosen in SETTINGS (empty: the system's)
   bool start(Engine& e, unsigned rate) {
-    ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
-    cfg.playback.format = ma_format_f32; cfg.playback.channels = 2; cfg.sampleRate = rate;
+    initContext(); ma_device_config cfg = ma_device_config_init(ma_device_type_playback); ma_device_id id; const bool named = findDevice(false, want, id);
+    cfg.playback.format = ma_format_f32; cfg.playback.channels = 2; cfg.sampleRate = rate; cfg.playback.pDeviceID = named ? &id : nullptr;
     cfg.dataCallback = audioCallback; cfg.periodSizeInFrames = (ma_uint32)BUFFERS[bufIdx]; cfg.periods = 3;
     cfg.performanceProfile = bufIdx <= 1 ? ma_performance_profile_low_latency : ma_performance_profile_conservative;
-    if (ma_device_init(nullptr, &cfg, &dev) != MA_SUCCESS) return false;
-    open = true; if (e.sr != (float)dev.sampleRate) e.setSampleRate((float)dev.sampleRate);   // the engine runs at whatever rate the sound runs at
+    if (ma_device_init(gCtxOk ? &gCtx : nullptr, &cfg, &dev) != MA_SUCCESS) return false;
+    name = named ? want : std::string(dev.playback.name); open = true; if (e.sr != (float)dev.sampleRate) e.setSampleRate((float)dev.sampleRate);   // the engine runs at whatever rate the sound runs at
     e.outLatency = (float)(BUFFERS[bufIdx] * 3) / (float)dev.sampleRate;
     return ma_device_start(&dev) == MA_SUCCESS;
   }
@@ -111,9 +132,11 @@ int main(int argc, char** argv) {
 
   // ---- sound first, so the engine knows the sample rate before any module is built ----
   static Engine engine; gEngine = &engine;
-  static Sound sound; sound.bufIdx = std::max(0, std::min(4, (int)settings.num("buffer", 2)));
+  static Sound sound; sound.bufIdx = std::max(0, std::min(4, (int)settings.num("buffer", 2))); sound.want = settings.str("outputDevice");
+  static Capture capture; float captureT = 0, captureIdle = 0;   // AUDIO IN's input: opened while there's an AUDIO IN (so nothing asks for the microphone until then)
   int rateIdx = std::max(0, std::min(NRATES - 1, (int)settings.num("rate", 0)));
-  if (!sound.start(engine, RATES[rateIdx]) && !(rateIdx != 0 && sound.start(engine, 0))) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
+  if (!sound.start(engine, RATES[rateIdx]) && !sound.want.empty()) sound.want.clear();   // the chosen output isn't there: the system's
+  if (!sound.open && !sound.start(engine, RATES[rateIdx]) && !(rateIdx != 0 && sound.start(engine, 0))) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
 
   Ui ui(engine);
   static Midi midi(engine); midi.start();
@@ -249,6 +272,12 @@ int main(int argc, char** argv) {
       const bool many = ty == "sample" && u->m->p[1].load() >= 2 && k == "load"; const int slot = k == "load" ? (many ? -1 : 0) : std::atoi(k.c_str() + 5);
       ui.openBrowser(u->m->id, slot, browseDir()); return true; }
     if (ty == "looper" && k == "catch") { catchSound(u, false); return true; }
+    if (ty == "audioin" && k == "pick") {   // DEVICE: the app's input (every AUDIO IN hears the same one)
+      const auto devs = listDevices(true); Dropdown q; q.x = u->x - ui.viewX + 8; q.y = u->y - ui.viewY + 20; q.items.push_back("SYSTEM DEFAULT"); q.cur = 0; const std::string cur = settings.str("inputDevice");
+      for (size_t k2 = 0; k2 < devs.size(); k2++) { q.items.push_back(devs[k2].first); if (devs[k2].first == cur) q.cur = (int)k2 + 1; }
+      q.pick = [&, devs](int j) { if (j > (int)devs.size()) return; const std::string nm = j == 0 ? std::string() : devs[j - 1].first; settings.set("inputDevice", Json::string(nm)); saveSettings();
+        if (!capture.start(engine, nm, BUFFERS[sound.bufIdx])) ui.status("COULD NOT OPEN THAT INPUT", 5); else ui.status("INPUT: " + capture.name + " (FOR EVERY AUDIO IN)", 3); };
+      ui.openDropdown(q); return true; }
     if (ty == "sample" && k == "savetake") {   // SAVE TAKE: the sound as a WAV, in the recordings folder
       const UiMod::Snd& sd = u->snd[0]; if (sd.id.empty()) { ui.status("NOTHING RECORDED OR LOADED YET", 3); return true; }
       char ts[32]; const std::time_t tt = std::time(nullptr); std::strftime(ts, 32, "%Y-%m-%d %H%M%S", std::localtime(&tt)); std::string nm = sd.name.empty() ? std::string("TAKE") : sd.name;
@@ -368,7 +397,7 @@ int main(int argc, char** argv) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + NOTE_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -379,22 +408,34 @@ int main(int argc, char** argv) {
       else if (i == 2) { ui.openTempo(x0, 11 + 2 * 8); return; }
       else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / engine.sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
         q.pick = [&](int j) { if (j == sound.bufIdx) return; sound.stop(); sound.bufIdx = j; settings.set("buffer", Json::number(j)); saveSettings();
-          if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j])); }; }
-      else if (i == 4) { q.items = {"AUTO  (YOUR SOUND OUTPUT'S OWN RATE)", "48K", "44.1K", "32K  LIGHTER", "24K  LIGHTEST, LESS TREBLE"};
+          if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j]));
+          if (capture.open) capture.start(engine, settings.str("inputDevice"), BUFFERS[j]); }; }
+      else if (i == 4 || i == 5) {   // OUTPUT / INPUT: which device (by name; SYSTEM DEFAULT follows the computer's own choice)
+        const bool cap = i == 5; const auto devs = listDevices(cap); const std::string cur = cap ? settings.str("inputDevice") : sound.want;
+        q.items.push_back("SYSTEM DEFAULT"); q.cur = 0; for (size_t k = 0; k < devs.size(); k++) { q.items.push_back(devs[k].first); if (devs[k].first == cur) q.cur = (int)k + 1; }
+        if (devs.empty()) q.items.push_back(cap ? "(NO INPUTS FOUND)" : "(NO OUTPUTS FOUND)");
+        q.pick = [&, cap, devs](int j) { if (j > (int)devs.size()) return; const std::string nm = j == 0 ? std::string() : devs[j - 1].first;
+          if (cap) { settings.set("inputDevice", Json::string(nm)); saveSettings(); if (capture.open) { if (!capture.start(engine, nm, BUFFERS[sound.bufIdx])) ui.status("COULD NOT OPEN THAT INPUT", 5); } ui.status("INPUT: " + (nm.empty() ? std::string("SYSTEM DEFAULT") : nm), 3); return; }
+          sound.stop(); sound.want = nm; settings.set("outputDevice", Json::string(nm)); saveSettings();
+          if (!sound.start(engine, (unsigned)engine.sr) && !sound.start(engine, RATES[rateIdx])) { sound.want.clear(); sound.start(engine, RATES[rateIdx]); ui.status("COULD NOT OPEN THAT OUTPUT: BACK TO THE SYSTEM'S", 5); }
+          else ui.status("OUTPUT: " + sound.name, 3);
+          if (capture.open) capture.start(engine, settings.str("inputDevice"), BUFFERS[sound.bufIdx]); }; }
+      else if (i == 6) { q.items = {"AUTO  (YOUR SOUND OUTPUT'S OWN RATE)", "48K", "44.1K", "32K  LIGHTER", "24K  LIGHTEST, LESS TREBLE"};
         if (NRATES > 5) { q.items.push_back("96K  HEAVIER: ABOUT TWICE THE WORK"); q.items.push_back("88.2K  HEAVIER"); } q.cur = rateIdx;
         q.pick = [&](int j) { if (j == rateIdx) return;
           if (rec.on()) { rec.stop(engine); if (Module* o = outMod()) o->disp[1].store(0); }   // a recording can't change rate halfway
           const std::string snap = serializePatch(ui).dump(); const int vx = ui.viewX, vy = ui.viewY;
           sound.stop(); rateIdx = j; settings.set("rate", Json::number(j)); saveSettings();
           if (!sound.start(engine, RATES[j])) { rateIdx = 0; sound.start(engine, 0); ui.status("THAT RATE ISN'T AVAILABLE: BACK TO AUTO", 5); }
+          if (capture.open) capture.start(engine, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);   // the input at the new rate too
           Json js; if (Json::parse(snap, js)) { restoring = true; loadPatch(ui, js); for (auto& up : ui.mods) restoreSound(up.get()); restoring = false; }   // rebuilt at the new rate
           ui.viewX = vx; ui.viewY = vy; char b[64]; std::snprintf(b, 64, "QUALITY %.1fK SAMPLES A SECOND", engine.sr / 1000); ui.status(b, 4); }; }
-      else if (i == 5) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
+      else if (i == 7) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
-      else if (i == 6) { ui.cableMotion = !ui.cableMotion; settings.set("cableMotion", Json::number(ui.cableMotion ? 1 : 0)); saveSettings();
+      else if (i == 8) { ui.cableMotion = !ui.cableMotion; settings.set("cableMotion", Json::number(ui.cableMotion ? 1 : 0)); saveSettings();
         ui.status(ui.cableMotion ? "CABLE MOTION ON: PULSES AND FLOW ALONG THE CABLES" : "CABLE MOTION OFF: A LITTLE LIGHTER ON OLDER COMPUTERS", 4); return; }
-      else if (i == 7) { openTheme(x0); return; }
-      else if (i == 8) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+      else if (i == 9) { openTheme(x0); return; }
+      else if (i == 10) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);
@@ -551,6 +592,12 @@ int main(int argc, char** argv) {
         for (auto& up : ui.mods) if (up->m->def->type == "midiout" && up->m->devSlot.load() < 0) { if (!listed) { names = midi.outputs(); listed = true; }
           const std::string want = up->dev.empty() ? (names.empty() ? std::string() : names[0]) : up->dev; if (!want.empty()) up->m->devSlot.store(midi.openOutput(want)); } } }
     // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
+    { bool want = false; for (auto& up : ui.mods) if (up->m->def->type == "audioin") want = true;   // AUDIO IN: the input open while there's one (closed a little after the last goes)
+      captureT -= ldt; if (want) captureIdle = 0; else captureIdle += ldt;
+      if (want && !capture.open && captureT <= 0) { captureT = 5; if (!capture.start(engine, settings.str("inputDevice"), BUFFERS[sound.bufIdx]))
+          ui.status("COULD NOT OPEN THE INPUT. ON A MAC, ALLOW THE MICROPHONE FOR TIMBIENT MODULES IN SYSTEM SETTINGS > PRIVACY", 8); }
+      if (!want && capture.open && captureIdle > 2) capture.stop();
+      ui.inputName = capture.open ? capture.name : std::string(); }
     for (auto& up : ui.mods) if (up->m->def->type == "sample") {   // SAMPLER: somewhere to record (once it could), each take kept as its sound, and the feedback guard
       UiMod* u = up.get(); Module* m = u->m; const ModuleDef* d = m->def; bool inUse = m->p[d->paramIndex("rec")].load() > 0.5f;
       for (auto& c : ui.cables) if (c.to == m->id && (c.toPort == 2 || c.toPort == 3)) inUse = true;
@@ -565,9 +612,8 @@ int main(int argc, char** argv) {
           char t[48]; std::snprintf(t, 48, "RECORDED %.1fS", n / rb->sr); ui.status(t, 3); histDirty = true; histT = 0.2f; }
         engine.action(m->id, "taken"); }
       // the feedback guard: its own sound finding its way back into its IN
-      std::set<int> seen{m->id}; std::vector<int> todo{m->id}; bool loop = false;
-      while (!todo.empty() && !loop) { const int at = todo.back(); todo.pop_back(); for (auto& c : ui.cables) if (c.from == at && c.type == PType::Audio) { if (c.to == m->id && c.toPort == 2) { loop = true; break; } if (seen.insert(c.to).second) todo.push_back(c.to); } }
-      if ((int)loop != u->fbSent) { u->fbSent = loop; engine.action(m->id, loop ? "fb:1" : "fb:0"); if (loop) ui.status("SAMPLER: ITS OWN SOUND COMES BACK INTO ITS IN, SO IT ISN'T MONITORING", 5); } }
+      const bool loop = ui.feedsBack(m->id, 2);
+      if ((int)loop != u->fbSent) { u->fbSent = loop; engine.action(m->id, loop ? "fb:1" : "fb:0"); if (loop) ui.status("SAMPLER: ITS OWN OUT LEADS BACK INTO ITS IN (THROUGH THE CABLES), SO IT WON'T MONITOR. IT STILL RECORDS", 6); } }
     { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->m->p[0].load() > 0.5f && up->snd[0].peaks.empty() && up->snd[0].id.empty()) catchSound(up.get(), true); } }   // HELD with nothing held yet: what came in
 
     if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
@@ -597,7 +643,7 @@ int main(int argc, char** argv) {
   }
   store.writeAutosave(serializePatch(ui));
   if (rec.on()) rec.stop(engine);
-  sound.stop();
+  capture.stop(); sound.stop(); if (gCtxOk) ma_context_uninit(&gCtx);
   { std::lock_guard<std::mutex> l(job.mx); job.stop = true; job.cv.notify_one(); } if (infoThread.joinable()) infoThread.join();
   SDL_DestroyTexture(tex); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
   return 0;

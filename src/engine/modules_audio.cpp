@@ -163,8 +163,8 @@ static Reg rSample(new ModuleDef{"sample", "SAMPLER", Cat::Voice, {{"TRIG", PTyp
    ST("pitch", "PITCH", -24, 24, 0), OP("rev", "PLAY", {"FWD", "BACK", "BOUNCE", "RANDOM"}, 0),
    only(T("atk", "ATTACK", 0.002f, 10, 0.01f), "once"), only(T("rel", "RELEASE", 0.005f, 20, 0.3f), "once"), only(T("fade", "FADE", 0.005f, 4, 0.4f), "loop"),
    only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 40, 20000, 20000), pct("res", "RES", 0), pct("vsens", "VEL SENS", 1), pct("width", "WIDTH", 0), LEVEL(), ACT("edit", "EDIT SOUND"),
-   only(OP("every", "RESTART", {"OFF", "EVERY BEAT", "EVERY BAR", "2 BARS", "4 BARS", "8 BARS"}, 2), "clock"),
-   OP("rec", "RECORD", {"OFF", "ON"}, 0), OP("reclen", "REC LENGTH", {"FREE", "1 BAR", "2 BARS", "4 BARS", "8 BARS", "16 BARS"}, 0), OP("recmode", "REC MODE", {"REPLACE", "OVERDUB"}, 0),
+   only(OP("every", "RESTART", {"OFF", "BEAT", "BAR", "2 BARS", "4 BARS", "8 BARS"}, 2), "clock"),
+   OP("rec", "RECORD", {"OFF", "ON"}, 0), OP("reclen", "REC BARS", {"FREE", "1", "2", "4", "8", "16"}, 0), OP("recmode", "REC MODE", {"REPLACE", "OVERDUB"}, 0),
    only(pct("keep", "KEEP", 0.8f), "overdub"), OP("mon", "MONITOR", {"OFF", "REC ONLY", "ALWAYS"}, 1), ACT("savetake", "SAVE TAKE")},
   12, 68, false, [] { return new Sample(); }});
 
@@ -389,5 +389,30 @@ struct Listen : Module {
 };
 static Reg rListen(new ModuleDef{"listen", "LISTEN", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {noMod(T("time", "LISTEN", 1, 60, 8)), ACT("use", "USE THIS KEY"), ACT("usetempo", "USE THIS TEMPO"), ACT("x2", "TEMPO X2"), ACT("half", "TEMPO /2")}, 34, 68, false, [] { return new Listen(); }});
+
+// ---------------- AUDIO IN: sound coming into the computer (a microphone, or an audio interface's inputs) ----------------
+// DEVICE picks where it comes from (for the whole app: one input device at a time, so it stays in time); INPUT picks
+// which of its channels (a pair, or one heard in both ears); GAIN sets the level (the meter shows it, red near the top).
+static std::vector<std::string> inputOpts() { std::vector<std::string> v; for (int p = 0; p < 4; p++) { const int a = 2 * p + 1; v.push_back(std::to_string(a) + "+" + std::to_string(a + 1)); v.push_back(std::to_string(a)); v.push_back(std::to_string(a + 1)); } return v; }
+struct AudioIn : Module {
+  enum { PICK, INPUT, GAIN };
+  uint64_t r = 0; bool started = false; float pk[2] = {0, 0};
+  void render(int a, int b) override {
+    AudioInput& I = eng->input; const int n = b - a; const int ch = I.ch.load(std::memory_order_relaxed);
+    for (int i = a; i < b; i++) { out[0][0][i] = 0; out[0][1][i] = 0; }
+    if (!I.live.load(std::memory_order_acquire) || ch <= 0 || !I.frames) { started = false; disp[2].store(0); pk[0] *= 0.9f; pk[1] *= 0.9f; disp[0].store(pk[0]); disp[1].store(pk[1]); return; }
+    const int k = std::max(0, std::min(11, (int)e[INPUT])), pair = k / 3, kind = k % 3; const int c0 = 2 * pair + (kind == 2 ? 1 : 0), c1 = kind == 0 ? c0 + 1 : c0;
+    if (c1 >= ch) { disp[2].store(2); return; }   // this device hasn't that many inputs
+    const uint64_t w = I.w.load(std::memory_order_acquire), lag = (uint64_t)std::max(n * 2, I.lag.load(std::memory_order_relaxed));
+    if (!started || r + n > w || w - r > lag * 4 || w - r > I.frames / 2) { r = w > lag ? w - lag : 0; started = true; }   // (re)start a little behind what's come in
+    const float g = std::pow(10.f, e[GAIN] / 20.f);
+    for (int i = 0; i < n; i++) { const float* f = &I.buf[(size_t)((r + i) % I.frames) * ch]; const float l = f[c0] * g, rr = f[c1] * g;
+      out[0][0][a + i] = sane(l); out[0][1][a + i] = sane(rr); pk[0] = std::max(pk[0] * 0.9995f, std::fabs(l)); pk[1] = std::max(pk[1] * 0.9995f, std::fabs(rr)); }
+    r += n; disp[0].store(pk[0]); disp[1].store(pk[1]); disp[2].store(1);
+  }
+};
+static Reg rAudioIn(new ModuleDef{"audioin", "AUDIO IN", Cat::Proc, {}, {{"OUT", PType::Audio}},
+  {ACT("pick", "DEVICE"), OP("input", "INPUT", inputOpts(), 0), noMod(fmt(pr("gain", "GAIN", -12, 36, 0), [](float v) { char b[16]; std::snprintf(b, 16, "%+.0f DB", v); return std::string(b); }))},
+  16, 68, false, [] { return new AudioIn(); }});
 
 }  // namespace tb

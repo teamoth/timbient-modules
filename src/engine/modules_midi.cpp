@@ -20,7 +20,7 @@ struct MidiIn : Module {
   }
 };
 static std::vector<std::string> chans(bool all) { std::vector<std::string> v; if (all) v.push_back("ALL"); for (int i = 1; i <= 16; i++) v.push_back(std::to_string(i)); return v; }
-static Reg rMidiIn(new ModuleDef{"midi", "MIDI IN", Cat::Trig, {}, {{"NOTES", PType::Trig}, {"CLOCK", PType::Trig}, {"CC", PType::Mod}},
+static Reg rMidiIn(new ModuleDef{"midi", "MIDI IN", Cat::Trig, {}, {{"NOTES OUT", PType::Trig}, {"CLOCK", PType::Trig}, {"CC", PType::Mod}},
   {OP("ch", "CHANNEL", chans(true), 0), noMod(ST("cc", "CC NUM", 0, 127, 1)), pct("depth", "DEPTH", 0.5f), OP("dir", "DIRECTION", {"BOTH", "UP", "DOWN"}, 1)}, 9, 68, false, [] { return new MidiIn(); }});
 
 // ---------------- MIDI OUT ----------------
@@ -42,7 +42,7 @@ struct MidiOut : Module {
     disp[0].store((float)lastNote); disp[1].store(clkOn ? 1.f : 0.f);
   }
 };
-static Reg rMidiOut(new ModuleDef{"midiout", "MIDI OUT", Cat::Trig, {{"NOTES", PType::Trig}, {"CLOCK", PType::Trig}}, {},
+static Reg rMidiOut(new ModuleDef{"midiout", "MIDI OUT", Cat::Trig, {{"NOTES IN", PType::Trig}, {"CLOCK", PType::Trig}}, {},
   {ACT("pick", "DEVICE"), OP("ch", "CHANNEL", chans(false), 0), T("len", "NOTE LEN", 0.02f, 8, 0.4f), ST("trans", "TRANSPOSE", -24, 24, 0), OP("clk", "CLOCK", {"OFF", "ON"}, 1)}, 9, 68, false, [] { return new MidiOut(); }});
 
 }  // namespace tb

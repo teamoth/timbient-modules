@@ -79,8 +79,11 @@ static Reg rClump(new ModuleDef{"clump", "CLUMP SEQ", Cat::Trig, {{"CLOCK", PTyp
 
 // ---------------- ORBITS ----------------
 struct Orbits : Module {
-  double ang[8]; float fl[8]; int n = 0; ClockIn ck;   // angles in double, kept within one turn: a float angle that keeps growing loses its small steps and the rings stall
-  enum { VEL, CHANCE, RINGS, SPEED, PHASE, HITS, RANGE, OCT };
+  double ang[8]; float fl[8]; int off[8] = {}; int n = 0; ClockIn ck;   // off: how many scale notes MUTATE has moved each ring from its own   // angles in double, kept within one turn: a float angle that keeps growing loses its small steps and the rings stall
+  enum { VEL, CHANCE, RINGS, SPEED, PHASE, HITS, RANGE, OCT, MUTATE };
+  // MUTATE: each time a ring goes round, it may step a scale note up or down; a pull back home keeps it near its own note
+  int home(int r) const { return n > 1 ? (int)std::lround((n - 1 - r) * (e[RANGE] - 1) / (n - 1)) : 0; }
+  void mutate(int r) { if (e[MUTATE] <= 0 || rng.uni() >= e[MUTATE]) return; const float down = 0.5f + 0.15f * off[r]; const int d = rng.uni() < down ? -1 : 1; const int to = home(r) + off[r] + d; if (to >= 0 && to <= (int)e[RANGE] - 1) off[r] += d; }
   void prepare() override { for (int i = 0; i < 8; i++) { ang[i] = rng.uni() * 6.283185307179586; fl[i] = 0; } }
   void blockStart(int nn) override { clockedIn.store(patched(0)); for (int i = 0; i < 8; i++) fl[i] = std::max(0.f, fl[i] - nn / sr); }
   void trig(int port, const Event& ev) override { if (port == 0) ck.tick(t + eng->pos / sr, ev); }
@@ -90,14 +93,14 @@ struct Orbits : Module {
     const double step = 6.283185307179586 / e[HITS];
     for (int i = a; i < b; i++) for (int r = 0; r < n; r++) {
       const double w = base * (1 + e[PHASE] * r * 0.13f) / (1 + r * 0.12f) * (r & 1 ? -1 : 1), pv = ang[r]; ang[r] += w / sr;
-      if (std::floor(pv / step) != std::floor(ang[r] / step)) { fl[r] = 0.15f; eng->pos = i; Event ev; ev.note = note((int)e[OCT], n > 1 ? (int)std::lround((n - 1 - r) * (e[RANGE] - 1) / (n - 1)) : 0); /* the rings share out RANGE scale notes */ ev.vel = e[VEL]; emit(0, ev); }
-      if (ang[r] >= 6.283185307179586) ang[r] -= 6.283185307179586; else if (ang[r] < 0) ang[r] += 6.283185307179586;   // a whole turn is a whole number of HITS steps, so crossings are unchanged
+      if (std::floor(pv / step) != std::floor(ang[r] / step)) { fl[r] = 0.15f; eng->pos = i; Event ev; ev.note = note((int)e[OCT], std::max(0, std::min((int)e[RANGE] - 1, home(r) + off[r]))); /* the rings share out RANGE scale notes (MUTATE moves them) */ ev.vel = e[VEL]; emit(0, ev); }
+      if (ang[r] >= 6.283185307179586) { ang[r] -= 6.283185307179586; mutate(r); } else if (ang[r] < 0) { ang[r] += 6.283185307179586; mutate(r); }   // a turn done: perhaps a new note   // a whole turn is a whole number of HITS steps, so crossings are unchanged
     }
-    disp[0].store((float)n); for (int r = 0; r < 8; r++) { disp[1 + r].store((float)ang[r]); disp[9 + r].store(fl[r]); }
+    disp[0].store((float)n); for (int r = 0; r < 8; r++) { disp[1 + r].store((float)ang[r]); disp[9 + r].store(fl[r]); disp[17 + r].store((float)off[r]); }
   }
 };
 static Reg rOrbits(new ModuleDef{"orbits", "ORBITS", Cat::Trig, {{"CLOCK", PType::Trig}}, {{"TRIG", PType::Trig}},
-  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), ST("range", "RANGE", 1, 14, 5), OCTP("oct", 1, 8, 4)},
+  {pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1), ST("rings", "RINGS", 1, 8, 5), pct("speed", "SPEED", 0.3f), pct("phase", "PHASING", 0.4f), ST("hits", "HITS", 1, 5, 2), ST("range", "RANGE", 1, 14, 5), OCTP("oct", 1, 8, 4), pct("mutate", "MUTATE", 0)},
   26, 68, false, [] { return new Orbits(); }});
 
 // ---------------- RANDOM HOPS ----------------

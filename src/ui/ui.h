@@ -11,11 +11,12 @@
 
 namespace tb {
 
-struct UiMod;
+struct UiMod; struct UiCable;
 void keysCell(const UiMod& u, int& cw, int& ch);   // NOTE GRID: how big its buttons are
 struct UiMod {
   int colScroll = 0;   // TRACKER: the first of the columns on show
   int tlSel = -1;      // TIMELINE: the event picked (its place in the list), or -1
+  const std::vector<UiCable>* cables = nullptr; float clearAsk = 0;   // clearAsk: CLEAR was tapped once (a second tap within this long clears)   // its Ui's cables (a row can wait on one)
   int lastTake = 0, fbSent = -1; float recGiveT = 0;   // SAMPLER: the last take copied out; the feedback warning sent; when it was last given somewhere to record
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
@@ -147,14 +148,21 @@ public:
   void centreView(); bool centrePending = false; int lastH = 0;   // the view to the middle of the session (done at the next frame, when the screen's size is known)
   int trFocus = 0;          // the Tracker last touched: the arrow keys and Delete work on it
   bool trackerKey(int key); // 1 up, 2 down, 3 left, 4 right, 5 delete
-  static constexpr bool jacksIn = true;
+  std::string inputName;  // AUDIO IN: the input device's name (shown on the module)
+  bool jacksIn = true;     // sockets inside the frame (false: on its edges, half outside)
+  bool headOut = false;    // a module's only output sits in its title bar
+  bool outInHead(const UiMod& u) const { return headOut && u.m->def->outs.size() == 1; }
+  int outJackY(const UiMod& u, int k) const { return outInHead(u) ? 5 : jackY(k); }
   bool cableMotion = true; float flowT = 0;   // SETTINGS: pulses travel along trigger cables, audio cables flow (off: the old header flash)
   int inJackX(const UiMod& u) const { return u.x + (jacksIn ? 4 : 0); }
-  int outJackX(const UiMod& u) const { return u.x + geom(u).w - 1 - (jacksIn ? 4 : 0); }
+  int outJackX(const UiMod& u) const { return u.x + geom(u).w - 1 - (outInHead(u) && jacksIn ? 11 : jacksIn ? 4 : 0); }
   int sockX(const UiMod& u) const { return u.x + (jacksIn ? 4 : -2); }
   // the SWITCH socket in the footer, beside the ON / M buttons: a trigger turns the module on, off or over (a Timeline lane, say)
   bool hasSwitch(const UiMod& u) const;
   bool hasKey(const UiMod& u) const; int kyX(const UiMod& u) const;
+  bool feedsBack(int id, int port) const;
+  std::vector<int> shownRows(const UiMod& u) const;   // its rows, in the order shown (folded ones left out)
+  std::vector<std::string> cutOff() const;            // names and choices too long for their module   // does this module's sound find its way, by the cables, back into this input of its own?
   int swX(const UiMod& u) const;
   int swY(const UiMod& u) const;
   int minusX(const UiMod& u, int j) const;   // where a slider row's "-" sits, from the module's left

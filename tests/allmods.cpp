@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
       for (size_t i = 0; i < b->d.size(); i++) { ph += (220 + i * 0.003f) / 44100.f; b->d[i] = 0.6f * std::sin(TAU * ph) + 0.05f * rr.bi(); }
       eng.setBuffer(m->m->id, b); }
     const Result r = run(eng, 4);
-    const bool silent = r.peak < 0.005f; if (r.bad || silent) fails++;
+    const bool silent = r.peak < 0.005f && d->type != "audioin";   /* AUDIO IN: silent with nothing coming in */ if (r.bad || silent) fails++;
     std::printf("%-10s peak %.3f  rms %.4f  cost %5.2f%%%s%s\n", d->type.c_str(), r.peak, r.rms, r.cost, r.bad ? "  NOT FINITE" : "", silent ? "  SILENT" : "");
   }
   // every voice must follow the note it's given: its sound should repeat at the note's period (or a whole multiple of it)
@@ -231,6 +231,30 @@ int main(int argc, char** argv) {
     const float rms = (float)std::sqrt(e2 / std::max(1L, n)); const bool whole = std::fabs(st->m->def->params[st->m->def->paramIndex("amt")].fromNorm(0.37f) - std::round(st->m->def->params[st->m->def->paramIndex("amt")].fromNorm(0.37f))) < 1e-4f;
     const bool ok = rms > 0.002f && worst2 < 1.3 && whole; if (!ok) fails++;
     std::printf("stretch 2.7s window: rms %.4f, slowest 64-sample blocks %.2f, %.2f ms of work (a block lasts 1.33), whole-number STRETCH %d%s\n", rms, worst, worst2, whole, ok ? "" : "  WRONG"); }
+  // ROW ORDER: VOICES first, GLIDE under PITCH, LEVEL last (PAN and WIDTH just above), on every module; nothing cut off
+  { ui.clearPatch(); std::string bad;
+    for (auto* d : allDefs()) { if (d->type == "out" || d->fixed) continue; UiMod* u = ui.add(d->type, 0, 0); const auto o = ui.shownRows(*u); auto at = [&](const char* k) { const int j = d->paramIndex(k); for (size_t r = 0; r < o.size(); r++) if ((int)o[r] == j) return (int)r; return -1; };
+      const int lv = at("level"), pv = at("poly"), pi_ = at("pitch"), gl = d->type == "formant" ? at("pglide") : at("glide"), pn = at("pan");   /* FORMANT's "glide" is its MOVE TO */
+      if (lv >= 0 && lv != (int)o.size() - 1) bad += " " + d->type + "(level)";
+      if (pv > 0) bad += " " + d->type + "(voices)";
+      if (gl >= 0 && pi_ >= 0 && d->type != "tone" && gl != pi_ + 1) bad += " " + d->type + "(glide)";
+      if (pn >= 0 && lv >= 0 && pn < lv - 2) bad += " " + d->type + "(pan)"; ui.remove(u); }
+    const auto cut = ui.cutOff(); std::string cs; for (auto& c : cut) cs += "  [" + c + "]";
+    const bool ok = bad.empty() && cut.empty(); if (!ok) fails++; std::printf("row order:%s; cut off:%s%s\n", bad.empty() ? " all as they should be" : bad.c_str(), cut.empty() ? " nothing" : cs.c_str(), ok ? "" : "  WRONG"); }
+  // AUDIO IN: what the input brings, from the channels chosen, at GAIN
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* ai = ui.add("audioin", 0, 20); ui.connect(ai, "OUT", out, "A");
+    AudioInput& I = eng.input; I.live.store(false); I.ch.store(4); I.frames = 65536; I.buf.assign(I.frames * 4, 0.f); I.w.store(0); I.lag.store(512); I.live.store(true);
+    std::vector<float> blk(256 * 4); float got[4] = {}; const float want[4] = {0.1f, 0.2f, 0.3f, 0.4f};
+    auto feed = [&](float secs) { for (int k = 0; k < (int)(secs * 48000 / 256); k++) { for (int i = 0; i < 256; i++) for (int c = 0; c < 4; c++) blk[i * 4 + c] = want[c]; I.write(blk.data(), 256); run(eng, 256 / 48000.f); } };
+    feed(0.2f); { std::vector<float> L(64), R(64); eng.render(L.data(), R.data(), 64); got[0] = ai->m->disp[0].load(); got[1] = ai->m->disp[1].load(); }
+    ui.set(ai, "input", 4); feed(0.2f); got[2] = ai->m->disp[0].load(); ui.set(ai, "input", 6); feed(0.1f); const float missing = ai->m->disp[2].load();
+    ui.set(ai, "input", 3); ui.set(ai, "gain", 6); feed(0.3f); got[3] = ai->m->disp[0].load(); I.live.store(false);
+    const bool ok = std::fabs(got[0] - 0.1f) < 0.01f && std::fabs(got[1] - 0.2f) < 0.01f && std::fabs(got[2] - 0.3f) < 0.01f && missing > 1.5f && std::fabs(got[3] - 0.3f * 1.995f) < 0.03f; if (!ok) fails++;
+    std::printf("audio in: 1+2 %.2f %.2f, 3 %.2f, 5 on a 4-in device -> %s, +6 dB %.3f%s\n", got[0], got[1], got[2], missing > 1.5f ? "not there" : "?", got[3], ok ? "" : "  WRONG"); }
+  // ORBITS MUTATE: at 0 the notes stay put; turned up they move (never out of RANGE)
+  { ui.clearPatch(); UiMod* ob = ui.add("orbits", 0, 20); ui.set(ob, "speed", 1); run(eng, 10); bool moved0 = false; for (int r = 0; r < 8; r++) if (std::fabs(ob->m->disp[17 + r].load()) > 0.5f) moved0 = true;
+    ui.set(ob, "mutate", 1); run(eng, 20); int moved = 0; for (int r = 0; r < 5; r++) if (std::fabs(ob->m->disp[17 + r].load()) > 0.5f) moved++;
+    const bool ok = !moved0 && moved >= 2; if (!ok) fails++; std::printf("orbits mutate: still at 0 %d, rings moved at full %d of 5%s\n", !moved0, moved, ok ? "" : "  WRONG"); }
   // undo / redo only change what differs: a module that stays is the very same one (so it keeps playing)
   { ui.clearPatch(); ui.demoPatch(); run(eng, 0.3f); const std::string A = serializePatch(ui).dump(); Module* first = ui.mods[0]->m;
     ui.remove(ui.mods[3].get()); ui.set(ui.mods[0].get(), "speed", 5); ui.add("tracker", 10, 10); ui.unplug(ui.cables[0]); run(eng, 0.1f);

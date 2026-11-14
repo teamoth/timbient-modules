@@ -12,6 +12,7 @@
   <key>CFBundleVersion</key><string>${PROJECT_VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>10.13</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>Timbient Modules uses the microphone or audio interface you choose for its AUDIO IN module, to record and play with sound coming in.</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
 </dict>
 </plist>
