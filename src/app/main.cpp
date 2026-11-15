@@ -22,7 +22,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.36.0";
+static const char* VERSION = "0.37.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -350,6 +350,9 @@ int main(int argc, char** argv) {
   int menus = std::max(0, std::min(2, (int)settings.num("menus", 0)));   // THEME > MENUS: 0 MATCH, 1 BLACK, 2 DARK
   static const char* MENUS[3] = {"MATCH", "BLACK", "DARK"};
   applyTheme(canvas, theme, menus);
+  std::vector<Theme> recent;   // RANDOMISE: the last few it made (and the theme from before them), for PREVIOUS; kept between launches
+  if (const Json* h = settings.get("themeRecent")) if (h->t == Json::ARR) for (auto& x : h->a) recent.push_back(themeFrom(x));
+  auto saveRecent = [&] { Json a = Json::array(); for (auto& x : recent) a.push(themeJson(x)); settings.set("themeRecent", a); };
   auto setTheme = [&](const Theme& t) { theme = t; applyTheme(canvas, theme, menus); settings.set("theme", themeJson(theme)); saveSettings(); };
   int letters = std::max(0, std::min(2, (int)settings.num("letters", 0)));   // 0 fine lowercase, 1 fine capitals, 2 the classic small capitals
   static const char* LETTERS[3] = {"LOWERCASE", "CAPITALS", "CLASSIC"};
@@ -361,7 +364,7 @@ int main(int argc, char** argv) {
     const char* labels[6] = {"PRESET", "BACKGROUND", "MODULES", "AUDIO CABLES", "TRIG CABLES", "MOD CABLES"};
     Dropdown d; d.x = x0; d.y = 11;
     d.items = {std::string("PRESET  ") + preset, "BACKGROUND  " + nameOf(bgChoices(), theme.bg), "MODULES  " + nameOf(modChoices(), theme.mod), "AUDIO CABLES  " + nameOf(cableChoices(), theme.audio),
-      "TRIG CABLES  " + nameOf(cableChoices(), theme.trig), "MOD CABLES  " + nameOf(cableChoices(), theme.modc), std::string("LETTERS  ") + LETTERS[letters], std::string("MENUS  ") + MENUS[menus], std::string("SHADOWS  ") + (ui.shadows ? "ON" : "OFF"), std::string("BORDERS  ") + (ui.borders ? "ON" : "OFF"), "RANDOMISE", "RESET THEME"};
+      "TRIG CABLES  " + nameOf(cableChoices(), theme.trig), "MOD CABLES  " + nameOf(cableChoices(), theme.modc), std::string("LETTERS  ") + LETTERS[letters], std::string("MENUS  ") + MENUS[menus], std::string("SHADOWS  ") + (ui.shadows ? "ON" : "OFF"), std::string("BORDERS  ") + (ui.borders ? "ON" : "OFF"), "RANDOMISE", recent.empty() ? std::string("PREVIOUS  (NONE YET)") : "PREVIOUS  (" + std::to_string(recent.size()) + " KEPT)", "RESET THEME"};
     d.pick = [&, x0, labels](int i) {
       if (i == 6) { Dropdown q; q.x = x0; q.y = 11 + i * 8; q.items = {"LOWERCASE  (FINER LETTERS)", "CAPITALS  (FINER LETTERS)", "CLASSIC  (THE ORIGINAL SMALL CAPITALS)"}; q.cur = letters;
         q.pick = [&](int j) { letters = j; settings.set("letters", Json::number(j)); saveSettings();
@@ -370,9 +373,14 @@ int main(int argc, char** argv) {
         q.pick = [&](int j) { menus = j; settings.set("menus", Json::number(j)); saveSettings(); applyTheme(canvas, theme, menus); ui.status(std::string("MENUS ") + MENUS[j], 2); }; ui.openDropdown(q); return; }
       if (i == 8) { ui.shadows = !ui.shadows; settings.set("shadows", Json::number(ui.shadows ? 1 : 0)); saveSettings(); ui.status(ui.shadows ? "SHADOWS UNDER THE MODULES" : "NO SHADOWS", 2); openTheme(x0); return; }
       if (i == 9) { ui.borders = !ui.borders; settings.set("borders", Json::number(ui.borders ? 1 : 0)); saveSettings(); ui.status(ui.borders ? "A LINE ROUND EACH MODULE" : "NO BORDERS", 2); openTheme(x0); return; }
-      if (i >= 10) i -= 4;   // RANDOMISE and RESET come after LETTERS, MENUS, SHADOWS and BORDERS
-      if (i == 6) { setTheme(randomPreset(theme, [](int n) { return (int)SDL_rand(n); })); { std::string nm = "?"; for (auto& pr : presets()) if (sameTheme(pr.second, theme)) nm = pr.first; ui.status("THEME " + nm + ": TAP RANDOMISE AGAIN FOR ANOTHER", 3); } openTheme(x0); return; }   // stays open, to roll again
-      if (i == 7) { setTheme(Theme{}); ui.status("THEME RESET"); return; }
+      if (i >= 10) i -= 4;   // RANDOMISE, PREVIOUS and RESET come after LETTERS, MENUS, SHADOWS and BORDERS
+      if (i == 6) {   // a new theme from one colour, pale or dark as now; the one it replaces is kept (the last 12)
+        recent.push_back(theme); if (recent.size() > 12) recent.erase(recent.begin()); saveRecent();
+        setTheme(harmonyTheme(lum(theme.bg == "pond" ? "#07131d" : theme.bg) > 0.45f, [](int n) { return (int)SDL_rand(n); }));
+        ui.status("A RANDOM THEME: TAP RANDOMISE FOR ANOTHER, PREVIOUS TO GO BACK", 3); openTheme(x0); return; }   // stays open, to roll again
+      if (i == 7) { if (recent.empty()) { ui.status("NO RANDOM THEMES YET", 2); openTheme(x0); return; }
+        const Theme t = recent.back(); recent.pop_back(); saveRecent(); setTheme(t); ui.status("THE THEME BEFORE (" + std::to_string(recent.size()) + " MORE KEPT)", 2); openTheme(x0); return; }
+      if (i == 8) { setTheme(Theme{}); ui.status("THEME RESET"); return; }
       Dropdown q; q.x = x0; q.y = 11 + (i ? i * 8 : 0); const int SW = 64;
       if (i == 0) { int k = 0; for (auto& p : presets()) { canvas.setColour(SW + k, p.second.mod.c_str()); q.items.push_back(p.first); q.sw.push_back(SW + k); if (sameTheme(p.second, theme)) q.cur = k; k++; }
         q.pick = [&](int j) { setTheme(presets()[j].second); ui.status(std::string("THEME ") + presets()[j].first + "  (TAP AWAY WHEN DONE)"); }; q.stay = true; ui.openDropdown(q); return; }

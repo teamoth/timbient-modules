@@ -7,6 +7,8 @@
 #include "../src/ui/ui.h"
 #include "../src/ui/session.h"
 #include "../src/ui/help.h"
+#include "../src/ui/theme.h"
+#include <random>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -268,8 +270,10 @@ int main(int argc, char** argv) {
     ui.clearPatch(); UiMod* pd = ui.add("pad", 100, 40); UiMod* lf = ui.add("lfo", 10, 40); ui.connect(lf, 0, pd, pd->m->def->paramIndex("cut"));
     Canvas cv; cv.resize(400, 300); cv.beginFrame(); ui.draw(cv, 0.016f);
     const std::string onTitle = ui.helpAt(110 - ui.viewX, 43 - ui.viewY), onRow = ui.helpAt(140 - ui.viewX + 0.f, (float)(pd->y + 30 - ui.viewY));
+    std::string stepNote; { UiMod* kj = ui.add("journey", 200, 150); ui.set(kj, "steps", 2); kj->m->seq[Module::si(0, 0)].store(2); kj->m->seq[Module::si(1, 0)].store(7); cv.beginFrame(); ui.draw(cv, 0.016f);
+      for (int yy = 0; yy < 120 && stepNote.find("SMOOTH") == std::string::npos; yy++) stepNote = ui.helpAt((float)(kj->x - ui.viewX + 3 + 20), (float)(kj->y - ui.viewY + yy)); }   /* step 2 (G after D): one note changes */
     ui.setAddMenu(true); cv.beginFrame(); ui.draw(cv, 0.016f); std::string inMenu; { int mx, my; if (ui.menuItemAt("reverb", mx, my)) inMenu = ui.helpAt((float)mx + 2, (float)my + 2); } ui.setAddMenu(false);
-    const bool ok = inMenu.rfind("Reverb|", 0) == 0 && missing.empty() && onTitle.rfind("Pad|", 0) == 0 && onRow.find("JUMP STRAIGHT TO -24") != std::string::npos;   /* the row under it is PITCH: its note tells of the octave jumps */ if (!ok) fails++;
+    const bool ok = stepNote.find("SMOOTH: ONE NOTE") != std::string::npos && inMenu.rfind("Reverb|", 0) == 0 && missing.empty() && onTitle.rfind("Pad|", 0) == 0 && onRow.find("JUMP STRAIGHT TO -24") != std::string::npos;   /* the row under it is PITCH: its note tells of the octave jumps */ if (!ok) fails++;
     std::printf("help: %d notes, missing:%s; title %s; a row %s%s\n", n, missing.empty() ? " none" : missing.c_str(), onTitle.substr(0, 12).c_str(), onRow.substr(0, 20).c_str(), ok ? "" : "  WRONG"); }
   // MI VOICES: the chosen model's own names on its three rows (and help), and the LPG rows only where Plaits uses its gate
   { ui.clearPatch(); UiMod* mi = ui.add("mi", 0, 20); Canvas cv; cv.resize(300, 300);
@@ -291,6 +295,39 @@ int main(int argc, char** argv) {
     Json ja; Json::parse(A, ja); applyPatch(ui, ja, sc); run(eng, 0.1f); const bool u1 = serializePatch(ui).dump() == A && ui.mods[0]->m == first;
     Json jb; Json::parse(B, jb); applyPatch(ui, jb, sc); run(eng, 0.1f); const bool u2 = serializePatch(ui).dump() == B;
     std::printf("undo %s, redo %s\n", u1 ? "ok" : "WRONG", u2 ? "ok" : "WRONG"); if (!u1 || !u2) fails++; }
+  // REVERB: each TYPE rings for about its DECAY, all at about the same loudness; INFINITE holds; old REVERB and INFINITE HALL sessions open as types
+  { const float DEC[8] = {0.9f, 2.5f, 6, 10, 10, 8, 8, 1.5f}; std::string res; bool ok = true;
+    for (int ty = 0; ty < 8; ty++) {
+      for (int infm = 0; infm < 2; infm++) {
+        Module* m = eng.create("reverb", 900 + ty); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
+        set("type", (float)ty); set("decay", infm ? 100.f : DEC[ty]); set("mix", 1); m->prepare(); Rng r(5); std::vector<double> w;   /* 50ms windows */ double acc = 0; int cnt = 0;
+        const int blocks = (int)((infm ? 22 : 16) * 48000 / 64);
+        for (int k = 0; k < blocks; k++) { for (int i = 0; i < 64; i++) { const float x = k * 64 + i < 4800 ? (r.uni() * 2 - 1) * 0.5f : 0; m->in[0][0][i] = x; m->in[0][1][i] = x; }
+          m->render(0, 64); for (int i = 0; i < 64; i++) { const float y = m->out[0][0][i]; if (!std::isfinite(y)) ok = false; acc += y * y; } if (++cnt == 37) { w.push_back(acc / (37 * 64)); acc = 0; cnt = 0; } }
+        delete m;
+        int pk = 0; for (size_t i = 0; i < w.size(); i++) if (w[i] > w[pk]) pk = (int)i;
+        const double peakDb = 10 * std::log10(w[pk] / 0.0833);
+        if (!infm) { double t5 = -1, t35 = -1; for (size_t i = pk; i < w.size(); i++) { const double db = 10 * std::log10(w[i] / w[pk] + 1e-30); if (t5 < 0 && db < -5) t5 = i * 0.05; if (t35 < 0 && db < -35) { t35 = i * 0.05; break; } }
+          const double rt = (t35 - t5) * 2; char b[64]; std::snprintf(b, 64, " %.1f/%.1fs %.0fdB", rt, DEC[ty], peakDb); res += b;
+          if (ty != 7 && ty != 4 && (rt < DEC[ty] * 0.75 || rt > DEC[ty] * 1.3)) ok = false;   /* FROZEN holds then stops; SHIMMER's pitched part rings on */
+          if (std::fabs(peakDb + 10.3) > 2.5) ok = false; }
+        else { double a = 0, b2 = 0; for (int i = 100; i < 200; i++) a += w[i]; for (int i = 340; i < 440; i++) b2 += w[i]; const double drop = 10 * std::log10(a / b2);
+          if (drop > 8 || drop < -3) ok = false; char b[32]; std::snprintf(b, 32, " inf-%.1fdB", drop); res += b; } } }
+    const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"hall","x":0,"y":20,"p":{"size":1.2,"decay":100,"damp":0.35,"mix":0.6}},{"id":2,"type":"reverb","x":100,"y":20,"p":{"size":1.2,"damp":0.4}},{"id":3,"type":"lfo","x":200,"y":20,"p":{}}],"cables":[{"f":3,"fp":"OUT","t":1,"tq":"damp","ty":"mod"},{"f":3,"fp":"OUT","t":2,"tq":"size","ty":"mod"}]})";
+    Json jj; Json::parse(old, jj); ui.clearPatch(); loadPatch(ui, jj); std::vector<UiMod*> vs; for (auto& um : ui.mods) if (um->m->def->type == "reverb") vs.push_back(um.get());
+    const ModuleDef* d = vs.empty() ? nullptr : vs[0]->m->def; std::set<std::string> modded; for (auto& cb : ui.cables) if (cb.type == PType::Mod && d) modded.insert(d->params[cb.toParam].key);
+    const bool mig = vs.size() == 2 && std::lround(vs[0]->m->p[0].load()) == 2 && vs[0]->m->p[d->paramIndex("decay")].load() >= 99 && std::fabs(vs[0]->m->p[d->paramIndex("size")].load() - 0.444f) < 0.01f
+      && std::lround(vs[1]->m->p[0].load()) == 0 && std::fabs(vs[1]->m->p[d->paramIndex("decay")].load() - 1.2f) < 0.01f && modded.count("tone") && modded.count("decay");
+    UiMod* v = vs.empty() ? nullptr : vs[0]; size_t nH = 0, nS = 0, nN = 0;
+    if (v) { ui.set(v, "type", 2); nH = ui.shownRows(*v).size(); ui.set(v, "type", 4); nS = ui.shownRows(*v).size(); ui.set(v, "type", 6); nN = ui.shownRows(*v).size(); }
+    const bool rows = nS == nH + 2 && nN == nH + 1 && helpPort(findDef("reverb"), false, 0).find("STEREO") != std::string::npos;
+    if (!ok || !mig || !rows) fails++;
+    std::printf("reverb:%s; old sessions %s; rows HALL %zu SHIMMER %zu NEBULA %zu%s\n", res.c_str(), mig ? "ok" : "WRONG", nH, nS, nN, ok && mig && rows ? "" : "  WRONG"); }
+  // RANDOMISE: themes from one hue, every cable clear against the background, the modules and each other
+  { std::mt19937 r(3); int bad = 0; for (int p = 0; p < 2; p++) for (int k = 0; k < 500; k++) { const Theme t = harmonyTheme(p, [&](int m) { return (int)(r() % (unsigned)m); });
+      for (const std::string* c : {&t.audio, &t.trig, &t.modc}) if (contrast(*c, t.bg) < (p ? 2.4f : 3.5f) || contrast(*c, t.mod) < (p ? 1.8f : 2.6f)) bad++;
+      if ((lum(t.bg) > 0.45f) != (p == 1)) bad++; }
+    if (bad) fails++; std::printf("random themes: %d of 1000 not clear enough%s\n", bad, bad ? "  WRONG" : ""); }
   if (argc > 1) {
     Json f; if (!Json::parse(readFile(argv[1]), f)) { std::printf("could not read %s\n", argv[1]); return 1; }
     const Json* data = patchIn(f); const std::string note = loadPatch(ui, *data); std::printf("loaded: %s\n", note.empty() ? "everything" : note.c_str());

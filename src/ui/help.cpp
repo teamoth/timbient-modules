@@ -13,8 +13,7 @@ static const std::map<std::string, std::string> MODULES = {
   {"audioin", "Audio In|Sound coming into the computer: its microphone, or an audio interface's inputs."},
   {"filter", "Filter|Takes away part of the sound: lows, highs, or everything but a band."},
   {"echo", "Echo|Repeats of the sound, bouncing left and right, each a little darker."},
-  {"reverb", "Reverb|The sound in a room or hall: the space around it."},
-  {"hall", "Infinite Hall|A huge, slowly drifting reverb whose tail can hang forever (DECAY all the way up, or FREEZE)."},
+  {"reverb", "Reverb|The space around a sound, from a small room to an endless wash. TYPE picks the kind of space; every type can hang forever (DECAY all the way up, or FREEZE)."},
   {"ducker", "Ducker|Dips the sound on each trigger (or when SIDE gets loud), then lets it breathe back: the pumping of sidechain compression."},
   {"amp", "Amp|Turns the sound up (to +36 dB), with a soft limiter to stop it clipping."},
   {"mixer", "Mixer|Four sounds into one, each with its own level, pan and a send to an effect."},
@@ -22,7 +21,7 @@ static const std::map<std::string, std::string> MODULES = {
   {"resonator", "Resonator|Sympathetic strings: tuned strings that ring when the sound coming in excites them, like a sitar's or a harp's."},
   {"phaser", "Phaser|A slow, swirling sweep through the sound."},
   {"tape", "Tape|Old tape: wow and flutter in the pitch, saturation, a darker tone and some hiss."},
-  {"env", "Trig Env|Each trigger draws a rise and a fall, as modulation: patch its MOD into any green ring."},
+  {"env", "Trig Env|Each trigger draws a rise and a fall, as modulation: patch its MOD into any modulation ring (the little circle beside a slider)."},
   {"rand", "Random|A new random value every so often (or on each trigger), gliding between them, as modulation."},
   {"follow", "Follower|How loud the sound coming in is, as modulation; its CLOCK fires on each hit."},
   {"comp", "Compressor|Turns the loud parts down, so it's more even and dense. KEY lets another sound do the pushing."},
@@ -36,7 +35,7 @@ static const std::map<std::string, std::string> MODULES = {
   {"hops", "Random Hops|Notes at random moments, sometimes in quick little clusters."},
   {"keys", "Note Grid|Pads to tap with the mouse: each plays a note of the scale."},
   {"qwerty", "Qwerty MIDI|Plays notes from the computer keyboard (three octaves, on keys you choose)."},
-  {"lfo", "LFO|A slow wave, as modulation: patch its MOD into any green ring to make that setting move by itself."},
+  {"lfo", "LFO|A slow wave, as modulation: patch its MOD into any modulation ring (the little circle beside a slider) to make that setting move by itself."},
   {"out", "Output|Where everything ends up: two inputs with a crossfade between, an EQ and the main level. Records the session too."},
   {"bursts", "Bursts|A little clump of notes, then a rest, again and again."},
   {"walker", "Walker|A head that gets pushed along the scale and slides to a stop, playing the notes it passes."},
@@ -46,7 +45,7 @@ static const std::map<std::string, std::string> MODULES = {
   {"nloop", "Note Looper|Records the notes coming in (from MIDI IN or a sequencer) and plays them round, layer on layer."},
   {"timeline", "Timeline|A stretch of time (minutes) with events along it: each lane switches modules on or off at its times."},
   {"mutes", "Mute Sequencer|Four lanes of steps that switch modules on and off, each lane its own length."},
-  {"journey", "Key Journey|A sequence of keys, moved through on the bar. Green steps change smoothly, amber more, red jarringly. Patch its KEY into sequencers, or let it move the session's key."},
+  {"journey", "Key Journey|A sequence of keys, moved through on the bar. Each step's outline shows how smooth the change into it is (rest the pointer on a step to read it). Patch its KEY into sequencers, or let it move the session's key."},
   {"pluck", "Pluck String|A plucked string."},
   {"tone", "Tone|A clean sine or triangle, with glide, vibrato and a detuned twin."},
   {"pad", "Pad|Detuned saws spread across the stereo field, a slowly moving filter, a breath of air."},
@@ -88,7 +87,7 @@ static const std::map<std::string, std::string> PARAMS = {
   {"mix", "Mix|How much of the effect you hear: left is the sound as it came in, right is the effect only."},
   {"cut", "Cutoff|The lowpass filter: lower is darker and softer; all the way right is fully open."},
   {"res", "Res|Resonance: a peak at the cutoff that makes it ring and whistle as it's turned up."},
-  {"chan", "Channels|STEREO keeps left and right apart; MONO mixes them into one, centred."},
+  {"chan", "Channels|STEREO keeps left and right apart; MONO mixes them into one, centred. Either way its cables still carry both sides."},
   {"freeze", "Freeze|ON holds the sound as it is now, for as long as you like. A trigger into FREEZE switches it too."},
   {"clear", "Clear|Wipes what it holds. Tap once, then again within a couple of seconds, so it can't happen by accident."},
   {"load", "Load File|Opens the sound browser to choose a sound file (WAV, AIFF, FLAC or MP3)."},
@@ -174,7 +173,7 @@ static const std::map<std::string, std::string> PARAMS = {
   // AUDIO IN
   {"audioin.pick", "Device|Which input device: the computer's microphone, or an audio interface. One for the whole app at a time."},
   {"audioin.input", "Input|Which of the device's inputs: a pair (1+2) for stereo, or one (1) heard in both ears."},
-  {"audioin.gain", "Gain|The input level. Keep the meter out of the red."},
+  {"audioin.gain", "Gain|The input level. Keep the meter out of its last stretch, where it changes colour."},
   // FILTER
   {"filter.type", "Type|LOWPASS takes away highs, HIGHPASS takes away lows, BANDPASS keeps only a band around CUTOFF."},
   {"filter.cut", "Cutoff|Where the filter acts."},
@@ -183,8 +182,16 @@ static const std::map<std::string, std::string> PARAMS = {
   {"echo.div", "Note|With a clock in CLOCK, the time between repeats as a note length: 1/4 is a beat. DOT is half as long again, T a triplet."},
   {"echo.spread", "Width|How far the repeats bounce left and right."},
   // REVERB, HALL
-  {"hall.decay", "Decay|How long the tail hangs: all the way right is INFINITE, and it never fades."},
-  {"hall.motion", "Motion|How much the tail drifts and detunes as it hangs."},
+  {"reverb.type", "Type|The kind of space. Changing it also sets DECAY to that type's usual length."},
+  {"reverb.decay", "Decay|How long the tail hangs: all the way right is INFINITE, and it never fades. On FROZEN: how long the wall of sound holds after the sound stops."},
+  {"reverb.size", "Size|How big the space is: on NEBULA, how far apart its echoes are."},
+  {"reverb.tone", "Tone|How bright the tail stays: lower and the highs die away sooner, so it darkens as it fades. All the way right is OPEN."},
+  {"reverb.lowcut", "Low Cut|Takes the deep lows out of the tail, every time round, so it doesn't boom or muddy the sound."},
+  {"reverb.motion", "Motion|How much the tail drifts and detunes as it hangs: none keeps the pitch dead steady (best with FREEZE)."},
+  {"reverb.shift", "Shift|How far the tail is pitched each time it goes round, in semitones: +12 is an octave up, +7 a fifth, +12 & -12 both ways at once."},
+  {"reverb.amount", "Shimmer|How much of the pitched tail goes back in: more and it climbs higher and lasts longer."},
+  {"reverb.spread", "Spread|Low: its lines are all one length, so you hear clear repeating echoes and odd ringing. High: they scatter and melt into a smooth wash."},
+  {"reverb.width", "Width|How wide the tail is: 0 is in the middle, all the way right is as wide as it goes."},
   // DUCKER
   {"ducker.depth", "Depth|How far it dips on each trigger."},
   {"ducker.atk", "Attack|How quickly it dips."},
@@ -261,7 +268,7 @@ static const std::map<std::string, std::string> PARAMS = {
   {"orbits.speed", "Speed|How fast the rings turn."},
   {"orbits.phase", "Phasing|How differently the rings' speeds are set: more makes them drift in and out of step."},
   {"orbits.hits", "Hits|How many marks round each ring, where it plays."},
-  {"orbits.mutate", "Mutate|Each time a ring goes round, how likely it is to step its note up or down (it stays near its own). Green rings have moved."},
+  {"orbits.mutate", "Mutate|Each time a ring goes round, how likely it is to step its note up or down (it stays near its own). A ring whose note has moved lights in a different colour."},
   {"hops.rate", "BPM|How often it hops, on average."},
   {"hops.cluster", "Clump|How often a hop brings a quick little cluster of notes."},
   {"hops.spread", "Range|How many scale notes it hops between."},
@@ -394,7 +401,7 @@ static const std::map<std::string, std::string> PORTS = {
   {"<KEY", "Key In|Sidechain: sound here does the pushing instead of the sound itself (a kick drum, say)."},
   {">OUT", "Out|Its sound: patch into an effect's IN, a MIXER, or OUTPUT's A or B."},
   {">TRIG", "Trig Out|Its notes: patch into a voice's TRIG (or several voices), or into TRIG TOOLS or a NOTE LOOPER."},
-  {">MOD", "Mod Out|Modulation: drag from here to any green ring beside a slider, and that setting moves by itself."},
+  {">MOD", "Mod Out|Modulation: drag from here to any modulation ring (the little circle beside a slider), and that setting moves by itself."},
   {">NOTES OUT", "Notes Out|The notes: patch into a voice's TRIG."},
   {">PULSE", "Pulse|A pulse every step: a clock for other sequencers' CLOCK inputs."},
   {">BAR", "Bar|A pulse once a bar."},
@@ -415,7 +422,7 @@ static const std::map<std::string, std::string> PORTS = {
   {"mixer<1", "Input 1|A sound into channel 1."}, {"mixer<2", "Input 2|A sound into channel 2."}, {"mixer<3", "Input 3|A sound into channel 3."}, {"mixer<4", "Input 4|A sound into channel 4."},
   {"mixer>SEND", "Send|The channels' SENDs, mixed: patch into a reverb or echo, and its OUT back into OUTPUT."},
   {"out<A", "A|Sound in (side A of the crossfade)."}, {"out<B", "B|Sound in (side B of the crossfade)."},
-  {"midi>CC", "CC Out|The controller chosen in CC NUM, as modulation for any green ring."},
+  {"midi>CC", "CC Out|The controller chosen in CC NUM, as modulation for any modulation ring."},
   {"midiout<CLOCK", "Clock In|A clock to send on to the device."},
   {"tracker<STEP ENTER", "Step Enter|Notes in, written at the cursor when STEP RECORD is on."},
   {"tracker>CHN 1", "Chn 1|The notes of column 1 only."}, {"tracker>CHN 2", "Chn 2|The notes of column 2 only."}, {"tracker>CHN 3", "Chn 3|The notes of column 3 only."}, {"tracker>CHN 4", "Chn 4|The notes of column 4 only."},
@@ -436,6 +443,14 @@ static const std::map<std::string, std::string> PORTS = {
 };
 
 static const std::map<std::string, std::string> OTHER = {
+  {"VERB ROOM", "Room|A small, close space: quick and natural, with the first reflections off the walls."},
+  {"VERB PLATE", "Plate|Bright and dense, like the metal plate studios used: smooth on voices and plucks."},
+  {"VERB HALL", "Hall|A big hall whose tail drifts slowly as it hangs."},
+  {"VERB CATHEDRAL", "Cathedral|Huge and soft: it builds slowly and takes its time to fade."},
+  {"VERB SHIMMER", "Shimmer|The tail is pitched up (or down) each time it goes round, so it climbs into a bright halo. SHIFT and SHIMMER set how."},
+  {"VERB BLOOM", "Bloom|Swells in slowly after the sound, then fades: lovely on plucks and short notes."},
+  {"VERB NEBULA", "Nebula|A vast cloud. SPREAD goes from clear repeating echoes to a smooth wash; SIZE sets how far apart they are."},
+  {"VERB FROZEN", "Frozen|A wall of sound that doesn't fade: it holds for as long as DECAY says after the sound stops, then ends."},
   {"M", "Mute|Silences this module (it keeps running underneath)."},
   {"S", "Solo|Hear only this voice (and any other soloed ones)."},
   {"B", "Bypass|The sound passes through untouched, as if the effect weren't there."},
@@ -465,6 +480,8 @@ std::string helpModule(const std::string& type) { return find(MODULES, type); }
 std::string helpParam(const ModuleDef* d, const ParamDef& q) { std::string s = find(PARAMS, d->type + "." + q.key); if (s.empty()) s = find(PARAMS, q.key); return s; }
 std::string helpPort(const ModuleDef* d, bool out, int k) {
   const auto& ps = out ? d->outs : d->ins; if (k < 0 || k >= (int)ps.size()) return {}; const std::string n = ps[k].name, dir = out ? ">" : "<";
-  std::string s = find(PORTS, d->type + dir + n); if (s.empty()) s = find(PORTS, dir + n); return s; }
+  std::string s = find(PORTS, d->type + dir + n); if (s.empty()) s = find(PORTS, dir + n);
+  if (!s.empty() && ps[k].type == PType::Audio) s += " (STEREO: ONE CABLE CARRIES BOTH LEFT AND RIGHT.)";   // unlike most hardware modulars, where each side has its own socket
+  return s; }
 std::string helpOther(const std::string& what) { return find(OTHER, what); }
 }  // namespace tb

@@ -18,13 +18,18 @@ static int catCol(Cat c) { switch (c) { case Cat::Trig: return 24; case Cat::Voi
 // TRACKER, NOTE LOOPER: moving BPM while TEMPO is SHARED makes it OWN, starting from the session's tempo
 static void takeOwnTempo(UiMod* u, int k, Engine& eng) { const ModuleDef* d = u->m->def; if (d->type == "clock" || d->params[k].key != "bpm") return; const int si = d->paramIndex("sync");
   if (si < 0 || u->m->p[si].load() < 0.5f || u->m->clockedIn.load()) return; u->m->p[si].store(0); u->m->p[k].store(std::round(eng.tempo.bpm.load())); }
+// REVERB: a new TYPE brings its usual DECAY (a ROOM doesn't ring for 6 seconds); INFINITE stays INFINITE
+static void verbTypeSet(UiMod* u, int k, float old, float v) {
+  const ModuleDef* d = u->m->def; if (d->type != "reverb" || d->params[k].key != "type" || std::lround(old) == std::lround(v)) return;
+  static const float DEC[8] = {0.9f, 2.5f, 6, 10, 10, 8, 8, 1.5f}; const int di = d->paramIndex("decay"), t = std::max(0, std::min(7, (int)std::lround(v)));
+  if (di >= 0 && u->m->p[di].load() < 99.f) u->m->p[di].store(DEC[t]); }
 static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ? 44 : 45; }
 
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "journey", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "audioin"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "hall", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "listen"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -81,7 +86,7 @@ void Ui::demoPatch() {
   auto col = [&](int x, std::vector<std::string> types) { std::vector<UiMod*> v; int y = 16; for (auto& t : types) { UiMod* u = add(t, x, y); v.push_back(u); y += geom(*u).h + 5; } return v; };
   auto c1 = col(6, {"clump", "orbits", "clock"}), c2 = col(86, {"pluck", "tone"}), c3 = col(166, {"pad", "additive"}), c4 = col(246, {"echo", "filter", "lfo"}), c5 = col(326, {"mixer"}), c6 = col(406, {"reverb", "ducker"}), c7 = col(486, {"out"});
   UiMod *clump = c1[0], *orb = c1[1], *clk = c1[2], *pl = c2[0], *fm = c2[1], *pad = c3[0], *bell = c3[1], *echo = c4[0], *filt = c4[1], *lfo = c4[2], *mix = c5[0], *verb = c6[0], *duck = c6[1], *out = c7[0];
-  set(clump, "oct", 5); set(clump, "mutate", 1); set(clump, "speed", 2.5f); set(pl, "tone", 0.08f); set(pad, "cut", 420); set(verb, "size", 10); set(verb, "mix", 0.5f);
+  set(clump, "oct", 5); set(clump, "mutate", 1); set(clump, "speed", 2.5f); set(pl, "tone", 0.08f); set(pad, "cut", 420); set(verb, "decay", 10); set(verb, "mix", 0.5f);
   set(duck, "depth", 0.9f); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "decay", 1.6f);
   set(lfo, "rate", 20); set(pad, "air", 0.05f);
   connect(clump, "TRIG", pl, "TRIG"); connect(clump, "TRIG", fm, "TRIG"); connect(orb, "TRIG", pad, "TRIG"); connect(orb, "TRIG", bell, "TRIG");
@@ -118,7 +123,7 @@ static const Layout& layoutOf(const ModuleDef* d) {
   else {
     static const std::map<std::string, std::vector<std::string>> MODES = {
       {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
-      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}};
+      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"reverb", {"type", "shift", "amount", "spread", "freeze"}}};
     const bool keyed = d->keyIdx >= 0;
     put(key("poly"), 0); for (int j = 0; j < n; j++) if (recButton(d, d->params[j])) put(j, 0);
     if (auto m = MODES.find(d->type); m != MODES.end()) for (auto& k : m->second) put(key(k.c_str()), 0);
@@ -142,7 +147,8 @@ static bool hiddenRow(const UiMod& u, int j, const std::vector<UiCable>* cables 
   if (q.only == "wander" && P("path") < 4.5f) return true;              // KEY JOURNEY: HOME PULL is for WANDER
   if (q.only == "held" && P("src") < 0.5f) return true;                 // GRAIN LOOPER LIVE: nothing held to edit
   if (q.only == "overdub" && P("recmode") < 0.5f) return true;          // SAMPLER: KEEP is for OVERDUB
-  if (q.only == "adsr" && u.m->p[6].load() < 0.5f) return true;         // MI VOICES: the envelope is only used in ADSR
+  if (q.only == "adsr" && u.m->p[6].load() < 0.5f) return true;
+  if (d->type == "reverb" && ((q.only == "shimmer" && std::lround(P("type")) != 4) || (q.only == "nebula" && std::lround(P("type")) != 6))) return true;   // REVERB: SHIFT and SHIMMER for SHIMMER, SPREAD for NEBULA         // MI VOICES: the envelope is only used in ADSR
   if (d->type == "mi" && (q.key == "decay" || q.key == "colour") && miEngines()[std::max(0, std::min(MI_ENGINES - 1, (int)u.m->p[0].load()))].selfEnv) return true;   // models that shape themselves: Plaits skips its gate
   if (q.only == "own") { const int si = d->paramIndex("sync"); if (si >= 0 && d->params[si].tog && u.m->p[si].load() > 0.5f) return true; }   // BPM: not while it follows the session's tempo
   if (d->type == "sample") { const int kind = (int)P("kind"); const bool once = P("mode") > 0.5f;   // what doesn't apply to this kind of sound or way of playing
@@ -892,14 +898,31 @@ std::string Ui::helpAt(float sx, float sy) {
     if (!d->fixed && ly >= g.h - FOOT) { const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod;
       if (lx >= g.w - 13) return helpOther("FOLD"); if (onOff && lx >= 3 && lx < 18) return helpOther("ON"); if (!onOff && lx >= 3 && lx < 12) return helpOther("M");
       if (lx >= 14 && lx < 23) return d->cat == Cat::Voice ? helpOther("S") : bypassable(d) ? helpOther("B") : std::string(); return {}; }
+    if (d->type == "journey" && ly >= g.vy && ly < g.vy + 17) {   // KEY JOURNEY: a step, and how smooth the change into it is, in words
+      const int N = std::max(1, std::min(8, (int)std::lround(u->m->p[0].load()))), sw = std::min(16, (g.w - 6 + 1) / N), i = (lx - 3) / std::max(1, sw); const int nsc = (int)scales().size();
+      if (i >= 0 && i < N) { auto keyAt = [&](int k) { return (int)std::lround(u->m->seq[Module::si(k, 0)].load()); };
+        auto scAt = [&](int k) { const float v = u->m->seq[Module::si(k, 0) + 1].load(); return std::max(0, std::min(nsc - 1, v >= 10 ? (int)std::lround(v) - 10 : (int)u->m->disp[10].load())); };
+        auto mask = [&](int r, int sc) { int mm = 0; for (int st : scales()[sc].steps) mm |= 1 << ((r + st) % 12); return mm; };
+        const int k = keyAt(i); std::string t = "STEP " + std::to_string(i + 1);
+        if (k < 0) return t + "|EMPTY: SKIPPED. TAP IT TO CHOOSE A KEY; TAP UNDER IT FOR A SCALE OF ITS OWN.";
+        t += ": " + std::string(KEY_NAMES[k % 12]) + " " + scales()[scAt(i)].name; int pj = -1; for (int j = 1; j <= N; j++) { const int q = ((i - j) % N + N) % N; if (keyAt(q) >= 0) { pj = q; break; } }
+        std::string how = "THE ONLY STEP.";
+        if (pj >= 0 && pj != i) { int dd = 0; for (int xm = mask(keyAt(pj), scAt(pj)) ^ mask(k, scAt(i)); xm; xm &= xm - 1) dd++; dd /= 2;
+          const std::string from = "FROM " + std::string(KEY_NAMES[keyAt(pj) % 12]) + " (STEP " + std::to_string(pj + 1) + "): ";
+          how = from + (dd == 0 ? "THE SAME NOTES, A NEW HOME." : dd == 1 ? "SMOOTH: ONE NOTE CHANGES." : dd == 2 ? "A BIGGER CHANGE: TWO NOTES." : "JARRING: " + std::to_string(dd) + " NOTES CHANGE."); }
+        return t + "|" + how + " TAP IT TO CHANGE ITS KEY; TAP UNDER IT FOR A SCALE OF ITS OWN."; } }
     const int pj = paramAt(u, ly);
     if (pj >= 0 && d->type == "mi" && !(jacksIn && lx < 9)) { const std::string& k = d->params[pj].key; const int w3 = k == "harm" ? 0 : k == "timb" ? 1 : k == "morph" ? 2 : -1;   // MI VOICES: what this model does with it
       if (w3 >= 0) { const int mdl = std::max(0, std::min(MI_ENGINES - 1, (int)u->m->p[0].load())); return std::string(miEngines()[mdl].k[w3]) + "|" + miHelp(mdl, w3) + " (PLAITS' " + d->params[pj].label + " CONTROL, ON " + miEngines()[mdl].name + ")"; } }
+    if (pj >= 0 && d->type == "reverb" && d->params[pj].key == "type") {   // REVERB: what this type does, and the others
+      const ParamDef& q = d->params[pj]; const int t = std::max(0, std::min((int)q.opts.size() - 1, (int)std::lround(u->m->p[pj].load())));
+      std::string s = helpOther("VERB " + q.opts[t]); const size_t bar = s.find('|'); std::string all; for (size_t i = 0; i < q.opts.size(); i++) all += (i ? ", " : "") + q.opts[i];
+      if (bar != std::string::npos) return "Type: " + s.substr(0, bar) + "|" + s.substr(bar + 1) + " (TYPES: " + all + ". CHANGING IT ALSO SETS DECAY TO THAT TYPE'S USUAL LENGTH.)"; }
     if (pj >= 0) return jacksIn && lx < 9 && modulatable(d->params[pj]) ? modNote(u, pj) : withRange(d, pj);
     return helpModule(d->type); }
   const int ci = cableAt(wx, wy, 3); if (ci >= 0) {   // a cable: what kind (its colour), what it joins, and what you can do with it
     const UiCable& cb = cables[ci]; const std::string b = helpOther("CABLE"), how = b.substr(b.find('|') + 1);
-    if (cb.type == PType::Audio) return "AUDIO CABLE: " + cableName(cb) + "|CARRIES SOUND. DRAG AN EFFECT THAT ISN'T PATCHED YET (A REVERB, SAY) ONTO IT AND LET GO: THE EFFECT GOES IN BETWEEN. " + how;
+    if (cb.type == PType::Audio) return "AUDIO CABLE: " + cableName(cb) + "|CARRIES SOUND IN STEREO: LEFT AND RIGHT TOGETHER ON THE ONE CABLE. DRAG AN EFFECT THAT ISN'T PATCHED YET (A REVERB, SAY) ONTO IT AND LET GO: THE EFFECT GOES IN BETWEEN. " + how;
     if (cb.type == PType::Mod) return "MODULATION CABLE: " + cableName(cb) + "|CARRIES MODULATION: IT MOVES THE SETTING AT ITS END BY ITSELF (THE SOURCE'S DEPTH SETS HOW FAR). " + how;
     return "TRIGGER CABLE: " + cableName(cb) + "|CARRIES NOTES AND TRIGGERS: EACH ONE PLAYS OR STARTS WHAT'S AT ITS END. " + how; }
   return {}; }
@@ -923,12 +946,41 @@ void Ui::typed(const std::string& t) { if (!ask) return; for (char ch : t) { con
     if (((u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') || std::string(" #-/+.").find(u) != std::string::npos) && ask->text.size() < 24) ask->text += u; } }
 // a name for a session, from two lists of quiet words (SAVE AS: the dice gives another)
 std::string Ui::randomName() {
+  /* describing words: nature, weather, colour, materials, machines, space, the city, moods, time, the odd strange one */
   static const char* A[] = {"SLOW", "PALE", "QUIET", "AMBER", "MOSS", "SALT", "HOLLOW", "DRIFTING", "SOFT", "DISTANT", "SILVER", "MISTY", "LOW", "WARM", "FADED", "STILL", "VELVET",
-    "COPPER", "GLASS", "WINTER", "EVENING", "NORTHERN", "SLEEPY", "GENTLE", "DUSK", "OCHRE", "INDIGO", "LICHEN", "FERN", "TIDAL", "PAPER", "WOOLLEN", "CEDAR", "HAZY", "LATE"};
+    "COPPER", "GLASS", "WINTER", "EVENING", "NORTHERN", "SLEEPY", "GENTLE", "DUSK", "OCHRE", "INDIGO", "LICHEN", "FERN", "TIDAL", "PAPER", "WOOLLEN", "CEDAR", "HAZY", "LATE",
+    "NEON", "CHROME", "ELECTRIC", "MAGNETIC", "ORBITAL", "LUNAR", "SOLAR", "POLAR", "BINARY", "ANALOGUE", "DIGITAL", "STATIC", "BROKEN", "BORROWED", "FORGOTTEN", "SECRET",
+    "INVISIBLE", "UPSIDE DOWN", "SIDEWAYS", "ENDLESS", "TINY", "ENORMOUS", "CURIOUS", "LAZY", "RESTLESS", "HUMMING", "WHISPERING", "SPINNING", "FLOATING", "FALLING", "RISING",
+    "SUNDAY", "MIDNIGHT", "MORNING", "SUMMER", "AUTUMN", "SPRING", "OCTOBER", "APRIL", "TUESDAY", "YESTERDAY", "TOMORROW", "ANCIENT", "FUTURE", "RETRO", "VINTAGE",
+    "CRYSTAL", "MARBLE", "CONCRETE", "PLASTIC", "RUBBER", "IRON", "CARBON", "COBALT", "VIOLET", "CRIMSON", "TEAL", "LEMON", "CORAL", "JADE", "ULTRAVIOLET", "INFRARED",
+    "SUGAR", "HONEY", "PEPPER", "MINT", "CITRUS", "SMOKY", "FIZZY", "FROZEN", "MELTING", "BURNING", "WET", "DUSTY", "ELASTIC", "WOBBLY", "GLITCHY", "FUZZY", "CRACKLING",
+    "URBAN", "SUBURBAN", "COASTAL", "ALPINE", "TROPICAL", "DESERT", "ARCTIC", "UNDERGROUND", "OVERHEAD", "ELSEWHERE", "PARALLEL", "MIRRORED", "HALF", "SECOND", "LAST", "LOST",
+    "LONELY", "HAPPY", "WISTFUL", "DREAMY", "STRANGE", "COSMIC", "TELEPHONE", "RADIO", "CASSETTE", "PIXEL", "VECTOR", "ROBOT", "CLOCKWORK", "PAPERBACK", "MOTORWAY"};
+  /* things and places */
   static const char* B[] = {"HARBOUR", "LANTERN", "MEADOW", "TIDE", "ORCHARD", "RIVER", "MOTH", "CHAPEL", "HILLS", "RAIN", "GARDEN", "FIELD", "LIGHT", "SHORE", "CLOUD", "FOREST",
-    "WIRE", "BELLS", "ROOM", "WINDOW", "STATION", "ISLAND", "COAST", "SIGNAL", "DUNES", "VALLEY", "HEATH", "EMBERS", "ATLAS", "LAKE", "HORIZON", "PATH", "HAZE", "STARS", "PIER"};
-  static unsigned seed = (unsigned)std::time(nullptr); seed = seed * 1664525u + 1013904223u; const unsigned a = (seed >> 8) % (sizeof(A) / sizeof(*A));
-  seed = seed * 1664525u + 1013904223u; const unsigned b = (seed >> 8) % (sizeof(B) / sizeof(*B)); return std::string(A[a]) + " " + B[b];
+    "WIRE", "BELLS", "ROOM", "WINDOW", "STATION", "ISLAND", "COAST", "SIGNAL", "DUNES", "VALLEY", "HEATH", "EMBERS", "ATLAS", "LAKE", "HORIZON", "PATH", "HAZE", "STARS", "PIER",
+    "SATELLITE", "NEBULA", "COMET", "ORBIT", "PLANET", "MOON", "ECLIPSE", "GALAXY", "ROCKET", "ASTRONAUT", "TELESCOPE", "MACHINE", "ENGINE", "CIRCUIT", "TRANSISTOR", "TAPE",
+    "RECORD", "JUKEBOX", "ARCADE", "TERMINAL", "ESCALATOR", "LIFT", "SUBWAY", "TRAMLINE", "ROOFTOP", "CAR PARK", "LAUNDERETTE", "DINER", "MOTEL", "LIBRARY", "MUSEUM",
+    "AQUARIUM", "GREENHOUSE", "LIGHTHOUSE", "OBSERVATORY", "BALLROOM", "CORRIDOR", "STAIRWELL", "BASEMENT", "ATTIC", "KITCHEN", "BATHTUB", "TEACUP", "SPOON", "UMBRELLA",
+    "BICYCLE", "KITE", "BALLOON", "ZEPPELIN", "SUBMARINE", "FERRY", "CARAVAN", "TRAIN", "POSTCARD", "LETTER", "PHOTOGRAPH", "MAP", "COMPASS", "ALARM", "CLOCK", "MIRROR",
+    "WHALE", "OCTOPUS", "JELLYFISH", "HERON", "OWL", "FOX", "HARE", "CROW", "BEETLE", "SNAIL", "GOLDFISH", "PENGUIN", "CAMEL", "TORTOISE", "BEE", "SPARROW", "WOLF",
+    "GLACIER", "VOLCANO", "CANYON", "CAVE", "REEF", "LAGOON", "WATERFALL", "FOG", "THUNDER", "LIGHTNING", "SNOWFALL", "MONSOON", "AURORA", "PRISM", "CRYSTALS", "MAGNET",
+    "DREAM", "MEMORY", "PUZZLE", "RIDDLE", "ECHO", "WHISPER", "LULLABY", "PARADE", "CARNIVAL", "PICNIC", "HOLIDAY", "WEEKEND", "AFTERNOON", "SUNRISE", "STATIC", "PULSE"};
+  static unsigned seed = (unsigned)std::time(nullptr) ^ (unsigned)std::clock();
+  auto pick = [&](unsigned n) { seed = seed * 1664525u + 1013904223u; return (seed >> 8) % n; };
+  const unsigned nA = sizeof(A) / sizeof(*A), nB = sizeof(B) / sizeof(*B);
+  for (int tries = 0; tries < 20; tries++) {
+    const std::string a = A[pick(nA)], b = B[pick(nB)], b2 = B[pick(nB)];
+    std::string s;
+    switch (pick(9)) {                                   // mostly two words, sometimes another shape
+      case 0: s = b + " OF " + b2; break;                  // LIGHTHOUSE OF FOG
+      case 1: s = "THE " + a + " " + b; break;
+      case 2: s = b + " " + std::to_string(1 + pick(99)); break;   // ORBIT 42
+      default: s = a + " " + b; break;
+    }
+    if (s.size() <= 24 && a != b && b != b2) return s;    // the name box holds 24 letters
+  }
+  return std::string(A[0]) + " " + B[0];
 }
 void Ui::keyBackspace() { if (ask && !ask->text.empty()) ask->text.pop_back(); }
 void Ui::keyEscape() { ask.reset(); }
@@ -1112,7 +1164,7 @@ void Ui::pointerDown(float sx, float sy) {
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }
       Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + rowPx(*u, pj) + 4;
-      l.pick = [this, u, pj](int i) { u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i] + (qq.key == "chan" ? (u->m->def->type == "sample" ? "  (FOR THE NEXT SOUND YOU LOAD OR RECORD)" : "  (FOR THE NEXT SOUND YOU LOAD OR CATCH)") : ""), qq.key == "chan" ? 4.f : 2.f); changed(); };
+      l.pick = [this, u, pj](int i) { verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i] + (qq.key == "chan" ? (u->m->def->type == "sample" ? "  (FOR THE NEXT SOUND YOU LOAD OR RECORD)" : "  (FOR THE NEXT SOUND YOU LOAD OR CATCH)") : ""), qq.key == "chan" ? 4.f : 2.f); changed(); };
       openDropdown(l); return; }
     if (lx >= minusX(*u, pj) - 2 && lx < minusX(*u, pj) + 5) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = -1; drag.holdT = 0; drag.holdSum = 0; nudge(u, pj, -1); return; }
     if (lx >= g.w - 8) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = 1; drag.holdT = 0; drag.holdSum = 0; nudge(u, pj, 1); return; }
@@ -1130,7 +1182,7 @@ void Ui::nudge(UiMod* u, int k, int dir) { u->valK = k; u->valT = 1.2f;   /* - a
   float v = q.step > 0 ? clampf(v0 + dir * q.step, std::min(q.min, q.max), std::max(q.min, q.max)) : q.fromNorm(q.toNorm(v0) + dir * q.nudge);
   if (q.step > 0 && q.rev) v = clampf(v0 - dir * q.step, q.min, q.max);
   if (q.step > 0) v = std::round(v / q.step) * q.step;   // onto the steps (a value from an older session may sit between them)
-  u->m->p[k].store(v); clockToTempo(u, k, eng); status(u->m->def->name + "  " + statusLabel(*u, q) + "  " + valueText(*u, k, v, eng.key.root.load()), 1.5f);
+  verbTypeSet(u, k, v0, v); u->m->p[k].store(v); clockToTempo(u, k, eng); status(u->m->def->name + "  " + statusLabel(*u, q) + "  " + valueText(*u, k, v, eng.key.root.load()), 1.5f);
 }
 void Ui::selectCable(const UiCable& c, float sx, float sy) {
   sel = c; selOn = true; selT = 1; ubx = (int)sx + 4; uby = (int)sy - 12; status(cableName(c), 3);
@@ -1157,7 +1209,7 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_PARAM && !drag.moved && !drag.held && std::fabs(sx - drag.sx) < 2) {}   // not moved far enough to count as a drag yet
   else if (drag.kind == D_PARAM && drag.held) {}
   else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 && !q.exp ? 40.f : 70.f));
-    drag.m->m->p[drag.k].store(v); clockToTempo(drag.m, drag.k, eng); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + valueText(*drag.m, drag.k, v, eng.key.root.load()), 1.5f); }
+    verbTypeSet(drag.m, drag.k, drag.m->m->p[drag.k].load(), v); drag.m->m->p[drag.k].store(v); clockToTempo(drag.m, drag.k, eng); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + valueText(*drag.m, drag.k, v, eng.key.root.load()), 1.5f); }
   else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng.tempo.bpm.load())) { eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }

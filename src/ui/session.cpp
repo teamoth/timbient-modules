@@ -149,11 +149,22 @@ std::string loadPatch(Ui& ui, const Json& data0) {
   if (data.num("bpm", 0) > 0) ui.eng.tempo.bpm.store((float)data.num("bpm"));
   Json* mods = data.getm("mods"); Json* cables = data.getm("cables"); if (!mods || mods->t != Json::ARR) return "THAT FILE HAS NO MODULES";
   // older web sessions: modules that were merged or replaced
+  std::map<int, int> oldVerb;   // REVERB and INFINITE HALL became one REVERB with a TYPE: 1 was a hall, 2 the old reverb (their mod cables are renamed below)
   for (auto& m : mods->a) {
     const std::string ty = m.str("type"); Json* p = m.getm("p"); if (!p) { m.set("p", Json::object()); p = m.getm("p"); }
     if (ty == "ping") { const double r = p->num("ratio", 3.5), dc = p->num("decay", 0.35), ix = p->num("index", 0.5); m.set("type", Json::string("fm2"));
       p->set("ratio", Json::number(std::round(r * 2) / 2)); p->set("index", Json::number(std::min(10.0, (0.2 + ix * 4) / r * 3))); p->set("idec", Json::number(dc * 0.4)); p->set("isus", Json::number(0)); p->set("hold", Json::number(0.02)); p->set("rel", Json::number(dc * 1.5)); }
     if (ty == "drone") { m.set("type", Json::string("pad")); }
+    if (ty == "hall" || (ty == "reverb" && !p->get("type"))) {
+      const bool hall = ty == "hall"; Json np = Json::object(); oldVerb[(int)m.num("id")] = hall ? 1 : 2;
+      const double damp = p->num("damp", hall ? 0.35 : 0.4), a = hall ? 1 - 0.85 * damp : 1 - (0.05 + damp * 0.6);   // the old darkening, as the frequency it worked out at
+      np.set("tone", Json::number(a >= 0.999 ? 20000.0 : std::max(500.0, std::min(20000.0, -std::log(1 - a) * 48000 / 6.2831853))));
+      np.set("lowcut", Json::number(20));
+      if (hall) { np.set("type", Json::number(2)); np.set("size", Json::number(std::max(0.0, std::min(1.0, (p->num("size", 1.2) - 0.4) / 1.8))));
+        for (const char* k : {"decay", "motion", "pre", "freeze", "mix", "pan"}) if (const Json* v = p->get(k)) np.set(k, *v); }
+      else { const double sz = p->num("size", 5); np.set("type", Json::number(sz < 1.8 ? 0 : 2)); np.set("decay", Json::number(sz)); np.set("motion", Json::number(0));
+        for (const char* k : {"pre", "mix", "pan"}) if (const Json* v = p->get(k)) np.set(k, *v); }
+      m.set("type", Json::string("reverb")); m.set("p", np); }
     if (ty == "tloop") {   // TAPE LOOP became the SAMPLER (recording, OVERDUB keeping KEEP): its tape was never kept, so it starts empty
       m.set("type", Json::string("sample")); Json np = Json::object(); for (const char* k : {"rec", "keep", "chan", "cut", "res", "level", "pan"}) if (const Json* v = p->get(k)) np.set(k, *v);
       np.set("recmode", Json::number(1)); np.set("mon", Json::number(1)); m.set("p", np); }
@@ -197,7 +208,9 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     auto fi = idmap.find((int)c.num("f")), ti = idmap.find((int)c.num("t")); if (fi == idmap.end() || ti == idmap.end()) { lost++; continue; }
     UiMod *a = fi->second, *b = ti->second; const std::string ty = c.str("ty"), fp = c.str("fp"); std::string tp = c.str("tp");
     if (b->m->def->type == "out" && tp == "IN") tp = "A"; if (tp == "SWELL") tp = "TRIG";
-    if (ty == "mod") { const int pk = b->m->def->paramIndex(c.str("tq")); if (pk < 0 || !ui.modulate(a, b, pk)) lost++; }
+    std::string tq = c.str("tq");
+    if (auto ov = oldVerb.find((int)c.num("t")); ov != oldVerb.end()) { if (tq == "damp") tq = "tone"; else if (ov->second == 2 && tq == "size") tq = "decay"; }
+    if (ty == "mod") { const int pk = b->m->def->paramIndex(tq); if (pk < 0 || !ui.modulate(a, b, pk)) lost++; }
     else if (!ui.connect(a, outIdx(a->m->def, fp), b, inIdx(b->m->def, tp))) lost++;
   }
   std::string note;

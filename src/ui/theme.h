@@ -35,7 +35,7 @@ inline const std::vector<std::pair<const char*, Theme>>& presets() { static cons
   // dark
   {"NAVY", {"#0f1a2e", "#1f2d47", "#6fb0e0", "#f0b45a", "#c28fd9"}}, {"INK TEAL", {"#0c2226", "#183a3f", "#5fd1c0", "#f08a6a", "#b6a2f0"}},
   {"PLUM NIGHT", {"#1d1426", "#33263f", "#d98ad0", "#7fc7d9", "#f0c070"}}, {"CHARCOAL", {"#18191c", "#2b2d32", "#59c3e8", "#f2a541", "#e86f8a"}},
-  {"SUMI", {"#141414", "#262626", "#e2563b", "#e8e2d0", "#8fa6b3"}}, {"FOREST NIGHT", {"#0f1d17", "#1d3329", "#8fd17a", "#e0a86a", "#7fb0e0"}},
+  {"SLATE", {"#141414", "#262626", "#e2563b", "#e8e2d0", "#8fa6b3"}}, {"FOREST NIGHT", {"#0f1d17", "#1d3329", "#8fd17a", "#e0a86a", "#7fb0e0"}},
   {"MIDNIGHT ROSE", {"#1a1420", "#2e2236", "#ef8fa8", "#8fd3c2", "#e8c27a"}}, {"DEEP SEA", {"#08202e", "#12384a", "#4fc3d9", "#f4d35e", "#ee8a8a"}}}; return v; }
 // a colour's name from its hue (for the presets' colours in the lists): GREY, RED, CORAL, AMBER ... ROSE
 inline std::string hueName(const std::string& hex) {
@@ -60,27 +60,51 @@ inline const std::vector<Choice>& bgChoices() { static const std::vector<Choice>
 inline const std::vector<Choice>& modChoices() { static const std::vector<Choice> v = withPresets(modBase(), 1); return v; }
 inline const std::vector<Choice>& cableChoices() { static const std::vector<Choice> v = withPresets(cableBase(), 2); return v; }
 inline bool sameTheme(const Theme& a, const Theme& b) { return a.bg == b.bg && a.mod == b.mod && a.audio == b.audio && a.trig == b.trig && a.modc == b.modc; }
-// RANDOMISE: another of the presets (never the one on now)
-template <class R> inline Theme randomPreset(const Theme& cur, R rnd) { const auto& p = presets(); int at = -1; for (size_t i = 0; i < p.size(); i++) if (sameTheme(p[i].second, cur)) at = (int)i;
-  int k = rnd((int)p.size() - (at >= 0 ? 1 : 0)); if (at >= 0 && k >= at) k++; return p[k].second; }
-
 inline void rgbOf(const std::string& h, float c[3]) { for (int i = 0; i < 3; i++) c[i] = h.size() >= 7 ? (float)std::strtoul(h.substr(1 + i * 2, 2).c_str(), 0, 16) : 0; }
 inline std::string hexOf(const float c[3]) { char b[8]; std::snprintf(b, 8, "#%02x%02x%02x", (int)std::lround(clampf(c[0], 0, 255)), (int)std::lround(clampf(c[1], 0, 255)), (int)std::lround(clampf(c[2], 0, 255))); return b; }
 inline std::string mixHex(const std::string& a, const std::string& b, float k) { float x[3], y[3], z[3]; rgbOf(a, x); rgbOf(b, y); for (int i = 0; i < 3; i++) z[i] = x[i] + (y[i] - x[i]) * k; return hexOf(z); }
 inline float lum(const std::string& h) { float c[3]; rgbOf(h, c); return (0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]) / 255; }
 
-// RANDOMISE: any background and module colour that sit apart, and three cable colours that stand out from both and from each other
 inline float colDist(const std::string& a, const std::string& b) { float x[3], y[3]; rgbOf(a, x); rgbOf(b, y); return std::sqrt((x[0] - y[0]) * (x[0] - y[0]) + (x[1] - y[1]) * (x[1] - y[1]) + (x[2] - y[2]) * (x[2] - y[2])) / 441.7f; }
-template <class R> Theme randomTheme(R&& rnd) {   // rnd(n) gives 0..n-1
-  Theme t; const auto& bgs = bgBase(); const auto& mods = modBase(); const auto& cs = cableBase();
-  const bool pale = rnd(4) != 0;   // three times in four a pale background, with a light-to-mid module colour
-  for (int k = 0; k < 200; k++) { t.bg = bgs[1 + rnd((int)bgs.size() - 1)].second; if (!pale || lum(t.bg) > 0.45f) break; }
-  for (int k = 0; k < 300; k++) { t.mod = mods[rnd((int)mods.size())].second; if (std::fabs(lum(t.mod) - lum(t.bg)) > 0.08f && colDist(t.mod, t.bg) > 0.12f && (!pale || k > 200 || lum(t.mod) > 0.35f)) break; }
-  std::string* slot[3] = {&t.audio, &t.trig, &t.modc};
-  for (int i = 0; i < 3; i++) for (int k = 0; k < 800; k++) {   // light-to-mid (they colour the headers too); asking less after 400 tries
-      const std::string c = cs[rnd((int)cs.size())].second; const float r = k < 400 ? 1.f : 0.6f;
-      bool ok = lum(c) > 0.42f && colDist(c, t.bg) > 0.3f * r && colDist(c, t.mod) > 0.25f * r;
-      for (int j = 0; j < i; j++) if (colDist(c, *slot[j]) < 0.22f * r) ok = false; if (ok || k == 799) { *slot[i] = c; break; } }
+// RANDOMISE: a new theme from one colour. A random hue for the background and modules (pale or dark, as the theme on
+// now is), and three cable colours placed round the colour wheel from it by one of the usual harmonies (side by side,
+// opposite, split, a triangle or a square). Each cable has to stand out clearly from the background, the modules and the
+// other two; earthy browns (dark oranges and yellows) are left out. Tries again until all of that holds.
+inline std::string hslHex(float h, float s, float l) {
+  h = std::fmod(std::fmod(h, 360.f) + 360.f, 360.f); const float c = (1 - std::fabs(2 * l - 1)) * s, x = c * (1 - std::fabs(std::fmod(h / 60.f, 2.f) - 1)), m = l - c / 2;
+  float r = 0, g = 0, b = 0; const int k = (int)(h / 60) % 6;
+  if (k == 0) { r = c; g = x; } else if (k == 1) { r = x; g = c; } else if (k == 2) { g = c; b = x; } else if (k == 3) { g = x; b = c; } else if (k == 4) { r = x; b = c; } else { r = c; b = x; }
+  const float v[3] = {(r + m) * 255, (g + m) * 255, (b + m) * 255}; return hexOf(v); }
+inline float contrast(const std::string& a, const std::string& b) { auto L = [](const std::string& h) { float c[3]; rgbOf(h, c); float o[3];   // WCAG's contrast ratio: 1 (the same) to 21 (black on white)
+    for (int i = 0; i < 3; i++) { const float u = c[i] / 255; o[i] = u <= 0.04045f ? u / 12.92f : std::pow((u + 0.055f) / 1.055f, 2.4f); } return 0.2126f * o[0] + 0.7152f * o[1] + 0.0722f * o[2]; };
+  float x = L(a), y = L(b); if (x < y) std::swap(x, y); return (x + 0.05f) / (y + 0.05f); }
+inline float hueGap(float a, float b) { float d = std::fabs(std::fmod(a - b + 720.f, 360.f)); return std::min(d, 360 - d); }
+inline bool brownish(float h, float l) { h = std::fmod(h + 360.f, 360.f); return h >= 12 && h <= 66 && l < 0.55f; }   // a dark orange or yellow reads as brown (or olive)
+template <class R> Theme harmonyTheme(bool pale, R&& rnd) {   // rnd(n) gives 0..n-1
+  auto u = [&] { return rnd(10000) / 10000.f; };
+  Theme t;
+  for (int tries = 0; tries < 400; tries++) {
+    const float H = u() * 360;
+    if (!pale && brownish(H, 0.2f) && tries < 390) continue;   // no brown backgrounds
+    const float bs = pale ? 0.12f + u() * 0.25f : 0.2f + u() * 0.3f, bl = pale ? 0.87f + u() * 0.06f : 0.07f + u() * 0.05f;
+    t.bg = hslHex(H, bs, bl);
+    t.mod = hslHex(H + (u() - 0.5f) * 20, std::min(1.f, bs + 0.05f), pale ? bl - 0.08f - u() * 0.06f : bl + 0.08f + u() * 0.06f);
+    static const float SCHEMES[5][3] = {{0, 150, 210}, {0, 120, 240}, {0, 45, 180}, {90, 180, 270}, {0, 50, 200}};   // split, triangle, opposite, square, side by side (and one across)
+    const int sc = rnd(5); float hs[3]; const float off = (u() - 0.5f) * 30;
+    for (int i = 0; i < 3; i++) hs[i] = H + SCHEMES[sc][i] + off;
+    for (int i = 2; i > 0; i--) std::swap(hs[i], hs[rnd(i + 1)]);   // which cable gets which
+    std::string* slot[3] = {&t.audio, &t.trig, &t.modc}; bool ok = true;
+    for (int i = 0; i < 3 && ok; i++) {
+      float s = pale ? 0.45f + u() * 0.25f : 0.5f + u() * 0.3f, l = pale ? 0.5f + u() * 0.1f : 0.6f + u() * 0.12f;
+      if (brownish(hs[i], 0)) { s = std::max(s, 0.72f); l = std::max(l, 0.58f); }   // an orange or a yellow: kept bright and clear, never tan or brown
+      // darker (on pale) or lighter (on dark) until it stands out from the background and the modules
+      auto clear = [&](const std::string& c) { return contrast(c, t.bg) >= (pale ? 2.4f : 3.5f) && contrast(c, t.mod) >= (pale ? 1.8f : 2.6f); };
+      for (int k = 0; k < 12 && !clear(hslHex(hs[i], s, l)); k++) l += pale ? -0.025f : 0.02f;
+      *slot[i] = hslHex(hs[i], s, l);
+      if (!clear(*slot[i]) || (pale && brownish(hs[i], l + 0.06f) && l < 0.5f)) ok = false;   // still not clear, or darkened into brown
+      for (int j = 0; j < i; j++) if (hueGap(hs[i], hs[j]) < 35 || colDist(*slot[i], *slot[j]) < 0.2f) ok = false; }
+    if (ok && contrast(t.bg, t.mod) > 1.12f) return t;
+  }
   return t;
 }
 inline std::string headerOf(const std::string& c) { std::string h = c; for (int k = 1; k <= 10 && lum(h) < 0.42f; k++) h = mixHex(c, "#ffffff", k * 0.08f); return h; }
