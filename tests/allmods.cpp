@@ -296,8 +296,8 @@ int main(int argc, char** argv) {
     Json jb; Json::parse(B, jb); applyPatch(ui, jb, sc); run(eng, 0.1f); const bool u2 = serializePatch(ui).dump() == B;
     std::printf("undo %s, redo %s\n", u1 ? "ok" : "WRONG", u2 ? "ok" : "WRONG"); if (!u1 || !u2) fails++; }
   // REVERB: each TYPE rings for about its DECAY, all at about the same loudness; INFINITE holds; old REVERB and INFINITE HALL sessions open as types
-  { const float DEC[8] = {0.9f, 2.5f, 6, 10, 10, 8, 8, 1.5f}; std::string res; bool ok = true;
-    for (int ty = 0; ty < 8; ty++) {
+  { const float DEC[13] = {0.9f, 2.5f, 6, 10, 10, 8, 8, 1.5f, 12, 5, 10, 14, 14}; std::string res; bool ok = true;
+    for (int ty = 0; ty < 13; ty++) {
       for (int infm = 0; infm < 2; infm++) {
         Module* m = eng.create("reverb", 900 + ty); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
         set("type", (float)ty); set("decay", infm ? 100.f : DEC[ty]); set("mix", 1); m->prepare(); Rng r(5); std::vector<double> w;   /* 50ms windows */ double acc = 0; int cnt = 0;
@@ -309,7 +309,7 @@ int main(int argc, char** argv) {
         const double peakDb = 10 * std::log10(w[pk] / 0.0833);
         if (!infm) { double t5 = -1, t35 = -1; for (size_t i = pk; i < w.size(); i++) { const double db = 10 * std::log10(w[i] / w[pk] + 1e-30); if (t5 < 0 && db < -5) t5 = i * 0.05; if (t35 < 0 && db < -35) { t35 = i * 0.05; break; } }
           const double rt = (t35 - t5) * 2; char b[64]; std::snprintf(b, 64, " %.1f/%.1fs %.0fdB", rt, DEC[ty], peakDb); res += b;
-          if (ty != 7 && ty != 4 && (rt < DEC[ty] * 0.75 || rt > DEC[ty] * 1.3)) ok = false;   /* FROZEN holds then stops; SHIMMER's pitched part rings on */
+          if (ty != 7 && ty != 4 && ty != 12 && (rt < DEC[ty] * 0.75 || rt > DEC[ty] * 1.3)) ok = false;   /* FROZEN holds then stops; SHIMMER's pitched part rings on */
           if (std::fabs(peakDb + 10.3) > 2.5) ok = false; }
         else { double a = 0, b2 = 0; for (int i = 100; i < 200; i++) a += w[i]; for (int i = 340; i < 440; i++) b2 += w[i]; const double drop = 10 * std::log10(a / b2);
           if (drop > 8 || drop < -3) ok = false; char b[32]; std::snprintf(b, 32, " inf-%.1fdB", drop); res += b; } } }
@@ -323,6 +323,28 @@ int main(int argc, char** argv) {
     const bool rows = nS == nH + 2 && nN == nH + 1 && helpPort(findDef("reverb"), false, 0).find("STEREO") != std::string::npos;
     if (!ok || !mig || !rows) fails++;
     std::printf("reverb:%s; old sessions %s; rows HALL %zu SHIMMER %zu NEBULA %zu%s\n", res.c_str(), mig ? "ok" : "WRONG", nH, nS, nN, ok && mig && rows ? "" : "  WRONG"); }
+  // TRACKER RANDOM NOTE: never further than its steps from the note entered, never off the scale, never off the keyboard. Every scale, every key,
+  // every range, every note 0..127 (the very edges too), many times over: the once-in-a-blue-moon wild note must not happen
+  { long bad = 0, plays = 0; unsigned rr = 12345; int spread[15] = {};
+    for (int sc = 0; sc < (int)scales().size(); sc++) for (int root = 0; root < 12; root++) for (int n = 1; n <= 7; n++) for (int nt = 0; nt <= 127; nt++) for (int k = 0; k < 12; k++) {
+      rr = rr * 1664525u + 1013904223u; const float m = wanderNote((float)nt, n, root, sc, rr >> 3); plays++;
+      if (m < 0 || m > 127 || !std::isfinite(m)) { bad++; continue; }
+      const int d0 = nearDeg((float)nt, root, sc), d1 = nearDeg(m, root, sc);
+      if (m != (float)nt && (std::abs(d1 - d0) > n || std::fabs(midiOf(d1, root, sc) - m) > 0.01f)) bad++;   // too far, or not a note of the scale
+      if (std::fabs(m - nt) > 12.f * n + 12) bad++;   // and plainly never a wild leap
+      if (n == 7 && sc == 0 && nt > 30 && nt < 100 && m != (float)nt) spread[std::max(0, std::min(14, d1 - d0 + 7))]++; }
+    int lo = 1 << 30, hi = 0; for (int i = 0; i < 15; i++) if (i != 7) { lo = std::min(lo, spread[i]); hi = std::max(hi, spread[i]); }
+    // and in the module itself: column 1 at 3 steps, column 2 off, run for a long time
+    UiMod* tr = ui.add("tracker", 10, 10); Module* m = tr->m; const ModuleDef* d = m->def;
+    m->seq[Module::si(0, 0)].store(60); m->seq[Module::si(0, 1)].store(64); ui.set(tr, "len", 1); ui.set(tr, "w1", 3);
+    ui.set(tr, "sync", 0); ui.set(tr, "bpm", 240); ui.set(tr, "div", 2);   // 16 steps a second
+    int got = 0, wild = 0; std::set<int> heard; float seen = m->disp[12].load(); std::vector<float> L(64), R(64);
+    for (int b = 0; b < 48000 * 200 / 64 && got < 3000; b++) { eng.render(L.data(), R.data(), 64); const float c = m->disp[12].load();
+      if (c != seen) { seen = c; got++; const float a = m->disp[8].load(), b2 = m->disp[9].load(); heard.insert((int)a); if (std::abs(nearDeg(a, m->root(), m->scale()) - nearDeg(60, m->root(), m->scale())) > 3) wild++; if (b2 != 64) wild++; } }
+    ui.remove(tr);
+    const bool ok = bad == 0 && lo > 0 && hi < lo * 1.3 && wild == 0 && got >= 3000 && heard.size() == 7 && d->paramIndex("w4") >= 0;
+    if (!ok) fails++;
+    std::printf("tracker random note: %ld plays, %ld out of range; spread even %s; in the module %d notes, %zu different, %d wild%s\n", plays, bad, hi < lo * 1.3 ? "yes" : "NO", got, heard.size(), wild, ok ? "" : "  WRONG"); }
   // RANDOMISE: themes from one hue, every cable clear against the background, the modules and each other
   { std::mt19937 r(3); int bad = 0; for (int p = 0; p < 2; p++) for (int k = 0; k < 500; k++) { const Theme t = harmonyTheme(p, [&](int m) { return (int)(r() % (unsigned)m); });
       for (const std::string* c : {&t.audio, &t.trig, &t.modc}) if (contrast(*c, t.bg) < (p ? 2.4f : 3.5f) || contrast(*c, t.mod) < (p ? 1.8f : 2.6f)) bad++;

@@ -182,6 +182,10 @@ static const std::map<std::string, std::string> PARAMS = {
   {"echo.div", "Note|With a clock in CLOCK, the time between repeats as a note length: 1/4 is a beat. DOT is half as long again, T a triplet."},
   {"echo.spread", "Width|How far the repeats bounce left and right."},
   // REVERB, HALL
+  {"tracker.w1", "Random Note 1|How far column 1's notes can wander, in steps of the scale (set on its number above the steps)."},
+  {"tracker.w2", "Random Note 2|How far column 2's notes can wander, in steps of the scale (set on its number above the steps)."},
+  {"tracker.w3", "Random Note 3|How far column 3's notes can wander, in steps of the scale (set on its number above the steps)."},
+  {"tracker.w4", "Random Note 4|How far column 4's notes can wander, in steps of the scale (set on its number above the steps)."},
   {"reverb.type", "Type|The kind of space. Changing it also sets DECAY to that type's usual length."},
   {"reverb.decay", "Decay|How long the tail hangs: all the way right is INFINITE, and it never fades. On FROZEN: how long the wall of sound holds after the sound stops."},
   {"reverb.size", "Size|How big the space is: on NEBULA, how far apart its echoes are."},
@@ -191,6 +195,16 @@ static const std::map<std::string, std::string> PARAMS = {
   {"reverb.shift", "Shift|How far the tail is pitched each time it goes round, in semitones: +12 is an octave up, +7 a fifth, +12 & -12 both ways at once."},
   {"reverb.amount", "Shimmer|How much of the pitched tail goes back in: more and it climbs higher and lasts longer."},
   {"reverb.spread", "Spread|Low: its lines are all one length, so you hear clear repeating echoes and odd ringing. High: they scatter and melt into a smooth wash."},
+  {"reverb.lowdec", "Low Decay|How long the lows ring, compared with DECAY: X2 rings twice as long."},
+  {"reverb.hidec", "High Decay|How long the highs ring, compared with DECAY: lower and the tail darkens as it fades."},
+  {"reverb.fall", "Fall|How much of the tail is pitched an octave down and fed back, while SHIMMER climbs."},
+  {"reverb.blur", "Blur|How much the frequencies smear into each other: low keeps the notes, high melts them into a wash."},
+  {"reverb.tilt", "Tilt|Which end rings longer: BRIGHT and the highs outlast the lows, DARK and they die away first."},
+  {"reverb.hold", "Hold Below|What FREEZE holds: everything below this frequency stays frozen while the rest keeps moving. ALL holds the lot."},
+  {"reverb.drive", "Saturate|How hard the tape is driven: more and each echo comes back warmer, rounder and a little crushed."},
+  {"reverb.wow", "Wow|How much the tape's speed wobbles: slow wow and fast flutter, bending the pitch of the tail."},
+  {"reverb.density", "Density|How many grains: a few scattered sparks up to a thick cloud."},
+  {"reverb.scatter", "Scatter|How far the grains stray in pitch: none stays in tune, more brings octaves and fifths."},
   {"reverb.width", "Width|How wide the tail is: 0 is in the middle, all the way right is as wide as it goes."},
   // DUCKER
   {"ducker.depth", "Depth|How far it dips on each trigger."},
@@ -443,6 +457,12 @@ static const std::map<std::string, std::string> PORTS = {
 };
 
 static const std::map<std::string, std::string> OTHER = {
+  {"TRACKER COLUMN", "Random Note|Drag a column's number up or down: each time that column plays a note, it can wander up to that many steps of the scale either way from the note entered, so the pattern changes every time round and stays in the scale. Tap twice to turn it off."},
+  {"VERB SPECTRAL", "Spectral (heavy)|The tail held as frequencies: BLUR smears them together, TILT lets the highs ring longer (or shorter), and with HOLD BELOW, FREEZE holds the lows while the highs move on."},
+  {"VERB TAPE SPACE", "Tape Space (heavy)|An old tape echo smearing into a reverb: three heads on a wobbling tape (WOW), driven a little harder each time round (SATURATE). SIZE sets the tape's length."},
+  {"VERB SWARM", "Swarm (heavy)|A cloud of grains taken from the tail, scattered in time, pitch and space: half reverb, half granular. DENSITY: how many; SCATTER: how far in pitch."},
+  {"VERB BASILICA", "Basilica (heavy)|A vast, dense cathedral with separate decays: LOW DECAY and HIGH DECAY set how long the lows and highs ring compared with DECAY."},
+  {"VERB PRISM", "Prism (heavy)|A richer, smoother shimmer that climbs (SHIFT, by SHIMMER) and falls an octave (FALL) at the same time."},
   {"VERB ROOM", "Room|A small, close space: quick and natural, with the first reflections off the walls."},
   {"VERB PLATE", "Plate|Bright and dense, like the metal plate studios used: smooth on voices and plucks."},
   {"VERB HALL", "Hall|A big hall whose tail drifts slowly as it hangs."},

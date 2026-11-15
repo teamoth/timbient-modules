@@ -247,7 +247,18 @@ float midiOf(int degree, int root, int scale);
 struct KeyMatch { int root = 0, scale = 0, root2 = 0, scale2 = 0; float conf = 0, conf2 = 0; };
 KeyMatch matchKey(const float chroma[12]);
 inline int degOf(int oct, int step, int scale) { return (oct - 2) * (int)scales()[scale].steps.size() + step; }
-inline int nearDeg(float note, int root, int scale) { int best = 0; float bd = 1e9f; for (int i = -12; i < 90; i++) { const float d = std::fabs(midiOf(i, root, scale) - note); if (d < bd) { bd = d; best = i; } } return best; }
+// a note moved up to n steps of the scale either way (r: any random number). Always within n steps of the note's own place in
+// the scale, and always a playable note (0..127): if a move would go past either end it goes the other way instead
+inline int nearDeg(float note, int root, int scale);
+inline float wanderNote(float nt, int n, int root, int scale, unsigned r) {
+  const int d0 = nearDeg(nt, root, scale), k = (int)(r % (unsigned)(2 * n + 1)) - n; if (k == 0) return nt;   /* the note as entered */
+  float m = midiOf(d0 + k, root, scale);
+  if (m < 0 || m > 127) m = midiOf(d0 - k, root, scale);
+  if (m < 0 || m > 127) m = nt;
+  return m; }
+inline int nearDeg(float note, int root, int scale) {   // the scale step nearest a note (searched round its own octave, so any note 0..127 works)
+  const int n = (int)scales()[scale].steps.size(), o = (int)std::floor((note - 36.f - root) / 12.f); int best = o * n; float bd = 1e9f;
+  for (int i = (o - 1) * n; i <= (o + 2) * n; i++) { const float d = std::fabs(midiOf(i, root, scale) - note); if (d < bd) { bd = d; best = i; } } return best; }
 extern const char* NOTE_NAMES[12];
 extern const char* KEY_NAMES[12];   // keys as musicians name them: D\x02 is D flat (\x02 draws as a flat sign)
 inline std::string noteName(int n) { return std::string(NOTE_NAMES[((n % 12) + 12) % 12]) + std::to_string(n / 12 - 1); }

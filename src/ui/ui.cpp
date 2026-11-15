@@ -21,7 +21,7 @@ static void takeOwnTempo(UiMod* u, int k, Engine& eng) { const ModuleDef* d = u-
 // REVERB: a new TYPE brings its usual DECAY (a ROOM doesn't ring for 6 seconds); INFINITE stays INFINITE
 static void verbTypeSet(UiMod* u, int k, float old, float v) {
   const ModuleDef* d = u->m->def; if (d->type != "reverb" || d->params[k].key != "type" || std::lround(old) == std::lround(v)) return;
-  static const float DEC[8] = {0.9f, 2.5f, 6, 10, 10, 8, 8, 1.5f}; const int di = d->paramIndex("decay"), t = std::max(0, std::min(7, (int)std::lround(v)));
+  static const float DEC[13] = {0.9f, 2.5f, 6, 10, 10, 8, 8, 1.5f, 12, 5, 10, 14, 14}; const int di = d->paramIndex("decay"), t = std::max(0, std::min(12, (int)std::lround(v)));
   if (di >= 0 && u->m->p[di].load() < 99.f) u->m->p[di].store(DEC[t]); }
 static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ? 44 : 45; }
 
@@ -123,7 +123,7 @@ static const Layout& layoutOf(const ModuleDef* d) {
   else {
     static const std::map<std::string, std::vector<std::string>> MODES = {
       {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
-      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"reverb", {"type", "shift", "amount", "spread", "freeze"}}};
+      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
     const bool keyed = d->keyIdx >= 0;
     put(key("poly"), 0); for (int j = 0; j < n; j++) if (recButton(d, d->params[j])) put(j, 0);
     if (auto m = MODES.find(d->type); m != MODES.end()) for (auto& k : m->second) put(key(k.c_str()), 0);
@@ -148,7 +148,9 @@ static bool hiddenRow(const UiMod& u, int j, const std::vector<UiCable>* cables 
   if (q.only == "held" && P("src") < 0.5f) return true;                 // GRAIN LOOPER LIVE: nothing held to edit
   if (q.only == "overdub" && P("recmode") < 0.5f) return true;          // SAMPLER: KEEP is for OVERDUB
   if (q.only == "adsr" && u.m->p[6].load() < 0.5f) return true;
-  if (d->type == "reverb" && ((q.only == "shimmer" && std::lround(P("type")) != 4) || (q.only == "nebula" && std::lround(P("type")) != 6))) return true;   // REVERB: SHIFT and SHIMMER for SHIMMER, SPREAD for NEBULA         // MI VOICES: the envelope is only used in ADSR
+  if (q.only == "never") return true;   // kept with the session, but set somewhere else (the Tracker's RANDOM NOTE: on its column numbers)
+  if (q.only.rfind("v:", 0) == 0) {   // shown for some TYPEs only ("v:4,12": types 4 and 12)
+    const std::string want = "," + q.only.substr(2) + ",", t = "," + std::to_string(std::lround(P("type"))) + ","; return want.find(t) == std::string::npos; }         // MI VOICES: the envelope is only used in ADSR
   if (d->type == "mi" && (q.key == "decay" || q.key == "colour") && miEngines()[std::max(0, std::min(MI_ENGINES - 1, (int)u.m->p[0].load()))].selfEnv) return true;   // models that shape themselves: Plaits skips its gate
   if (q.only == "own") { const int si = d->paramIndex("sync"); if (si >= 0 && d->params[si].tog && u.m->p[si].load() > 0.5f) return true; }   // BPM: not while it follows the session's tempo
   if (d->type == "sample") { const int kind = (int)P("kind"); const bool once = P("mode") > 0.5f;   // what doesn't apply to this kind of sound or way of playing
@@ -591,7 +593,9 @@ void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y0, int w, float dt) {
   if (head) {   // which columns are on show, and < > to move along
     if (u.colScroll > 0) c.text("<", x + 1, y0, 9);
     if (u.colScroll + TR_VIS < nc) c.text(">", x + w - 4, y0, 9);
-    for (int k = 0; k < vis; k++) { const int col = u.colScroll + k; const std::string t = std::to_string(col + 1); c.text(t, x + 16 + k * cw, y0, col == curC ? 4 : 18); } }
+    for (int k = 0; k < vis; k++) { const int col = u.colScroll + k; const std::string t = std::to_string(col + 1); c.text(t, x + 16 + k * cw, y0, col == curC ? 4 : 18);
+      const int wi = m->def->paramIndex("w" + std::to_string(col + 1)); const int wn = wi >= 0 ? (int)std::lround(m->p[wi].load()) : 0;
+      if (wn > 0) { const std::string wt = std::string("\x03") + std::to_string(wn); c.text(wt, x + 16 + k * cw + Canvas::tw(t) + 2, y0, 9); } } }   // RANDOM NOTE on: how far it can wander
   auto num = [](int r) { char b[16]; std::snprintf(b, 16, "%03d", r + 1); return std::string(b); };
   for (int i = 0; i < TR_ROWS; i++) { const int r = sc + i, ry = y + 1 + i * 6; if (r >= shown) break;
     if (r >= len) { if (r == len) { for (int k = 0; k < w; k += 2) c.px(x + k, ry - 1, 18); c.text("OFF", x + w - 13, ry, 18); }
@@ -895,6 +899,7 @@ std::string Ui::helpAt(float sx, float sy) {
     return helpPort(d, jh.out, jh.port); }
   int lx, ly; if (UiMod* u = hit(wx, wy, lx, ly)) { const ModuleDef* d = u->m->def; const Geom g = geom(*u);
     if (ly < HEAD) return !d->fixed && lx >= g.w - 8 ? helpOther("CLOSE") : helpModule(d->type);
+    if (d->type == "tracker" && ly >= g.vy && ly < g.vy + trHead(u->m) && lx >= 3 + 16 && lx < g.w - 3 - 8) return helpOther("TRACKER COLUMN");   // its column numbers: RANDOM NOTE
     if (!d->fixed && ly >= g.h - FOOT) { const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod;
       if (lx >= g.w - 13) return helpOther("FOLD"); if (onOff && lx >= 3 && lx < 18) return helpOther("ON"); if (!onOff && lx >= 3 && lx < 12) return helpOther("M");
       if (lx >= 14 && lx < 23) return d->cat == Cat::Voice ? helpOther("S") : bypassable(d) ? helpOther("B") : std::string(); return {}; }
@@ -916,8 +921,8 @@ std::string Ui::helpAt(float sx, float sy) {
       if (w3 >= 0) { const int mdl = std::max(0, std::min(MI_ENGINES - 1, (int)u->m->p[0].load())); return std::string(miEngines()[mdl].k[w3]) + "|" + miHelp(mdl, w3) + " (PLAITS' " + d->params[pj].label + " CONTROL, ON " + miEngines()[mdl].name + ")"; } }
     if (pj >= 0 && d->type == "reverb" && d->params[pj].key == "type") {   // REVERB: what this type does, and the others
       const ParamDef& q = d->params[pj]; const int t = std::max(0, std::min((int)q.opts.size() - 1, (int)std::lround(u->m->p[pj].load())));
-      std::string s = helpOther("VERB " + q.opts[t]); const size_t bar = s.find('|'); std::string all; for (size_t i = 0; i < q.opts.size(); i++) all += (i ? ", " : "") + q.opts[i];
-      if (bar != std::string::npos) return "Type: " + s.substr(0, bar) + "|" + s.substr(bar + 1) + " (TYPES: " + all + ". CHANGING IT ALSO SETS DECAY TO THAT TYPE'S USUAL LENGTH.)"; }
+      std::string s = helpOther("VERB " + q.opts[t]); const size_t bar = s.find('|'); std::string lt, hv; for (size_t i = 0; i < q.opts.size(); i++) (i < 8 ? lt : hv) += ((i < 8 ? lt : hv).empty() ? "" : ", ") + q.opts[i];
+      if (bar != std::string::npos) return "Type: " + s.substr(0, bar) + (t < 8 ? " (light)" : "") + "|" + s.substr(bar + 1) + " (LIGHT, ABOUT 1% EACH: " + lt + ". HEAVY, MORE CPU: " + hv + ". CHANGING TYPE ALSO SETS DECAY TO ITS USUAL LENGTH.)"; }
     if (pj >= 0) return jacksIn && lx < 9 && modulatable(d->params[pj]) ? modNote(u, pj) : withRange(d, pj);
     return helpModule(d->type); }
   const int ci = cableAt(wx, wy, 3); if (ci >= 0) {   // a cable: what kind (its colour), what it joins, and what you can do with it
@@ -1137,7 +1142,14 @@ void Ui::pointerDown(float sx, float sy) {
       openDropdown(z); return; }
     if (d->type == "tracker") {   // tap a step (and column) to put the cursor there; drag up and down to scroll. < > move along the columns
       u->hold = 6; trFocus = u->m->id; const int head = trHead(u->m), nc = trCols(u->m), vis = std::min(TR_VIS, nc), cw = (g.w - 6 - 16) / vis;
-      if (head && vy < head) { if (vx < 8) u->colScroll = std::max(0, u->colScroll - 1); else if (vx >= g.w - 6 - 8) u->colScroll = std::min(std::max(0, nc - TR_VIS), u->colScroll + 1); return; }
+      if (head && vy < head) { if (vx < 8) { u->colScroll = std::max(0, u->colScroll - 1); return; } if (vx >= g.w - 6 - 8) { u->colScroll = std::min(std::max(0, nc - TR_VIS), u->colScroll + 1); return; }
+        if (vx >= 16) {   // a column's number: drag up or down for its RANDOM NOTE; tap twice to set it back to 0
+          const int col = std::min(nc - 1, u->colScroll + std::min(vis - 1, (vx - 16) / std::max(1, cw))), wi = d->paramIndex("w" + std::to_string(col + 1));
+          if (wi >= 0) {
+            if (wanderTapM == u && wanderTapK == wi && blink - wanderTapT < 0.4f) { u->m->p[wi].store(0); wanderTapM = nullptr; status("COLUMN " + std::to_string(col + 1) + " RANDOM NOTE OFF", 1.5f); return; }
+            wanderTapM = u; wanderTapK = wi; wanderTapT = blink;
+            drag.kind = D_WANDER; drag.m = u; drag.k = wi; drag.n0 = u->m->p[wi].load(); return; } }
+        return; }
       const int r = (int)u->scroll + std::max(0, (vy - head - 1) / 6), col = vx >= 16 ? std::min(nc - 1, u->colScroll + std::min(vis - 1, (vx - 16) / std::max(1, cw))) : u->m->cursorCol.load();
       if (r < trLen(u->m)) { u->m->cursor.store(r); u->m->cursorCol.store(col); char b[40]; std::snprintf(b, 40, "CURSOR AT STEP %03d  COLUMN %d", r + 1, col + 1); status(b, 1.2f); }
       drag.kind = D_SCROLL; drag.m = u; drag.n0 = u->scroll; return; }
@@ -1164,6 +1176,10 @@ void Ui::pointerDown(float sx, float sy) {
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }
       Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + rowPx(*u, pj) + 4;
+      if (d->type == "reverb" && q.key == "type") {   // the light types, then the heavy ones under a heading
+        l.items.insert(l.items.begin() + 8, "HEAVIER (MORE CPU):"); l.title = 8; if (l.cur >= 8) l.cur++;
+        l.pick = [this, u, pj](int i) { if (i > 8) i--; verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); status(u->m->def->name + "  TYPE  " + u->m->def->params[pj].opts[i] + (i >= 8 ? "  (HEAVY: USES MORE CPU)" : "  (LIGHT)")); changed(); };
+        openDropdown(l); return; }
       l.pick = [this, u, pj](int i) { verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i] + (qq.key == "chan" ? (u->m->def->type == "sample" ? "  (FOR THE NEXT SOUND YOU LOAD OR RECORD)" : "  (FOR THE NEXT SOUND YOU LOAD OR CATCH)") : ""), qq.key == "chan" ? 4.f : 2.f); changed(); };
       openDropdown(l); return; }
     if (lx >= minusX(*u, pj) - 2 && lx < minusX(*u, pj) + 5) { drag.kind = D_STEP; drag.m = u; drag.k = pj; drag.dir = -1; drag.holdT = 0; drag.holdSum = 0; nudge(u, pj, -1); return; }
@@ -1213,6 +1229,9 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng.tempo.bpm.load())) { eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
+  else if (drag.kind == D_WANDER) {   // up for more, about 6 pixels a step
+    const float v = std::max(0.f, std::min(7.f, std::round(drag.n0 + (drag.sy - sy) / 6))); if (v != drag.m->m->p[drag.k].load()) { drag.m->m->p[drag.k].store(v);
+      const int col = drag.k - drag.m->m->def->paramIndex("w1") + 1; status("COLUMN " + std::to_string(col) + (v > 0 ? " RANDOM NOTE: UP TO " + std::to_string((int)v) + " STEP" + (v > 1 ? "S" : "") + " OF THE SCALE EITHER WAY" : " RANDOM NOTE OFF"), 1.5f); } }
   else if (drag.kind == D_SCROLL) { drag.m->hold = 6; drag.m->scroll = drag.n0 - (sy - drag.sy) / 6; trClamp(*drag.m); }
   else if (drag.kind == D_NLOOP) {   // NOTE LOOPER: the start or end line, onto the QUANTISE grid (1/16 when off; Shift: anywhere)
     UiMod& u = *drag.m; Module* m = u.m; const int w = geom(u).w - 6, vx = (int)std::lround(wx) - u.x - 3; const float span = drag.n0;

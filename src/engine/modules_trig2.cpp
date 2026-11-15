@@ -82,7 +82,7 @@ static Reg rTools(new ModuleDef{"tools", "TRIG TOOLS", Cat::Trig, {{"NOTES IN", 
 // ---------------- TRACKER: notes typed in step by step ----------------
 static const int TRK_DIV[3] = {1, 2, 4};
 struct Tracker : Module {
-  enum { SYNC, BPM, DIV, LEN, ESTEP, REC, VEL, CHANCE, DEL, CLEAR };
+  enum { SYNC, BPM, DIV, LEN, ESTEP, REC, VEL, CHANCE, DEL, CLEAR, W1 };   // W1..W4: each column's RANDOM NOTE (set from its number above the steps)
   static constexpr int COLS = 4;   // always four columns
   int cols() const { return COLS; }
   int pos = -1; double next = -1; ClockIn2 ck;
@@ -95,8 +95,14 @@ struct Tracker : Module {
     Event p; p.note = note(4, 0); p.vel = e[VEL]; p.period = per; p.ppb = ppb; emit(1, p);
     for (int c = 0; c < cols(); c++) {   // every column's note on this step, together
       const float nt = seq[si(pos, c)].load(std::memory_order_relaxed);
-      if (nt >= 0 && rng.uni() < e[CHANCE]) { Event ev; ev.note = nt; ev.vel = e[VEL]; /* every step at VELOCITY: patch into its socket to move it */ ev.period = per; ev.ppb = ppb;
+      if (nt >= 0 && rng.uni() < e[CHANCE]) { Event ev; ev.note = wander(nt, c); ev.vel = e[VEL]; /* every step at VELOCITY: patch into its socket to move it */ ev.period = per; ev.ppb = ppb; disp[8 + c].store(ev.note); disp[12].store(disp[12].load() + 1);   /* what each column last played */
         emit(0, ev); emit(2 + c, ev); } }   // TRIG has every column; outputs 1 to 4 one each (CHANCE rolled once, for both)
+  }
+  // RANDOM NOTE: up to N steps of the scale either side of the note entered, each equally likely. Worked out from the
+  // note itself every time (so it can never drift), and at the very top or bottom of the range it goes the other way
+  float wander(float nt, int c) {
+    const int n = std::max(0, std::min(7, (int)std::lround(e[W1 + c]))); if (n == 0) return nt;
+    return wanderNote(nt, n, root(), scale(), rng.next());
   }
   void blockStart(int) override { clockedIn.store(patched(0)); int c = cursor.load(); if (c >= len()) cursor.store(len() - 1); if (cursorCol.load() >= cols()) cursorCol.store(cols() - 1); }
   void trig(int port, const Event& ev) override {
@@ -125,7 +131,8 @@ static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PT
   {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}, {"CHN 1", PType::Trig}, {"CHN 2", PType::Trig}, {"CHN 3", PType::Trig}, {"CHN 4", PType::Trig}},
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float v) { return std::to_string((int)v); }), "own"),
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), noMod(ST("estep", "STEP JUMP", 0, 8, 1)), OP("rec", "STEP RECORD", {"OFF", "ON"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
-   ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL")},
+   ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL"),
+   only(ST("w1", "RANDOM 1", 0, 7, 0), "never"), only(ST("w2", "RANDOM 2", 0, 7, 0), "never"), only(ST("w3", "RANDOM 3", 0, 7, 0), "never"), only(ST("w4", "RANDOM 4", 0, 7, 0), "never")},
   85, 92, false, [] { return new Tracker(); }});
 }  // namespace tb
 

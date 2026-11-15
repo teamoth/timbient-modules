@@ -6,11 +6,13 @@
 //    and FROZEN (a flat tail that holds, then stops).
 // Every type: DECAY to INFINITE, FREEZE, MOTION (the lines drift), TONE and LOW CUT inside the loop, WIDTH, MIX.
 #include "params.h"
+#include "fft.h"
 
 namespace tb {
 namespace {
 
-enum VerbType { ROOM, PLATE, HALL, CATHEDRAL, SHIMMER, BLOOM, NEBULA, FROZEN, NTYPES };
+enum VerbType { ROOM, PLATE, HALL, CATHEDRAL, SHIMMER, BLOOM, NEBULA, FROZEN,   // the light ones, about 1% each
+  SPECTRAL, TAPE, SWARM, GRAND, PRISM, NTYPES };                     // the heavy ones: more expressive, and they cost more
 
 inline float softLimit(float x) { x = std::max(-3.f, std::min(3.f, x)); return x * (27 + x * x) / (27 + 9 * x * x); }   // tanh, near enough, and cheap
 // a smoother read between samples than a straight line: a straight line dulls the highs a little every trip round,
@@ -112,16 +114,156 @@ struct Shifter {
   }
 };
 
+
+// ---- DENSE: sixteen lines, each with a little diffuser of its own, and three decay times (lows, mids, highs) ----
+struct Dense {
+  static constexpr int N = 16;
+  DelayLine d[N]; AP ap[N]; float len[N] = {}, gl[N] = {}, gm[N] = {}, gh[N] = {}, lo[N] = {}, mi[N] = {};
+  float m0[N] = {}, m1[N] = {}; double ph[N] = {}; float rate[N] = {}, wander[N] = {};
+  void init(float maxSec, float sr) { for (int i = 0; i < N; i++) { d[i].init(maxSec, sr); ap[i].d.init(0.02f, sr); rate[i] = 0.05f + 0.031f * i; ph[i] = 0.071 * i; } }
+  void clear() { for (int i = 0; i < N; i++) { d[i].clear(); ap[i].d.clear(); lo[i] = mi[i] = 0; } }
+  void setLens(float k, float sr, bool still) {
+    static const float base[N] = {1.0f, 1.07f, 1.13f, 1.21f, 1.29f, 1.37f, 1.43f, 1.53f, 1.61f, 1.71f, 1.79f, 1.87f, 1.97f, 2.09f, 2.17f, 2.29f};
+    for (int i = 0; i < N; i++) { const float v = k * base[(i * 7) & 15] * sr; len[i] = still ? std::round(v) : v; ap[i].n = std::round((0.0023f + 0.00041f * i) * sr * std::min(1.5f, k / 0.06f)); ap[i].g = 0.5f; }
+  }
+  // t60 for the mids; lows and highs as multiples of it
+  void setDecay(float t60, float lowMul, float hiMul, float sr, bool inf) {
+    for (int i = 0; i < N; i++) { auto gg = [&](float t) { return inf ? 1.f : std::min(1.f, std::pow(10.f, -3.f * (len[i] + ap[i].n) / (sr * std::max(0.05f, t)))); };
+      gm[i] = gg(t60); gl[i] = inf ? 1.f : gg(t60 * lowMul); gh[i] = inf ? 1.f : gg(t60 * hiMul); }
+  }
+  void drift(float depth, int n, float sr, Rng& rng) {
+    for (int i = 0; i < N; i++) { m0[i] = m1[i]; ph[i] += (double)rate[i] * n / sr; if (ph[i] >= 1) ph[i] -= 1;
+      wander[i] += ((rng.uni() * 2 - 1) - wander[i]) * std::min(1.f, 0.3f * n / sr);
+      m1[i] = depth * (0.7f * std::sin((float)(ph[i] * TAU)) + 0.5f * wander[i]); }
+  }
+  inline void tick(float inL, float inR, float& oL, float& oR, float f, float aLo, float aHi, bool limit) {
+    float x[N]; oL = oR = 0;
+    for (int i = 0; i < N; i++) {
+      const float md = m0[i] + (m1[i] - m0[i]) * f;
+      float y = md == 0.f && len[i] == std::floor(len[i]) ? d[i].read(len[i] - 1) : readCubic(d[i], std::max(2.f, len[i] + md) - 1);
+      if (i & 1) oR += (i & 2) ? -y : y; else oL += (i & 2) ? -y : y;
+      lo[i] += aLo * (y - lo[i]); mi[i] += aHi * (y - mi[i]);   // the lows, and everything below the highs
+      x[i] = lo[i] * gl[i] + (mi[i] - lo[i]) * gm[i] + (y - mi[i]) * gh[i];
+    }
+    oL *= 0.3f; oR *= 0.3f;
+    for (int h = 1; h < N; h <<= 1) for (int i = 0; i < N; i += h * 2) for (int j = i; j < i + h; j++) { const float a = x[j], b = x[j + h]; x[j] = a + b; x[j + h] = a - b; }
+    for (int i = 0; i < N; i++) { float v = ap[i].run(x[i] * 0.25f) + ((i & 1) ? inR : inL); if (limit) v = softLimit(v); d[i].write(sane(v)); }
+  }
+};
+
+// ---- a smoother pitch shifter: four read heads instead of two, each starting from a slightly different place ----
+struct Shifter4 {
+  DelayLine d; float ph = 0, W = 5000, off[4] = {}; Rng r{77};
+  void init(float sr) { W = 0.11f * sr; d.init(0.2f, sr); }
+  void clear() { d.clear(); }
+  inline float run(float x, float ratio) {
+    d.write(x); const float prev = ph; ph += (1 - ratio) / W; ph -= std::floor(ph);
+    float o = 0;
+    for (int k = 0; k < 4; k++) {
+      float q = ph + 0.25f * k; q -= std::floor(q); float qp = prev + 0.25f * k; qp -= std::floor(qp);
+      if (std::fabs(q - qp) > 0.5f) off[k] = r.uni() * 0.25f * W;   // this head wrapped (where it's silent): a new place to start from
+      const float s = std::sin(PI * q); o += readCubic(d, q * W + 2 + off[k]) * s * s; }
+    return o * 0.5f;
+  }
+};
+
+// ---- SPECTRAL: the tail held as frequencies. Each frequency keeps its own level and fades at its own rate (TILT),
+// BLUR smears them into each other, and FREEZE can hold everything below a frequency while the rest moves on ----
+struct Spectral {
+  int N = 8192, H = 2048; FFT* fft = nullptr; std::vector<float> inBuf, win, P, re, im, re2, im2, phL, phR, olaL, olaR, wgt; int fill = 0, wpos = 0, outPos = 0; Rng r{31};
+  void init(float sr) { N = sr > 60000 ? 16384 : 8192; H = N / 8;   /* eight frames overlapping: smoother */ delete fft; fft = new FFT(N);
+    inBuf.assign(N, 0); win.resize(N); for (int i = 0; i < N; i++) win[i] = 0.5f - 0.5f * std::cos(TAU * i / N);
+    P.assign(N / 2 + 1, 0); re.resize(N); im.resize(N); re2.resize(N); im2.resize(N); phL.assign(N / 2 + 1, 0); phR.assign(N / 2 + 1, 0); olaL.assign(2 * N, 0); olaR.assign(2 * N, 0); wgt.assign(N / 2 + 1, 0);
+    for (int k = 0; k <= N / 2; k++) { phL[k] = r.uni() * TAU; phR[k] = r.uni() * TAU; } }
+  ~Spectral() { delete fft; }
+  void clear() { std::fill(inBuf.begin(), inBuf.end(), 0.f); std::fill(P.begin(), P.end(), 0.f); std::fill(olaL.begin(), olaL.end(), 0.f); std::fill(olaR.begin(), olaR.end(), 0.f); fill = 0; outPos = 0; }
+  // one frame: every H samples
+  void frame(float sr, float t60, bool inf, bool fz, float holdHz, float blur, float tilt, float mot, float aLP, float aHP) {
+    for (int i = 0; i < N; i++) { re[i] = inBuf[(wpos + i) % N] * win[i]; im[i] = 0; }
+    fft->run(re.data(), im.data(), false);
+    const float hopS = (float)H / sr, binHz = sr / N, holdBin = holdHz >= 19500.f ? 1e9f : holdHz / binHz;
+    const float k0 = 1 - std::pow(10.f, -6.f * hopS / 2.f);   // how much a new frame adds (as if a 2 second reverb): keeps it at a normal level
+    for (int k = 1; k < N / 2; k++) {
+      const float f = k * binHz, x2 = (re[k] * re[k] + im[k] * im[k]) / (N * 0.375f);
+      const bool held = fz && k < holdBin;
+      float g;
+      if (held || inf) g = 1.f;
+      else { const float tm = std::max(0.1f, std::min(10.f, std::pow(std::max(20.f, f) / 1000.f, tilt * 0.7f)));   // TILT: highs ring longer (up) or shorter (down)
+        g = std::pow(10.f, -6.f * hopS / std::max(0.05f, t60 * tm)); }
+      P[k] = held ? P[k] : P[k] * g + (fz ? 0.f : x2 * k0);
+      if (P[k] > 0.25f) P[k] = 0.25f;   // nothing runs away, even on INFINITE with sound pouring in
+    }
+    // BLUR: each frequency borrows from its neighbours (wider the more BLUR)
+    const int rad = (int)(blur * 10);
+    if (rad > 0) { re2[0] = 0; double acc = 0; std::vector<float>& c = re2; c.assign(N / 2 + 2, 0); for (int k = 0; k <= N / 2; k++) { acc += P[k]; c[k + 1] = (float)acc; }
+      for (int k = 1; k < N / 2; k++) { const int a = std::max(1, k - rad), b = std::min(N / 2 - 1, k + rad); im2[k] = (c[b + 1] - c[a]) / (b - a + 1); }
+      for (int k = 1; k < N / 2; k++) wgt[k] = im2[k]; } else for (int k = 1; k < N / 2; k++) wgt[k] = P[k];
+    const float jit = (0.15f + 0.6f * blur + 0.5f * mot) * PI;
+    for (int side = 0; side < 2; side++) {
+      std::vector<float>& ph = side ? phR : phL;
+      for (int k = 0; k < N; k++) { re[k] = 0; im[k] = 0; }
+      for (int k = 1; k < N / 2; k++) {
+        const float f = k * binHz; float shape = 1;
+        if (aLP < 1.f) { const float fc = -std::log(1 - aLP) * sr / TAU; shape /= std::sqrt(1 + (f / fc) * (f / fc)); }
+        if (aHP > 0.f) { const float fc = -std::log(1 - aHP) * sr / TAU; shape *= (f / fc) / std::sqrt(1 + (f / fc) * (f / fc)); }
+        ph[k] += TAU * k * H / N + (r.uni() * 2 - 1) * jit; if (ph[k] > 1e4f) ph[k] = std::fmod(ph[k], TAU);
+        const float m = std::sqrt(wgt[k]) * shape; re[k] = m * std::cos(ph[k]); im[k] = m * std::sin(ph[k]); re[N - k] = re[k]; im[N - k] = -im[k]; }
+      fft->run(re.data(), im.data(), true);
+      std::vector<float>& ola = side ? olaR : olaL;
+      for (int i = 0; i < N; i++) ola[(outPos + i) % (2 * N)] += re[i] * win[i] * (1.f / N) * 0.8f;
+    }
+  }
+  // one sample in, two out; a frame whenever H new samples have come in
+  inline void tick(float x, float& L, float& R, float sr, float t60, bool inf, bool fz, float holdHz, float blur, float tilt, float mot, float aLP, float aHP) {
+    inBuf[wpos] = x; wpos = (wpos + 1) % N;
+    L = olaL[outPos % (2 * N)]; R = olaR[outPos % (2 * N)]; olaL[outPos % (2 * N)] = 0; olaR[outPos % (2 * N)] = 0; outPos = (outPos + 1) % (2 * N);
+    if (++fill >= H) { fill = 0; frame(sr, t60, inf, fz, holdHz, blur, tilt, mot, aLP, aHP); }
+  }
+};
+
+// ---- SWARM: grains taken from the tail, scattered in time, pitch and space ----
+struct Grain { bool on = false; double pos = 0; float rate = 1, t = 0, len = 1, pan = 0, amp = 1; };
+struct Swarm {
+  static constexpr int G = 64; DelayLine bufL, bufR; Grain g[G]; double nextAt = 0; Rng r{19};
+  void init(float sr) { bufL.init(4.f, sr); bufR.init(4.f, sr); }
+  void clear() { bufL.clear(); bufR.clear(); for (auto& x : g) x.on = false; nextAt = 0; }
+  void spawn(float sr, float size, float scatter) {
+    for (auto& x : g) if (!x.on) {
+      x.on = true; x.t = 0; x.len = (0.05f + 0.25f * r.uni()) * sr * (0.6f + size);
+      float st = 0; const float u = r.uni();   // SCATTER: mostly in tune; more of it brings fifths and octaves
+      if (u < scatter * 0.35f) st = 12; else if (u < scatter * 0.55f) st = -12; else if (u < scatter * 0.7f) st = 7; else if (u < scatter * 0.75f) st = 19;
+      st += (r.uni() * 2 - 1) * scatter * 0.4f;
+      x.rate = std::pow(2.f, st / 12.f);
+      const float back = (0.03f + r.uni() * (0.25f + 2.5f * size)) * sr;
+      x.pos = std::max(back, (x.rate - 1) * x.len + 4);   // a grain that plays fast starts far enough back not to catch up with now
+      x.pan = (r.uni() * 2 - 1); x.amp = 0.6f + 0.4f * r.uni(); return; }
+  }
+  inline void tick(float inL, float inR, float& oL, float& oR, float sr, float rate, float size, float scatter) {
+    bufL.write(inL); bufR.write(inR);
+    nextAt -= 1; while (nextAt <= 0) { spawn(sr, size, scatter); nextAt += sr / rate * (0.5f + r.uni()); }
+    oL = oR = 0;
+    for (auto& x : g) if (x.on) {
+      const float ph = x.t / x.len; if (ph >= 1) { x.on = false; continue; }
+      const float s = std::sin(PI * ph), env = s * s * x.amp, dly = (float)x.pos;
+      const float a = readCubic(bufL, std::max(2.f, dly)), b = readCubic(bufR, std::max(2.f, dly));
+      const float m = 0.5f * (a + b) * env, an = (x.pan + 1) * (PI / 4);   // each grain somewhere between left and right
+      oL += m * std::cos(an); oR += m * std::sin(an);
+      x.pos += 1 - x.rate; x.t += 1; }   // the delay grows by one each sample, and shrinks by the rate it reads at
+  }
+};
+
 }  // namespace
 
 struct Reverb : Module {
-  enum { TYPE, DECAY, SIZE, PRE, TONE, LOWCUT, MOTION, SHIFT, AMOUNT, SPREAD, FREEZE, WIDTH, MIX };
+  enum { TYPE, DECAY, SIZE, PRE, TONE, LOWCUT, MOTION, SHIFT, AMOUNT, SPREAD, FREEZE, WIDTH, MIX, LOWDEC, HIDEC, FALL, BLUR, TILT, HOLD, DRIVE, WOW, DENSITY, SCATTER };
   FDN net, swell; Tank tank; Shifter shL, shR, shD; DelayLine pdl[2]; AP diff[2][4];
+  Dense dense; Shifter4 p4[4]; Spectral spec; Swarm swarm; DelayLine tape; double wowPh = 0, flutPh = 0; float wowDrift = 0, tapeLp[2] = {}, tapeHp[2] = {}, pz[4] = {};
   Smooth dry, wet, pd, sz, spr; float outLP = 1, outHP = 0, oz[2][2] = {}, sz2[4] = {}; float shEnv = 0, fbL = 0, fbR = 0, frzRms = 0, holdLeft = 0, inEnv = 0, xf = 1;
   int cur = -1, want = HALL; bool fading = false;
   static constexpr float MAXLINE = 1.6f;
   void prepare() override {
     net.init(MAXLINE, sr); swell.init(0.35f, sr); tank.init(sr); shL.init(sr); shR.init(sr); shD.init(sr);
+    dense.init(0.75f, sr); for (auto& q : p4) q.init(sr); spec.init(sr); swarm.init(sr); tape.init(2.6f, sr);
     for (auto& d : pdl) d.init(0.51f, sr);
     for (int s = 0; s < 2; s++) for (int k = 0; k < 4; k++) diff[s][k].d.init(0.12f, sr);
     dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX]); pd.setTime(0.2f, sr); pd.snap(e[PRE] * sr);
@@ -153,7 +295,8 @@ struct Reverb : Module {
     const float dg = ty == NEBULA ? 0.72f * spr.v : ty == ROOM ? 0.55f : 0.68f;
     for (int c = 0; c < 2; c++) for (int k = 0; k < 4; k++) { diff[c][k].n = std::min(0.11f * sr, dl[k] * dk * (c ? 1.07f : 1.f) * sr); diff[c][k].g = dg; }
   }
-  void clearAll() { net.clear(); swell.clear(); tank.clear(); shL.clear(); shR.clear(); shD.clear(); for (auto& s : diff) for (auto& a : s) a.d.clear(); fbL = fbR = shEnv = frzRms = 0; holdLeft = 0; }
+  void clearAll() { dense.clear(); for (auto& q : p4) q.clear(); spec.clear(); swarm.clear(); tape.clear(); for (int c = 0; c < 2; c++) tapeLp[c] = tapeHp[c] = 0; for (auto& z : pz) z = 0;
+    net.clear(); swell.clear(); tank.clear(); shL.clear(); shR.clear(); shD.clear(); for (auto& s : diff) for (auto& a : s) a.d.clear(); fbL = fbR = shEnv = frzRms = 0; holdLeft = 0; }
 
   void render(int a, int b) override {
     const int n = b - a; if (n <= 0) return;
@@ -170,9 +313,10 @@ struct Reverb : Module {
     const float mot = e[MOTION], wd = e[WIDTH];
     // TONE and LOW CUT work inside the loop, so the tail darkens as it fades. When it never fades (INFINITE, FREEZE, FROZEN)
     // they'd slowly drain it, so there they shape what comes out instead
-    const bool filt = !(fz || inf || ty == FROZEN); outLP = filt ? 1.f : aLP; outHP = filt ? 0.f : aHP;
+    const bool filt = !(fz || inf || ty == FROZEN); const bool outOnly = !filt || ty == GRAND || ty == PRISM; outLP = outOnly ? aLP : 1.f; outHP = outOnly ? aHP : 0.f;   /* GRAND and PRISM: their loops have their own three decays; SPECTRAL shapes itself */
+    if (ty == SPECTRAL) { outLP = 1.f; outHP = 0.f; }
     // gain so every type sits at about the same loudness
-    static const float LOUD[NTYPES] = {0.9f, 0.77f, 0.9f, 1.67f, 1.2f, 0.85f, 1.5f, 1.3f};
+    static const float LOUD[NTYPES] = {0.9f, 0.77f, 0.9f, 1.67f, 1.2f, 0.85f, 1.5f, 1.3f, 22.f, 2.1f, 4.4f, 1.66f, 1.48f};
     const float lvl = LOUD[ty];
 
     if (ty == PLATE || ty == HALL) {
@@ -189,6 +333,8 @@ struct Reverb : Module {
       }
       return;
     }
+
+    if (ty >= SPECTRAL) { renderHeavy(a, b, ty, S, T60, inf, fz, aLP, aHP, mot, wd, lvl); return; }
 
     // the network types
     setLines(ty, S);
@@ -237,6 +383,72 @@ struct Reverb : Module {
       else holdLeft -= (float)n / sr;
     }
   }
+
+  void renderHeavy(int a, int b, int ty, float S, float T60, bool inf, bool fz, float aLP, float aHP, float mot, float wd, float lvl) {
+    const int n = b - a;
+    if (ty == SPECTRAL) {
+      for (int i = a; i < b; i++) {
+        const float d = dry.tick(), w = wet.tick(), pdt = pd.tick(); const float x0 = 0.5f * (in[0][0][i] + in[0][1][i]);
+        pdl[0].write(x0); const float x = pdt >= 1 ? pdl[0].read(pdt) : x0; float L, R;
+        spec.tick(x, L, R, sr, T60, inf, fz, e[HOLD], e[BLUR], e[TILT], mot, aLP, aHP);
+        finish(i, softLimit(L * lvl), softLimit(R * lvl), d, w, wd); }   /* a ceiling: even INFINITE with sound pouring in stays in bounds */
+      return; }
+    // the dense network: GRAND CATHEDRAL and PRISM SHIMMER; the eight-line one: TAPE SPACE and SWARM
+    const bool still = std::fabs(sz.t - sz.v) < 1e-4f;
+    if (ty == GRAND || ty == PRISM) {
+      dense.setLens((ty == GRAND ? 0.07f : 0.05f) * (0.6f + S * 1.4f), sr, still);
+      dense.setDecay(T60 * 1.1f, ty == GRAND ? e[LOWDEC] : 1.2f, ty == GRAND ? e[HIDEC] : 0.6f, sr, inf || fz);
+      dense.drift(mot * 0.0022f * sr, n, sr, rng);
+    } else { setLines(ty == TAPE ? HALL : CATHEDRAL, S); net.setDecay(T60 * 1.25f, sr, inf || fz); }
+    const float aLo = onePoleA(250, sr), aHi = onePoleA(3500, sr);
+    // TAPE SPACE: the tape loop's three heads, its speed wobbling (WOW), and how hard it's driven (SATURATE)
+    const float tT = 0.12f + S * 0.9f, wowD = e[WOW], drive = 1 + e[DRIVE] * 5;
+    const float tg = inf || fz ? 0.97f : std::min(0.97f, std::pow(10.f, -3.f * tT / std::max(0.1f, T60)));
+    if (ty == TAPE) { const float wr = 0.45f + 0.2f * wowDrift; wowPh += (double)wr * n / sr; flutPh += 6.3 * n / sr; if (wowPh > 1) wowPh -= 1; if (flutPh > 1) flutPh -= 1;
+      wowDrift += ((rng.uni() * 2 - 1) - wowDrift) * 0.002f * n; net.drift(mot * 0.0015f * sr, n, sr, rng); }
+    if (ty == SWARM) net.drift(mot * 0.0018f * sr, n, sr, rng);
+    static const float SH[6][2] = {{2.f, 0}, {1.5f, 0}, {1.3348f, 0}, {0.5f, 0}, {2.f, 0.5f}, {4.f, 0}};
+    const int si = std::max(0, std::min(5, (int)std::lround(e[SHIFT])));
+    const float shA = onePoleA(std::min(e[TONE], 10000.f), sr), shH = onePoleA(std::max(e[LOWCUT], 80.f), sr);
+    const float grains = 3 + e[DENSITY] * e[DENSITY] * 90;
+    const float tapeBw = onePoleA(9000, sr), tapeHz = onePoleA(std::min(e[TONE], 7000.f), sr), tapeHpA = onePoleA(std::max(e[LOWCUT], 60.f), sr);
+    for (int i = a; i < b; i++) {
+      const float f = (float)(i - a) / n;
+      const float d = dry.tick(), w = wet.tick(), pdt = pd.tick();
+      float xl = in[0][0][i], xr = in[0][1][i];
+      pdl[0].write(xl); pdl[1].write(xr); if (pdt >= 1) { xl = pdl[0].read(pdt); xr = pdl[1].read(pdt); }
+      if (fz) xl = xr = 0;
+      for (int k = 0; k < 4; k++) { xl = diff[0][k].run(xl); xr = diff[1][k].run(xr); }
+      xl *= 0.35f; xr *= 0.35f;
+      float L = 0, R = 0;
+      if (ty == GRAND || ty == PRISM) {
+        if (ty == PRISM && !fz) {   // climbing (SHIFT, by SHIMMER) and falling an octave (by FALL) at the same time
+          float up = p4[0].run(fbL, SH[si][0]) + p4[1].run(fbR, SH[si][1] > 0 ? SH[si][1] : SH[si][0]), dn = p4[2].run(fbL + fbR, 0.5f);
+          pz[0] += shA * (up - pz[0]); up = pz[0]; pz[1] += shH * (up - pz[1]); up -= pz[1];
+          pz[2] += shA * (dn - pz[2]); dn = pz[2]; pz[3] += shH * (dn - pz[3]); dn -= pz[3];
+          shEnv += (std::fabs(fbL) + std::fabs(fbR) - shEnv) * 0.0005f;
+          const float back = 1 / (1 + std::max(0.f, shEnv - 0.3f) * 6), ku = e[AMOUNT] * 0.3f * back, kd = e[FALL] * 0.35f * back;
+          xl += up * ku + dn * kd; xr += up * ku - dn * kd * 0.3f; }
+        dense.tick(xl, xr, L, R, f, aLo, aHi, inf || fz || ty == PRISM);
+      } else if (ty == TAPE) {
+        // the tape: what comes in plus what's already on it, driven into saturation, darkened, and read back by three heads
+        const float wob = wowD * (std::sin((float)(wowPh * TAU)) * 0.004f + std::sin((float)(flutPh * TAU)) * 0.00035f + wowDrift * 0.002f) * sr;
+        const float h1 = readCubic(tape, std::max(2.f, tT * 0.33f * sr + wob)), h2 = readCubic(tape, std::max(2.f, tT * 0.62f * sr + wob * 1.1f)), h3 = readCubic(tape, std::max(2.f, tT * sr + wob * 1.2f));
+        float fb = (h1 * 0.25f + h2 * 0.3f + h3 * 0.45f) * tg;
+        tapeLp[0] += tapeHz * (fb - tapeLp[0]); fb = tapeLp[0]; tapeHp[0] += tapeHpA * (fb - tapeHp[0]); fb -= tapeHp[0];
+        float v = softLimit(((xl + xr) * 0.7f + fb) * drive) / drive * (1 + 0.15f * e[DRIVE]);
+        tapeLp[1] += tapeBw * (v - tapeLp[1]); v = tapeLp[1]; tape.write(sane(v));   // the tape's own bandwidth: the saturation's harshest edges never make it on
+        float nl, nr; net.tick(h1 * 0.5f + h3 * 0.3f, h2 * 0.5f + h3 * 0.3f, nl, nr, f, aLP, aHP, !(inf || fz), true);
+        L = (h1 * 0.4f + h3 * 0.25f) + nl * 1.2f; R = (h2 * 0.4f + h3 * 0.25f) + nr * 1.2f;
+      } else {   // SWARM: the tail, then a cloud of grains from it; some of the cloud goes back into the tail
+        float tl, tr2; const float gfb = inf || fz ? 0.f : 0.15f; net.tick(xl + fbL * gfb, xr + fbR * gfb, tl, tr2, f, aLP, aHP, !(inf || fz), true);
+        float gl, gr; swarm.tick(tl, tr2, gl, gr, sr, grains, S, e[SCATTER]);
+        gl *= 0.55f; gr *= 0.55f; fbL = fz ? 0.f : gl; fbR = fz ? 0.f : gr;
+        L = tl * 0.35f + gl; R = tr2 * 0.35f + gr; }
+      if (ty == GRAND || ty == PRISM) { fbL = L; fbR = R; }
+      if (ty == SWARM) { L = softLimit(L * lvl); R = softLimit(R * lvl); finish(i, L, R, d, w, wd); } else finish(i, L * lvl, R * lvl, d, w, wd);
+    }
+  }
   // WIDTH, the type change fade, and the mix
   inline void finish(int i, float L, float R, float d, float w, float wd) {
     if (outLP < 1.f || outHP > 0.f) { oz[0][0] += outLP * (L - oz[0][0]); L = oz[0][0]; oz[0][1] += outHP * (L - oz[0][1]); L -= oz[0][1];
@@ -250,16 +462,26 @@ struct Reverb : Module {
 };
 
 static Reg rReverb(new ModuleDef{"reverb", "REVERB", Cat::Proc, {{"IN", PType::Audio}, {"FREEZE", PType::Trig}}, {{"OUT", PType::Audio}},
-  {noMod(OP("type", "TYPE", {"ROOM", "PLATE", "HALL", "CATHEDRAL", "SHIMMER", "BLOOM", "NEBULA", "FROZEN"}, 2)),
+  {noMod(OP("type", "TYPE", {"ROOM", "PLATE", "HALL", "CATHEDRAL", "SHIMMER", "BLOOM", "NEBULA", "FROZEN", "SPECTRAL", "TAPE SPACE", "SWARM", "BASILICA", "PRISM"}, 2)),
    fmt(prExp("decay", "DECAY", 0.2f, 100, 6), [](float v) { if (v >= 99.f) return std::string("INFINITE"); char b[16]; std::snprintf(b, 16, v < 10 ? "%.1fS" : "%.0fS", v); return std::string(b); }),
    pctX("size", "SIZE", 1, 0.45f),
    fmt(pr("pre", "PRE-DELAY", 0, 0.5f, 0.02f), [](float v) { return std::to_string((int)std::lround(v * 1000)) + "MS"; }),
    fmt(prHz("tone", "TONE", 500, 20000, 9000), [](float v) { if (v >= 19500.f) return std::string("OPEN"); char b[16]; if (v >= 1000) std::snprintf(b, 16, "%.1fK", v / 1000); else std::snprintf(b, 16, "%d", (int)v); return std::string(b); }),
    fmt(prHz("lowcut", "LOW CUT", 20, 1000, 60), [](float v) { if (v <= 21.f) return std::string("OFF"); char b[16]; std::snprintf(b, 16, "%dHZ", (int)std::lround(v)); return std::string(b); }),
    pct("motion", "MOTION", 0.4f),
-   only(noMod(OP("shift", "SHIFT", {"+12", "+7", "+5", "-12", "+12 & -12", "+24"}, 0)), "shimmer"),
-   only(pct("amount", "SHIMMER", 0.5f), "shimmer"),
-   only(pct("spread", "SPREAD", 0.6f), "nebula"),
-   OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("width", "WIDTH", 1), pct("mix", "MIX", 0.4f)}, 0, 68, false, [] { return new Reverb(); }});
+   only(noMod(OP("shift", "SHIFT", {"+12", "+7", "+5", "-12", "+12 & -12", "+24"}, 0)), "v:4,12"),   // "v:" these TYPEs only
+   only(pct("amount", "SHIMMER", 0.5f), "v:4,12"),
+   only(pct("spread", "SPREAD", 0.6f), "v:6"),
+   OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("width", "WIDTH", 1), pct("mix", "MIX", 0.4f),
+   only(fmt(prExp("lowdec", "LOW DECAY", 0.25f, 4, 1.4f), [](float v) { char b[16]; std::snprintf(b, 16, "X%.2g", v); return std::string(b); }), "v:11"),
+   only(fmt(prExp("hidec", "HIGH DECAY", 0.1f, 2, 0.45f), [](float v) { char b[16]; std::snprintf(b, 16, "X%.2g", v); return std::string(b); }), "v:11"),
+   only(pct("fall", "FALL", 0.35f), "v:12"),
+   only(pct("blur", "BLUR", 0.4f), "v:8"),
+   only(fmt(pr("tilt", "TILT", -1, 1, 0), [](float v) { const int k = (int)std::lround(v * 100); return k == 0 ? std::string("EVEN") : (k > 0 ? "BRIGHT " : "DARK ") + std::to_string(std::abs(k)); }), "v:8"),
+   only(fmt(prHz("hold", "HOLD BELOW", 100, 20000, 20000), [](float v) { if (v >= 19500.f) return std::string("ALL"); char b[16]; if (v >= 1000) std::snprintf(b, 16, "%.1fK", v / 1000); else std::snprintf(b, 16, "%dHZ", (int)v); return std::string(b); }), "v:8"),
+   only(pct("drive", "SATURATE", 0.4f), "v:9"),
+   only(pct("wow", "WOW", 0.4f), "v:9"),
+   only(pct("density", "DENSITY", 0.5f), "v:10"),
+   only(pct("scatter", "SCATTER", 0.4f), "v:10")}, 0, 68, false, [] { return new Reverb(); }});
 
 }  // namespace tb
