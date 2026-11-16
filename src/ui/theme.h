@@ -80,33 +80,45 @@ inline float contrast(const std::string& a, const std::string& b) { auto L = [](
   float x = L(a), y = L(b); if (x < y) std::swap(x, y); return (x + 0.05f) / (y + 0.05f); }
 inline float hueGap(float a, float b) { float d = std::fabs(std::fmod(a - b + 720.f, 360.f)); return std::min(d, 360 - d); }
 inline bool brownish(float h, float l) { h = std::fmod(h + 360.f, 360.f); return h >= 12 && h <= 66 && l < 0.55f; }   // a dark orange or yellow reads as brown (or olive)
-template <class R> Theme harmonyTheme(bool pale, R&& rnd) {   // rnd(n) gives 0..n-1
+// style: 0 pale, 1 dark, 2 a dark background with pale modules, 3 a pale background with deep, rich modules
+enum { TH_PALE, TH_DARK, TH_DARK_BG, TH_PALE_BG };
+inline float cableNeedBg(int st) { return st == TH_PALE ? 2.4f : st == TH_DARK ? 3.5f : 2.8f; }
+inline float cableNeedMod(int st) { return st == TH_PALE ? 1.8f : st == TH_DARK ? 2.6f : 1.9f; }
+template <class R> Theme harmonyTheme(int style, R&& rnd) {   // rnd(n) gives 0..n-1
   auto u = [&] { return rnd(10000) / 10000.f; };
+  const bool paleBg = style == TH_PALE || style == TH_PALE_BG, mixed = style >= TH_DARK_BG;
   Theme t;
-  for (int tries = 0; tries < 400; tries++) {
+  for (int tries = 0; tries < 600; tries++) {
     const float H = u() * 360;
-    if (!pale && brownish(H, 0.2f) && tries < 390) continue;   // no brown backgrounds
-    const float bs = pale ? 0.12f + u() * 0.25f : 0.2f + u() * 0.3f, bl = pale ? 0.87f + u() * 0.06f : 0.07f + u() * 0.05f;
+    if (!paleBg && brownish(H, 0.2f) && tries < 590) continue;   // no brown backgrounds
+    const float bs = paleBg ? 0.12f + u() * 0.25f : 0.2f + u() * 0.3f, bl = paleBg ? 0.87f + u() * 0.06f : 0.07f + u() * 0.05f;
     t.bg = hslHex(H, bs, bl);
-    t.mod = hslHex(H + (u() - 0.5f) * 20, std::min(1.f, bs + 0.05f), pale ? bl - 0.08f - u() * 0.06f : bl + 0.08f + u() * 0.06f);
+    const float mh = H + (mixed ? (u() - 0.5f) * 60 : (u() - 0.5f) * 20);
+    if (style == TH_DARK_BG) t.mod = hslHex(mh, 0.15f + u() * 0.2f, 0.82f + u() * 0.06f);   // pale modules floating on the dark
+    else if (style == TH_PALE_BG) { { const float hh = std::fmod(mh + 720.f, 360.f); if (hh >= 12 && hh <= 95) continue; }   /* deep oranges, yellows and olives read as brown or khaki */ t.mod = hslHex(mh, 0.3f + u() * 0.25f, 0.16f + u() * 0.08f); }   // deep, rich modules on the pale
+    else t.mod = hslHex(mh, std::min(1.f, bs + 0.05f), paleBg ? bl - 0.08f - u() * 0.06f : bl + 0.08f + u() * 0.06f);
     static const float SCHEMES[5][3] = {{0, 150, 210}, {0, 120, 240}, {0, 45, 180}, {90, 180, 270}, {0, 50, 200}};   // split, triangle, opposite, square, side by side (and one across)
     const int sc = rnd(5); float hs[3]; const float off = (u() - 0.5f) * 30;
     for (int i = 0; i < 3; i++) hs[i] = H + SCHEMES[sc][i] + off;
     for (int i = 2; i > 0; i--) std::swap(hs[i], hs[rnd(i + 1)]);   // which cable gets which
     std::string* slot[3] = {&t.audio, &t.trig, &t.modc}; bool ok = true;
     for (int i = 0; i < 3 && ok; i++) {
-      float s = pale ? 0.45f + u() * 0.25f : 0.5f + u() * 0.3f, l = pale ? 0.5f + u() * 0.1f : 0.6f + u() * 0.12f;
+      float s = paleBg && !mixed ? 0.45f + u() * 0.25f : 0.5f + u() * 0.3f, l = style == TH_PALE ? 0.5f + u() * 0.1f : style == TH_DARK ? 0.6f + u() * 0.12f : 0.42f + u() * 0.16f;
       if (brownish(hs[i], 0)) { s = std::max(s, 0.72f); l = std::max(l, 0.58f); }   // an orange or a yellow: kept bright and clear, never tan or brown
-      // darker (on pale) or lighter (on dark) until it stands out from the background and the modules
-      auto clear = [&](const std::string& c) { return contrast(c, t.bg) >= (pale ? 2.4f : 3.5f) && contrast(c, t.mod) >= (pale ? 1.8f : 2.6f); };
-      for (int k = 0; k < 12 && !clear(hslHex(hs[i], s, l)); k++) l += pale ? -0.025f : 0.02f;
+      // stepped away from whichever it's too close to until it stands out from the background and the modules
+      auto clear = [&](const std::string& c) { return contrast(c, t.bg) >= cableNeedBg(style) && contrast(c, t.mod) >= cableNeedMod(style); };
+      for (int k = 0; k < 16 && !clear(hslHex(hs[i], s, l)); k++) {   // away from whichever it's too close to
+        const std::string c = hslHex(hs[i], s, l); const bool nearBg = contrast(c, t.bg) < cableNeedBg(style);
+        const float from = lum(nearBg ? t.bg : t.mod); l += (from > lum(c) ? -0.02f : 0.02f) * (style == TH_PALE ? 1.25f : 1.f); }
       *slot[i] = hslHex(hs[i], s, l);
-      if (!clear(*slot[i]) || (pale && brownish(hs[i], l + 0.06f) && l < 0.5f)) ok = false;   // still not clear, or darkened into brown
+      if (!clear(*slot[i]) || (brownish(hs[i], l + 0.06f) && l < 0.5f)) ok = false;   // still not clear, or darkened into brown
       for (int j = 0; j < i; j++) if (hueGap(hs[i], hs[j]) < 35 || colDist(*slot[i], *slot[j]) < 0.2f) ok = false; }
-    if (ok && contrast(t.bg, t.mod) > 1.12f) return t;
+    if (ok && contrast(t.bg, t.mod) > (mixed ? 3.f : 1.12f)) return t;
   }
   return t;
 }
+// RANDOMISE: pale or dark at random (a coin toss each press), and now and then one of the mixed styles
+template <class R> Theme randomTheme(R&& rnd) { const int r = rnd(100); return harmonyTheme(r < 40 ? TH_PALE : r < 80 ? TH_DARK : r < 90 ? TH_DARK_BG : TH_PALE_BG, rnd); }
 inline std::string headerOf(const std::string& c) { std::string h = c; for (int k = 1; k <= 10 && lum(h) < 0.42f; k++) h = mixHex(c, "#ffffff", k * 0.08f); return h; }
 // set the canvas palette from a theme (the same formulas as the web version)
 // MENUS: the top bar, menus, dropdowns and panels. 0 MATCH (a shade of the background, with text to suit), 1 BLACK, 2 DARK (a dark shade of the background)
@@ -114,13 +126,14 @@ inline void applyTheme(Canvas& cv, const Theme& t, int menus = 0) {
   const bool pond = t.bg == "pond"; const std::string bg = pond ? "#07131d" : t.bg, md = t.mod; const bool lightMod = lum(md) > 0.5f;
   cv.setColour(25, bg.c_str()); cv.setColour(26, (lum(bg) > 0.4f ? mixHex(bg, "#000000", 0.25f) : mixHex(bg, "#000000", 0.6f)).c_str()); cv.setColour(27, md.c_str());
   cv.setColour(28, lightMod ? "#1b1b1f" : "#d2c7a6"); cv.setColour(29, (lightMod ? mixHex(md, "#000000", 0.55f) : mixHex(md, "#ffffff", 0.5f)).c_str());
-  cv.setColour(30, (lightMod ? mixHex(md, "#000000", 0.3f) : mixHex(md, "#000000", 0.5f)).c_str());
+  cv.setColour(30, (lightMod ? mixHex(md, "#000000", 0.3f) : mixHex(md, "#000000", 0.5f)).c_str());   // quiet lines and fills
+  cv.setColour(31, (lightMod ? mixHex(md, "#000000", 0.45f) : mixHex(md, "#ffffff", 0.38f)).c_str());   // quiet text: away from the module colour either way (it used 30, darker even on dark modules, so it was hard to read)
   cv.setColour(43, t.audio.c_str()); cv.setColour(44, t.trig.c_str()); cv.setColour(45, t.modc.c_str());
   // the module headers (and highlights) follow the cable colours, so a theme hangs together; a dark one is lightened for them
   cv.setColour(17, headerOf(t.audio).c_str()); cv.setColour(24, headerOf(t.trig).c_str()); cv.setColour(11, headerOf(t.modc).c_str());
   cv.setColour(46, mixHex(t.trig, "#ffffff", 0.55f).c_str());
   cv.setColour(7, headerOf(mixHex(t.audio, lum(bg) > 0.45f ? "#000000" : "#ffffff", 0.18f)).c_str());   // sound makers' headers and the slider fills: from the theme too (they were a fixed brown)
-  cv.setColour(47, lightMod ? "#d9761c" : "#ece6cf"); cv.setColour(48, (lightMod ? mixHex(t.audio, "#000000", 0.45f) : t.audio).c_str());
+  cv.setColour(47, lightMod ? "#a8560c" : "#ece6cf");   /* what's active: a deeper orange, readable on pale modules */ cv.setColour(48, (lightMod ? mixHex(t.audio, "#000000", 0.45f) : t.audio).c_str());
   { const bool paleBg = lum(bg) > 0.45f;
     cv.pal[MENU_HI] = cv.pal[4]; cv.pal[MENU_TEXT] = cv.pal[9]; cv.pal[MENU_MID] = cv.pal[18]; cv.pal[MENU_LINE] = cv.pal[21];   // light text, as on black
     if (menus == 1) cv.pal[MENU_BG] = cv.pal[15];

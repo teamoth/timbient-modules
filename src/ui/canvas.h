@@ -53,7 +53,11 @@ struct Canvas {
     for (int n = 0; n < 4000; n++) { px(x0, y0, c); if (x0 == x1 && y0 == y1) break; const int e2 = 2 * err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } }
   }
   static int tw(const std::string& s) { return (int)s.size() * 4 - 1; }
+  const uint8_t* textInk = nullptr;   // when set (with ink), text is mapped by this instead: quiet text can then differ from quiet lines and fills
   void text(const std::string& s, int x, int y, int c) {
+    if (textInk && ink) { const uint8_t* sv = ink; ink = nullptr; textRaw(s, x, y, textInk[c & 127]); ink = sv; return; }
+    textRaw(s, x, y, c); }
+  void textRaw(const std::string& s, int x, int y, int c) {
     if (fine) { if (s.empty() || y >= H || y + 7 < 0 || x >= W || x + tw(s) < 0) return; runs.push_back({x, y, ++cur, (uint8_t)(ink ? ink[c & 127] : c), s}); ++cur; return; }
     for (size_t k = 0; k < s.size(); k++) {
       unsigned char ch = (unsigned char)s[k]; if (ch != 'x' && ch < 128) ch = (unsigned char)std::toupper(ch);

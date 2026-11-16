@@ -75,6 +75,7 @@ struct Sample : Module {
     Seg* v = nullptr; for (auto& x : vo) if (!x.on) { v = &x; break; }
     if (!v) { v = &vo[0]; for (auto& x : vo) if (x.t > v->t) v = &x; }   // twelve at once at most: the oldest goes
     const int style = (int)e[STYLE]; bool rv = style == 1; if (style == 2) { bounce = !bounce; rv = bounce; }   // BOUNCE: alternate directions
+    if (style == 3) rv = rng.uni() < 0.5f;   // RANDOM: a random place and a random direction, each pass (it was only ever forwards)
     v->on = true; v->b = b; v->rev = rv; v->inc = rate * b->sr / sr; v->pos = rv ? (s + len) * b->sr : s * b->sr;
     v->t = 0; v->d = (long)((once ? d : d + f) * sr);   // LOOP: each pass rings on FADE past its end, fading out under the next (which starts right on time)
     if (once) { v->fi = std::max(1L, (long)(std::min((double)e[ATK], d / 2) * sr)); v->fo = std::max(1L, (long)(std::min((double)e[REL], d / 2) * sr)); }

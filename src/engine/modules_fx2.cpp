@@ -68,15 +68,15 @@ static Reg rResonator(new ModuleDef{"resonator", "RESONATOR", Cat::Proc, {{"IN",
 // ---------------- PHASER: two chains of allpass filters swept by one LFO; STEREO sweeps the right side the opposite way ----------------
 struct Phaser : Module {
   enum { RATE, DEPTH, CENTRE, STAGES, FB, STEREO, MIX };
-  Biquad ap[2][8]; DelayLine fbd[2]; float tail[2] = {0, 0}, ph = 0; int cnt = 0; DryWet dw;
-  void prepare() override { for (auto& d : fbd) d.init(0.01f, sr); dw.init(sr, 1 - e[MIX], e[MIX]); ph = rng.uni(); }
+  Biquad ap[2][8]; DelayLine fbd[2]; float tail[2] = {0, 0}, ph = 0; int cnt = 0; DryWet dw; Smooth fbS;
+  void prepare() override { for (auto& d : fbd) d.init(0.01f, sr); dw.init(sr, 1 - e[MIX], e[MIX]); ph = rng.uni(); fbS.setTime(0.01f, sr); fbS.snap(e[FB] * 0.85f); }
   void render(int a, int b) override {
-    dw.target(1 - e[MIX], e[MIX]); const int n = ((int)e[STAGES] + 1) * 2; const float sw = e[CENTRE] * e[DEPTH] * 0.85f, fb = e[FB] * 0.85f, dly = 0.003f * sr;
+    dw.target(1 - e[MIX], e[MIX]); const int n = ((int)e[STAGES] + 1) * 2; const float sw = e[CENTRE] * e[DEPTH] * 0.85f, dly = 0.003f * sr; fbS.t = e[FB] * 0.85f;
     for (int i = a; i < b; i++) {
       ph += e[RATE] / sr; if (ph >= 1) ph -= 1;
       if ((cnt++ & 15) == 0) { const float l = std::sin(TAU * ph);
         for (int s = 0; s < 2; s++) { const float f = std::max(20.f, e[CENTRE] + l * sw * (s == 1 && e[STEREO] > 0.5f ? -1 : 1)); ap[s][0].set(Biquad::AP, f, 0.6f, sr); for (int k = 1; k < n; k++) { ap[s][k].b0 = ap[s][0].b0; ap[s][k].b1 = ap[s][0].b1; ap[s][k].b2 = ap[s][0].b2; ap[s][k].a1 = ap[s][0].a1; ap[s][k].a2 = ap[s][0].a2; } } }
-      const float d = dw.d.tick(), w = dw.w.tick();
+      const float d = dw.d.tick(), w = dw.w.tick(), fb = fbS.tick();
       for (int s = 0; s < 2; s++) {
         const float x = in[0][s][i]; float y = x + fbd[s].read(dly);
         for (int k = 0; k < n; k++) y = ap[s][k].run(y, 0);
@@ -94,17 +94,19 @@ static Reg rPhaser(new ModuleDef{"phaser", "PHASER", Cat::Proc, {{"IN", PType::A
 // ---------------- TAPE: wow, flutter, saturation, a darker tone and some hiss ----------------
 struct Tape : Module {
   enum { WOW, FLUTTER, SAT, TONE, HISS, MIX };
-  DelayLine dry[2], wet[2]; Biquad lp, hp; Smooth base; float p1 = 0, p2 = 0, ph = 0, drT = 0, satK = -1, satN = 1; DryWet dw;
-  void prepare() override { for (int c = 0; c < 2; c++) { dry[c].init(0.1f, sr); wet[c].init(0.1f, sr); } base.setTime(0.4f, sr); base.snap(0.012f); hp.set(Biquad::HP, 2500, 0.707f, sr); dw.init(sr, 1 - e[MIX], e[MIX]); }
+  DelayLine dry[2], wet[2]; Biquad lp, hp; Smooth base, toneS, satS; float p1 = 0, p2 = 0, ph = 0, drT = 0, satK = -1, satN = 1; int cnt = 0; DryWet dw;
+  void prepare() override { for (int c = 0; c < 2; c++) { dry[c].init(0.1f, sr); wet[c].init(0.1f, sr); } base.setTime(0.4f, sr); base.snap(0.012f); hp.set(Biquad::HP, 2500, 0.707f, sr); dw.init(sr, 1 - e[MIX], e[MIX]);
+    toneS.setTime(0.015f, sr); toneS.snap(e[TONE]); satS.setTime(0.015f, sr); satS.snap(e[SAT]); lp.set(Biquad::LP, e[TONE], 0.75f, sr); }
   void render(int a, int b) override {
-    dw.target(1 - e[MIX], e[MIX]); lp.set(Biquad::LP, e[TONE], 0.75f, sr);
-    const float k = 1 + e[SAT] * 7; satN = 1.f / std::pow(k, 0.7f); const float hiss = e[HISS] * e[HISS] * 0.03f, dt = 1.f / sr;
+    dw.target(1 - e[MIX], e[MIX]); toneS.t = e[TONE]; satS.t = e[SAT];
+    const float hiss = e[HISS] * e[HISS] * 0.03f, dt = 1.f / sr;
     drT -= (b - a) * dt; if (drT <= 0) { drT = rng.range(0.4f, 1.5f); base.t = 0.012f + rng.bi() * e[WOW] * 0.0015f; }   // a slow random drift on top of the wow
     for (int i = a; i < b; i++) {
       p1 += 0.55f * dt; if (p1 >= 1) p1 -= 1; p2 += 6.3f * dt; if (p2 >= 1) p2 -= 1;
       const float dl = (base.tick() + std::sin(TAU * p1) * e[WOW] * 0.0035f + std::sin(TAU * p2) * e[FLUTTER] * 0.00035f) * sr;
       const float h = hp.run(rng.bi(), 0) * hiss, d = dw.d.tick(), w = dw.w.tick();
-      for (int c = 0; c < 2; c++) { const float x = in[0][c][i]; dry[c].write(x); wet[c].write(std::tanh(x * k) * satN);
+      const float tn = toneS.tick(), k = 1 + satS.tick() * 7, sN = 1.f / std::pow(k, 0.7f); if ((cnt++ & 3) == 0) lp.set(Biquad::LP, tn, 0.75f, sr);   // TONE and SATURATE glide (they jumped once a block)
+      for (int c = 0; c < 2; c++) { const float x = in[0][c][i]; dry[c].write(x); wet[c].write(std::tanh(x * k) * sN);
         out[0][c][i] = dry[c].read(0.012f * sr) * d + (lp.run(wet[c].read(std::max(1.f, dl)), c) + h) * w; }
     }
     ph += (b - a) * dt * 0.55f * (1 + std::cos(TAU * p1) * e[WOW] * 0.6f); ph -= std::floor(ph); disp[0].store(ph);   // the reels: wow makes them surge and lag
@@ -187,16 +189,16 @@ static inline float compGain(float lev, float thr, float ratio, float knee) {
 // COMPRESSOR: turns loud parts down. Listens to IN, or to KEY when something is plugged in there (sidechain)
 struct CompModule : Module {
   enum { THR, RATIO, ATK, REL, KNEE, MAKEUP, MIX };
-  float env = -120, gr = 0, peakDisp = -120, peakR = -120; Smooth mk, dry;
-  void prepare() override { mk.setTime(0.02f, sr); mk.snap(dbToGain(e[MAKEUP])); dry.setTime(0.02f, sr); dry.snap(1 - e[MIX]); }
+  float env = -120, gr = 0, peakDisp = -120, peakR = -120; Smooth mk, dry, th, ra;   // THRESHOLD and RATIO glide too (they jumped once a block when modulated: a faint zipper)
+  void prepare() override { mk.setTime(0.02f, sr); mk.snap(dbToGain(e[MAKEUP])); dry.setTime(0.02f, sr); dry.snap(1 - e[MIX]); th.setTime(0.01f, sr); th.snap(e[THR]); ra.setTime(0.01f, sr); ra.snap(e[RATIO]); }
   void render(int a, int b) override {
     const bool key = patched(1); const float aC = std::exp(-1.f / (std::max(0.0001f, e[ATK]) * sr)), rC = std::exp(-1.f / (std::max(0.005f, e[REL]) * sr));
-    mk.t = dbToGain(e[MAKEUP]); dry.t = 1 - e[MIX]; float pk = 0, pkR = 0, worst = 0;
+    mk.t = dbToGain(e[MAKEUP]); dry.t = 1 - e[MIX]; th.t = e[THR]; ra.t = e[RATIO]; float pk = 0, pkR = 0, worst = 0;
     for (int i = a; i < b; i++) {
       const float l = in[0][0][i], r = in[0][1][i], dl = key ? in[1][0][i] : l, dr = key ? in[1][1][i] : r;
       const float lev = toDb(std::max(std::fabs(dl), std::fabs(dr)));
       env = lev > env ? lev + aC * (env - lev) : lev + rC * (env - lev);   // the level it follows: quick up (ATTACK), slower down (RELEASE)
-      gr = compGain(env, e[THR], e[RATIO], e[KNEE]); worst = std::min(worst, gr);
+      gr = compGain(env, th.tick(), ra.tick(), e[KNEE]); worst = std::min(worst, gr);
       const float g = dbToGain(gr) * mk.tick(), d = dry.tick(), w = 1 - d;
       out[0][0][i] = l * (d + w * g); out[0][1][i] = r * (d + w * g); pk = std::max(pk, std::fabs(out[0][0][i])); pkR = std::max(pkR, std::fabs(out[0][1][i]));
     }
@@ -224,10 +226,11 @@ struct PeakLimiter {
 // LIMITER: nothing gets past CEILING. DRIVE pushes it harder into it, for a louder, denser sound
 struct Limiter : Module {
   enum { DRIVE, CEIL, REL };
-  PeakLimiter lim; float peakDisp = -120, peakR = -120;
+  PeakLimiter lim; float peakDisp = -120, peakR = -120; Smooth dvS; bool fresh = true;   // DRIVE glides
   void render(int a, int b) override {
-    const float dv = dbToGain(e[DRIVE]), ce = dbToGain(e[CEIL]), rC = std::exp(-1.f / (std::max(0.005f, e[REL]) * sr)); float worst = 1, pk = 0, pkR = 0;
-    for (int i = a; i < b; i++) { float l = in[0][0][i] * dv, r = in[0][1][i] * dv; lim.run(l, r, ce, rC); worst = std::min(worst, lim.g); out[0][0][i] = l; out[0][1][i] = r; pk = std::max(pk, std::fabs(l)); pkR = std::max(pkR, std::fabs(r)); }
+    if (fresh) { dvS.setTime(0.01f, sr); dvS.snap(dbToGain(e[DRIVE])); fresh = false; } dvS.t = dbToGain(e[DRIVE]);
+    const float ce = dbToGain(e[CEIL]), rC = std::exp(-1.f / (std::max(0.005f, e[REL]) * sr)); float worst = 1, pk = 0, pkR = 0;
+    for (int i = a; i < b; i++) { const float dv = dvS.tick(); float l = in[0][0][i] * dv, r = in[0][1][i] * dv; lim.run(l, r, ce, rC); worst = std::min(worst, lim.g); out[0][0][i] = l; out[0][1][i] = r; pk = std::max(pk, std::fabs(l)); pkR = std::max(pkR, std::fabs(r)); }
     disp[0].store(toDb(worst), std::memory_order_relaxed); peakDisp = std::max(toDb(pk), peakDisp - 0.5f); disp[1].store(peakDisp, std::memory_order_relaxed); this->peakR = std::max(toDb(pkR), this->peakR - 0.5f); disp[3].store(this->peakR, std::memory_order_relaxed);
   }
 };
@@ -239,20 +242,23 @@ static Reg rLimiter(new ModuleDef{"limit", "LIMITER", Cat::Proc, {{"IN", PType::
 // soft glue compression, stereo width, and a limiter so nothing clips
 struct Master : Module {
   enum { LOWCUT, TILT, WARMTH, GLUE, WIDTH, CEIL };
-  Biquad hp, ls, hs; PeakLimiter lim; float env = -120, peakDisp = -120, peakR = -120; float lastTilt = 99, lastCut = -1;
+  Biquad hp, ls, hs; PeakLimiter lim; float env = -120, peakDisp = -120, peakR = -120; float lastTilt = 99, lastCut = -1; Smooth tiltS, warmS, glueS; bool fresh = true; int cnt = 0;
   void render(int a, int b) override {
     if (e[LOWCUT] != lastCut) { lastCut = e[LOWCUT]; hp.set(Biquad::HP, e[LOWCUT], 0.707f, sr); }
-    if (e[TILT] != lastTilt) { lastTilt = e[TILT]; ls.setShelf(false, 700, -e[TILT] * 4, sr); hs.setShelf(true, 1400, e[TILT] * 4, sr); }   // TILT: darker to the left, brighter to the right
-    const float drv = 1 + e[WARMTH] * 3, norm = 1 / std::tanh(drv), wet = e[WARMTH];
-    const float thr = -4 - 16 * e[GLUE], ratio = 1 + 2 * e[GLUE], aC = std::exp(-1.f / (0.03f * sr)), rC = std::exp(-1.f / (0.3f * sr));
+    if (fresh) { for (Smooth* q : {&tiltS, &warmS, &glueS}) q->setTime(0.015f, sr); tiltS.snap(e[TILT]); warmS.snap(e[WARMTH]); glueS.snap(e[GLUE]); fresh = false; }
+    tiltS.t = e[TILT]; warmS.t = e[WARMTH]; glueS.t = e[GLUE];   // TILT, WARMTH and GLUE glide (they jumped once a block when modulated)
+    const float aC = std::exp(-1.f / (0.03f * sr)), rC = std::exp(-1.f / (0.3f * sr));
     const float ce = dbToGain(e[CEIL]), lrC = std::exp(-1.f / (0.08f * sr)), wd = e[WIDTH];
     float worstL = 1, worstG = 0, pk = 0, pkR = 0;
     for (int i = a; i < b; i++) {
+      const float tl = tiltS.tick(), wet = warmS.tick(), glue = glueS.tick();
+      if ((cnt++ & 15) == 0 && std::fabs(tl - lastTilt) > 1e-4f) { lastTilt = tl; ls.setShelf(false, 700, -tl * 4, sr); hs.setShelf(true, 1400, tl * 4, sr); }   // TILT: darker to the left, brighter to the right
+      const float drv = 1 + wet * 3, norm = 1 / std::tanh(drv), thr = -4 - 16 * glue, ratio = 1 + 2 * glue;
       float l = in[0][0][i], r = in[0][1][i];
       l = hs.run(ls.run(hp.run(l, 0), 0), 0); r = hs.run(ls.run(hp.run(r, 1), 1), 1);
       if (wet > 0) { l = l * (1 - wet) + std::tanh(l * drv) * norm * wet; r = r * (1 - wet) + std::tanh(r * drv) * norm * wet; }   // WARMTH: soft, tape-like rounding
-      if (e[GLUE] > 0) { const float lev = toDb(std::max(std::fabs(l), std::fabs(r))); env = lev > env ? lev + aC * (env - lev) : lev + rC * (env - lev);
-        const float gr = compGain(env, thr, ratio, 8); worstG = std::min(worstG, gr); const float g = dbToGain(gr - gr * 0.35f * e[GLUE]); l *= g; r *= g; }   // GLUE, with a little of it made back up
+      if (glue > 0.0005f) { const float lev = toDb(std::max(std::fabs(l), std::fabs(r))); env = lev > env ? lev + aC * (env - lev) : lev + rC * (env - lev);
+        const float gr = compGain(env, thr, ratio, 8); worstG = std::min(worstG, gr); const float g = dbToGain(gr - gr * 0.35f * glue); l *= g; r *= g; }   // GLUE, with a little of it made back up
       const float m = (l + r) * 0.5f, sd = (l - r) * 0.5f * wd; l = m + sd; r = m - sd;   // WIDTH: 0 mono, 1 as it was, 2 wider
       lim.run(l, r, ce, lrC); worstL = std::min(worstL, lim.g);
       out[0][0][i] = l; out[0][1][i] = r; pk = std::max(pk, std::fabs(l)); pkR = std::max(pkR, std::fabs(r));

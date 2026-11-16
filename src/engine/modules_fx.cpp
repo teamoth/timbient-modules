@@ -5,14 +5,15 @@ namespace tb {
 
 // ---------------- FILTER ----------------
 struct Filter : Module {
-  Biquad f; int cnt = 0; Smooth dry, wet;
+  Biquad f; int cnt = 0; Smooth dry, wet, cutS, resS;   // CUTOFF and RES glide, the filter re-tuned every 4 samples (once a block before: a zipper when swept)
   enum { TYPE, CUT, RES, MIX };
-  void prepare() override { dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX]); }
+  void prepare() override { dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX]); cutS.setTime(0.006f, sr); cutS.snap(std::log(e[CUT])); resS.setTime(0.006f, sr); resS.snap(e[RES]); }
   void render(int a, int b) override {
     const int ty = (int)e[TYPE]; const Biquad::Type T2 = ty == 0 ? Biquad::LP : ty == 1 ? Biquad::HP : Biquad::BP;
-    f.set(T2, e[CUT], ty == 2 ? 0.6f + e[RES] * 14 : std::max(0.5f, e[RES] * 16), sr);
+    cutS.t = std::log(std::max(10.f, e[CUT])); resS.t = e[RES];
     dry.t = 1 - e[MIX]; wet.t = e[MIX];
-    for (int i = a; i < b; i++) { const float d = dry.tick(), w = wet.tick();
+    for (int i = a; i < b; i++) { const float d = dry.tick(), w = wet.tick(), lc = cutS.tick(), rs = resS.tick();
+      if ((cnt++ & 3) == 0) f.set(T2, std::exp(lc), ty == 2 ? 0.6f + rs * 14 : std::max(0.5f, rs * 16), sr);
       for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i]; out[0][ch][i] = x * d + f.run(x, ch) * w; } }
   }
 };

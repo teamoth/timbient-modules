@@ -462,7 +462,7 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
       int col = 21; if (k >= 0) { int pj = -1; for (int j = 1; j <= N; j++) { const int q = ((i - j) % N + N) % N; if (keyAt(q) >= 0) { pj = q; break; } }   // the step before (round the end)
         if (pj >= 0) { int dd = 0; for (int xm = mask(keyAt(pj), scAt(pj)) ^ mask(k, scAt(i)); xm; xm &= xm - 1) dd++; dd /= 2; col = dd <= 1 ? 11 : dd == 2 ? 4 : 14; } else col = 11; }
       if (i == cur && k >= 0) c.rect(bx, y, bw, 9, 9); c.frame(bx, y, bw, 9, col);
-      const std::string kt = k >= 0 ? std::string(KEY_NAMES[k % 12]) : std::string("-"); c.text(kt, bx + (bw - Canvas::tw(kt) + 1) / 2, y + 1, i == cur && k >= 0 ? 27 : k >= 0 ? 15 : 21);
+      const std::string kt = k >= 0 ? std::string(KEY_NAMES[k % 12]) : std::string("-"); c.text(kt, bx + (bw - Canvas::tw(kt) + 1) / 2, y + 1, i == cur && k >= 0 ? 27 : k >= 0 ? 9 : 21);   /* the step's key in the module's own text colour (it was black, lost on dark themes) */
       if (i == nxt && i != cur) c.rect(bx + 1, y + 7, bw - 2, 1, 4);   // the next step: a line along its foot
       const float sv = m->seq[Module::si(i, 0) + 1].load(); if (k >= 0 && sv >= 10) { std::string ab = scales()[std::max(0, std::min(nsc - 1, (int)std::lround(sv) - 10))].name; ab = ab.substr(0, 2); c.text(ab, bx + (bw - Canvas::tw(ab) + 1) / 2, y + 10, 18); } }
     auto kn = [&](float r, float sc) { return std::string(KEY_NAMES[((int)r % 12 + 12) % 12]) + " " + scales()[std::max(0, std::min(nsc - 1, (int)sc))].name; };
@@ -605,8 +605,8 @@ void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y0, int w, float dt) {
     if (play) c.rect(x, ry - 1, w, 7, 17);
     c.text(num(r), x + 1, ry, play ? 15 : beat ? 9 : 18);
     for (int k = 0; k < vis; k++) { const int col = u.colScroll + k, cx = x + 16 + k * cw; const float nt = m->seq[Module::si(r, col)].load(); const bool has = nt >= 0;
-      if (isCur && col == curC && !play) c.rect(cx - 1, ry - 1, cw, 7, 21);   // the cursor: this step, this column
-      c.text(has ? noteName((int)nt) : "---", cx, ry, has ? (play ? 15 : 9) : play ? 15 : 18);
+      const bool here = isCur && col == curC && !play; if (here) c.rect(cx - 1, ry - 1, cw, 7, 21);   // the cursor: this step, this column
+      c.text(has ? noteName((int)nt) : "---", cx, ry, play ? 15 : has || here ? 9 : 18);
     }
     if (isCur) { c.px(x - 2, ry + 1, 4); c.px(x - 2, ry + 2, 4); c.px(x - 2, ry + 3, 4); c.px(x - 1, ry + 2, 4); }
   }
@@ -665,6 +665,8 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   const ModuleDef* d = u.m->def; const Geom g = geom(u); const int x = u.x - viewX, y = u.y - viewY, w = g.w;
   if (x > c.W || y > c.H || x + w < 0 || y + g.h < 0) return;
   static uint8_t inkTbl[128]; static bool init = false; if (!init) { for (int i = 0; i < 128; i++) inkTbl[i] = (uint8_t)i; inkTbl[9] = 28; inkTbl[18] = 29; inkTbl[21] = 30; inkTbl[4] = 47; init = true; }
+  static uint8_t txtTbl[128]; static bool tInit = false; if (!tInit) { for (int i = 0; i < 128; i++) txtTbl[i] = inkTbl[i]; txtTbl[21] = 31; tInit = true; }   // text: quiet text has its own colour
+  c.textInk = txtTbl;
   if (shadows) c.rect(x + 2, y + 2, w, g.h, 26);   // THEME > SHADOWS
   c.ink = inkTbl; c.rect(x, y, w, g.h, 27); if (borders) c.frame(x, y, w, g.h, 21);
   c.ink = nullptr; const bool fl = false, mu = u.m->mute.load();
@@ -732,7 +734,7 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
       const int kx = kyX(u) - viewX; drawJack(c, kx, swY(u) - viewY, PType::Trig, conn, false); if (!clocked || kx + 18 < x + w - 15 - Canvas::tw("CLOCKED")) c.text("KEY", kx + 5, fy + 1, conn ? 9 : 21); }
     box(x + w - 12, false, u.fold ? "+" : "-", 9);
     if (clocked) c.text("CLOCKED", x + w - 15 - Canvas::tw("CLOCKED"), fy + 1, 24); }
-  c.ink = nullptr;
+  c.ink = nullptr; c.textInk = nullptr;
 }
 
 // after loading: the view goes to the middle of the session (or its top-left corner, if it's bigger than the screen)

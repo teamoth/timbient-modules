@@ -131,7 +131,7 @@ static const std::map<std::string, std::string> PARAMS = {
   {"sample.start", "Start|Where in the sound it starts playing."},
   {"sample.len", "Length|How much of the sound it plays, from START."},
   {"sample.pitch", "Pitch|Plays the sound faster and higher, or slower and lower, in semitones."},
-  {"sample.rev", "Play|FWD forwards, BACK backwards, BOUNCE there and back, RANDOM a different way each time."},
+  {"sample.rev", "Play|FWD forwards, BACK backwards, BOUNCE there and back, RANDOM from a random place, forwards or backwards, each time."},
   {"sample.atk", "Attack|A fade at the start of each play, to soften it."},
   {"sample.rel", "Release|A fade at the end of each play."},
   {"sample.fade", "Fade|A crossfade where a loop goes round, so the join doesn't click."},

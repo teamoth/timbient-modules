@@ -7,8 +7,10 @@
 #include "../src/ui/ui.h"
 #include "../src/ui/session.h"
 #include "../src/ui/help.h"
+#include "../src/engine/fft.h"
 #include "../src/ui/theme.h"
 #include <random>
+#include <map>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -345,11 +347,67 @@ int main(int argc, char** argv) {
     const bool ok = bad == 0 && lo > 0 && hi < lo * 1.3 && wild == 0 && got >= 3000 && heard.size() == 7 && d->paramIndex("w4") >= 0;
     if (!ok) fails++;
     std::printf("tracker random note: %ld plays, %ld out of range; spread even %s; in the module %d notes, %zu different, %d wild%s\n", plays, bad, hi < lo * 1.3 ? "yes" : "NO", got, heard.size(), wild, ok ? "" : "  WRONG"); }
+  // NO ZIPPER: controls swept fast end to end (as an LFO cable would, 4 Hz) must glide, not jump once a block. A steady tone in; next to
+  // nothing may appear away from its own family of frequencies
+  { std::string res; bool ok = true;
+    const std::vector<std::pair<std::string, std::string>> cases = {{"filter", "cut"}, {"filter", "res"}, {"comp", "thr"}, {"comp", "ratio"}, {"master", "tilt"}, {"master", "warmth"}, {"master", "glue"}, {"tape", "tone"}, {"tape", "sat"}, {"phaser", "fb"}};
+    for (auto& [ty, key] : cases) { Module* m = eng.create(ty, 970); const ModuleDef* d = m->def; const int k = d->paramIndex(key); const float lo = d->params[k].min, hi = d->params[k].max;
+      m->e[k] = lo; m->p[k].store(lo); if (ty == "tape") for (const char* z : {"wow", "flutter", "hiss"}) { m->e[d->paramIndex(z)] = 0; m->p[d->paramIndex(z)].store(0); }   /* its own wobble and hiss would cloud it */
+      m->prepare(); const int N = 65536; std::vector<float> rec; double ph = 0, ph2 = 0;
+      for (int b = 0; b < (int)(5 * 48000 / 64); b++) { const float t = 0.5f + 0.5f * std::sin(TAU * 4.0 * b * 64 / 48000); const float v = d->params[k].exp && lo > 0 ? lo * std::pow(hi / lo, t) : lo + (hi - lo) * t; m->e[k] = v; m->p[k].store(v);
+        m->blockStart(64); for (int i = 0; i < 64; i++) { const float x = 0.2f * std::sin(ph) + 0.12f * std::sin(ph2); ph += TAU * 220 / 48000; ph2 += TAU * 330 / 48000; m->in[0][0][i] = m->in[0][1][i] = x; }
+        m->render(0, 64); for (int i = 0; i < 64; i++) rec.push_back(m->out[0][0][i]); }
+      delete m; std::vector<float> re(N), im(N, 0); for (int i = 0; i < N; i++) re[i] = rec[rec.size() - N + i] * (0.5f - 0.5f * std::cos(TAU * i / N));
+      FFT f(N); f.run(re.data(), im.data(), false); double tot = 1e-30, g = 0;
+      for (int q = 1; q < N / 2; q++) { const double p = re[q] * re[q] + im[q] * im[q]; const float hz = q * 48000.f / N; tot += p; const float u = hz / 55; if (hz > 1000 && std::fabs(u - std::round(u)) * 55 > 12) g += p; }
+      const double db = 10 * std::log10(g / tot + 1e-30); char b[48]; std::snprintf(b, 48, " %s.%s %.0f", ty.c_str(), key.c_str(), db); res += b; if (db > -58) ok = false; }
+    if (!ok) fails++; std::printf("no zipper (dB):%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
+  // REVERB: no grit from movement. A steady note through every type with MOTION all the way up: next to nothing above 1 kHz that isn't near the
+  // note's own family (the kind of roughness a wobble moving in steps once a block makes). The pitch-shifting types are left out
+  { std::string res; bool ok = true;
+    for (int ty : {0, 1, 2, 3, 5, 6, 7, 8, 9, 11}) { Module* m = eng.create("reverb", 960); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
+      set("type", (float)ty); set("mix", 1); set("decay", 4); set("motion", 1); if (ty == 9) set("wow", 1); m->prepare();
+      const int N = 65536; std::vector<float> rec; double ph = 0;
+      for (int b = 0; b < (int)(6 * 48000 / 64); b++) { for (int i = 0; i < 64; i++) { const float x = 0.25f * std::sin(ph); ph += TAU * 220 / 48000; m->in[0][0][i] = m->in[0][1][i] = x; } m->render(0, 64); for (int i = 0; i < 64; i++) rec.push_back(m->out[0][0][i]); }
+      delete m; std::vector<float> re(N), im(N, 0); for (int i = 0; i < N; i++) re[i] = rec[rec.size() - N + i] * (0.5f - 0.5f * std::cos(TAU * i / N));
+      FFT f(N); f.run(re.data(), im.data(), false); double tot = 1e-30, g = 0;
+      for (int k = 1; k < N / 2; k++) { const double p = re[k] * re[k] + im[k] * im[k]; const float hz = k * 48000.f / N; tot += p; const float q = hz / 55; if (hz > 1000 && std::fabs(q - std::round(q)) * 55 > 12) g += p; }
+      const double db = 10 * std::log10(g / tot + 1e-30); char b[24]; std::snprintf(b, 24, " %.0f", db); res += b; if (db > (ty == 7 ? -58 : -68)) ok = false; }   /* the old once-a-block wobble on PLATE and HALL came out about -63 */
+    if (!ok) fails++; std::printf("reverb grit with MOTION full (dB):%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
+  // REVERB TAPE SPACE: WOW only bends the pitch smoothly (no grit), SATURATE is what adds harmonics
+  { auto measure = [&](float w, float dr, double& harm, double& grit) { Module* m = eng.create("reverb", 950); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
+      set("type", 9); set("mix", 1); set("decay", 5); set("wow", w); set("drive", dr); set("motion", 0); m->prepare();
+      const int N = 65536; std::vector<float> rec; double ph = 0;
+      for (int b = 0; b < (int)(9 * 48000 / 64); b++) { for (int i = 0; i < 64; i++) { const float x = 0.3f * std::sin(ph); ph += TAU * 220 / 48000; m->in[0][0][i] = m->in[0][1][i] = x; } m->render(0, 64); for (int i = 0; i < 64; i++) rec.push_back(m->out[0][0][i]); }
+      delete m; std::vector<float> re(N), im(N, 0); for (int i = 0; i < N; i++) re[i] = rec[rec.size() - N + i] * (0.5f - 0.5f * std::cos(TAU * i / N));
+      FFT f(N); f.run(re.data(), im.data(), false); double fund = 0, h = 0, g = 0;
+      for (int k = 1; k < N / 2; k++) { const double p = re[k] * re[k] + im[k] * im[k]; const float hz = k * 48000.f / N; const int hn = (int)std::lround(hz / 220); const bool atH = std::fabs(hz - hn * 220) < 6;
+        if (atH && hn == 1) fund += p; else if (atH && hn > 1) h += p; else if (hz > 1000) g += p; }
+      harm = 10 * std::log10(h / fund); grit = 10 * std::log10(g / fund); };
+    double wh, wg, sh, sg; measure(1, 0, wh, wg); measure(0, 1, sh, sg);
+    const bool ok = wg < -60 && sh > -26 && sg < -60 && sh > wh + 15; if (!ok) fails++;
+    std::printf("tape space: WOW grit %.0f dB, harmonics %.0f dB; SATURATE harmonics %.0f dB, grit %.0f dB%s\n", wg, wh, sh, sg, ok ? "" : "  WRONG"); }
+  // THEMES: every module's text readable on every preset (what's quiet, too); dark text on lit fills is by design and left out
+  { int poor = 0; std::string ex;
+    auto lumOf = [](uint32_t p) { float o[3]; for (int i = 0; i < 3; i++) { const float u = ((p >> (8 * i)) & 255) / 255.f; o[i] = u <= 0.04045f ? u / 12.92f : std::pow((u + 0.055f) / 1.055f, 2.4f); } return 0.2126f * o[0] + 0.7152f * o[1] + 0.0722f * o[2]; };
+    for (auto& pr : presets()) {
+      Ui u2(eng); int x = 6, y = 14; std::vector<UiMod*> made;
+      for (const ModuleDef* d : allDefs()) { made.push_back(u2.add(d->type, x, y)); x += d->width + 8; if (x > 1400) { x = 6; y += 260; } }
+      Canvas c; c.fine = true; c.resize(1500, y + 300); applyTheme(c, pr.second, 0); c.beginFrame(); u2.draw(c, 0.016f);
+      for (auto& r : c.runs) { if ((r.c & 127) == 15) continue; std::map<uint8_t, int> cnt; const int tw = Canvas::tw(r.s);
+        for (int yy = r.y; yy < r.y + 6; yy++) for (int xx = r.x; xx < r.x + tw; xx++) if (xx >= 0 && yy >= 0 && xx < c.W && yy < c.H) cnt[c.buf[(size_t)yy * c.W + xx]]++;
+        uint8_t bg = 0; int best = -1; for (auto& kv : cnt) if (kv.second > best) { best = kv.second; bg = kv.first; }
+        float a = lumOf(c.pal[r.c & 127]), b = lumOf(c.pal[bg]); if (a < b) std::swap(a, b);
+        if ((a + 0.05f) / (b + 0.05f) < 2.5f) { poor++; if (ex.size() < 120) ex += std::string(" [") + pr.first + ": " + r.s.substr(0, 16) + "]"; } }
+      for (UiMod* m : made) u2.remove(m); }
+    if (poor) fails++; std::printf("theme text: %d hard to read%s%s\n", poor, ex.c_str(), poor ? "  WRONG" : ""); }
   // RANDOMISE: themes from one hue, every cable clear against the background, the modules and each other
-  { std::mt19937 r(3); int bad = 0; for (int p = 0; p < 2; p++) for (int k = 0; k < 500; k++) { const Theme t = harmonyTheme(p, [&](int m) { return (int)(r() % (unsigned)m); });
-      for (const std::string* c : {&t.audio, &t.trig, &t.modc}) if (contrast(*c, t.bg) < (p ? 2.4f : 3.5f) || contrast(*c, t.mod) < (p ? 1.8f : 2.6f)) bad++;
-      if ((lum(t.bg) > 0.45f) != (p == 1)) bad++; }
-    if (bad) fails++; std::printf("random themes: %d of 1000 not clear enough%s\n", bad, bad ? "  WRONG" : ""); }
+  { std::mt19937 r(3); int bad = 0, kinds[4] = {}; for (int st = 0; st < 4; st++) for (int k = 0; k < 500; k++) { const Theme t = harmonyTheme(st, [&](int m) { return (int)(r() % (unsigned)m); });
+      for (const std::string* c : {&t.audio, &t.trig, &t.modc}) if (contrast(*c, t.bg) < cableNeedBg(st) || contrast(*c, t.mod) < cableNeedMod(st)) bad++;
+      const bool pb = lum(t.bg) > 0.45f, pm = lum(t.mod) > 0.45f; if (pb != (st == TH_PALE || st == TH_PALE_BG) || pm != (st == TH_PALE || st == TH_DARK_BG)) bad++; }
+    for (int k = 0; k < 1000; k++) { const Theme t = randomTheme([&](int m) { return (int)(r() % (unsigned)m); }); kinds[(lum(t.bg) > 0.45f ? 0 : 2) + (lum(t.mod) > 0.45f ? 0 : 1)]++; }
+    if (kinds[0] < 300 || kinds[3] < 300 || kinds[1] < 50 || kinds[2] < 50) bad++;   /* pale, dark and both mixed styles all turn up */
+    if (bad) fails++; std::printf("random themes: %d of 2000 not clear enough (styles over 1000 presses: %d pale, %d dark, %d dark with pale modules, %d pale with deep modules)%s\n", bad, kinds[0], kinds[3], kinds[2], kinds[1], bad ? "  WRONG" : ""); }
   if (argc > 1) {
     Json f; if (!Json::parse(readFile(argv[1]), f)) { std::printf("could not read %s\n", argv[1]); return 1; }
     const Json* data = patchIn(f); const std::string note = loadPatch(ui, *data); std::printf("loaded: %s\n", note.empty() ? "everything" : note.c_str());

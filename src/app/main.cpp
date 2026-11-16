@@ -22,7 +22,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.38.0";
+static const char* VERSION = "0.39.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -374,9 +374,9 @@ int main(int argc, char** argv) {
       if (i == 8) { ui.shadows = !ui.shadows; settings.set("shadows", Json::number(ui.shadows ? 1 : 0)); saveSettings(); ui.status(ui.shadows ? "SHADOWS UNDER THE MODULES" : "NO SHADOWS", 2); openTheme(x0); return; }
       if (i == 9) { ui.borders = !ui.borders; settings.set("borders", Json::number(ui.borders ? 1 : 0)); saveSettings(); ui.status(ui.borders ? "A LINE ROUND EACH MODULE" : "NO BORDERS", 2); openTheme(x0); return; }
       if (i >= 10) i -= 4;   // RANDOMISE, PREVIOUS and RESET come after LETTERS, MENUS, SHADOWS and BORDERS
-      if (i == 6) {   // a new theme from one colour, pale or dark as now; the one it replaces is kept (the last 12)
+      if (i == 6) {   // a new theme from one colour, pale or dark (or now and then mixed); the one it replaces is kept (the last 12)
         recent.push_back(theme); if (recent.size() > 12) recent.erase(recent.begin()); saveRecent();
-        setTheme(harmonyTheme(lum(theme.bg == "pond" ? "#07131d" : theme.bg) > 0.45f, [](int n) { return (int)SDL_rand(n); }));
+        setTheme(randomTheme([](int n) { return (int)SDL_rand(n); }));
         ui.status("A RANDOM THEME: TAP RANDOMISE FOR ANOTHER, PREVIOUS TO GO BACK", 3); openTheme(x0); return; }   // stays open, to roll again
       if (i == 7) { if (recent.empty()) { ui.status("NO RANDOM THEMES YET", 2); openTheme(x0); return; }
         const Theme t = recent.back(); recent.pop_back(); saveRecent(); setTheme(t); ui.status("THE THEME BEFORE (" + std::to_string(recent.size()) + " MORE KEPT)", 2); openTheme(x0); return; }

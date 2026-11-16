@@ -230,8 +230,11 @@ void Engine::block(float* L, float* R, int n) {
     if (at < n) { pos = at; m->render(at, n); }
     if (d->lpCut >= 0 && !m->out.empty()) {   // CUTOFF and RES (fully open: nothing)
       const float fc = m->e[d->lpCut], rs = m->e[d->lpRes];
-      if (fc < 19500 || rs > 0.01f) { if (fc != m->lpSig[0] || rs != m->lpSig[1]) { m->lpSig[0] = fc; m->lpSig[1] = rs; m->postLp.set(Biquad::LP, fc, 0.7f + rs * rs * 9, sr); }
-        for (int ch = 0; ch < 2; ch++) { float* o = m->out[0][ch].data(); for (int i = 0; i < n; i++) o[i] = (float)m->postLp.run(o[i], ch); } }
+      if (fc < 19500 || rs > 0.01f) {   // moved from where it was to where it is now across the block, re-tuned every 8 samples (it jumped once a block: a zipper when swept)
+        const float f0 = m->lpSig[0] > 0 ? m->lpSig[0] : fc, r0 = m->lpSig[0] > 0 ? m->lpSig[1] : rs; m->lpSig[0] = fc; m->lpSig[1] = rs;
+        for (int j = 0; j < n; j += 8) { const float t = (float)std::min(n, j + 8) / n;
+          if (f0 != fc || r0 != rs || j == 0) m->postLp.set(Biquad::LP, f0 * std::pow(fc / f0, t), 0.7f + (r0 + (rs - r0) * t) * (r0 + (rs - r0) * t) * 9, sr);
+          for (int ch = 0; ch < 2; ch++) { float* o = m->out[0][ch].data(); for (int i = j; i < std::min(n, j + 8); i++) o[i] = (float)m->postLp.run(o[i], ch); } } }
       else m->lpSig[0] = -1; }
     { const float b1 = m->bypass.load(std::memory_order_relaxed) ? 1.f : 0.f, b0 = m->byNow;   // BYPASS: fade over to the dry sound
       if ((b0 > 0 || b1 > 0) && !d->ins.empty() && d->ins[0].type == PType::Audio && !m->out.empty()) { const float step = n / sr / 0.08f, bb = b1 > b0 ? std::min(b1, b0 + step) : std::max(b1, b0 - step); m->byNow = bb;

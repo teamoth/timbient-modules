@@ -63,7 +63,7 @@ struct FDN {
 // ---- the plate tank ----
 struct Tank {
   DelayLine pre; AP inAp[4]; AP mAp[2], ap2[2]; DelayLine dl1[2], dl2[2]; float n1[2] = {}, n2[2] = {}, lp[2] = {}, hp[2] = {}, bw = 0, fbk[2] = {};
-  double ph[4] = {0, 0.3, 0.55, 0.8}; float drift[4] = {}; Smooth size; float sr = 48000;
+  double ph[4] = {0, 0.3, 0.55, 0.8}; float drift[4] = {}, dTo[4] = {}; Smooth size; float sr = 48000;
   float sc() const { return sr / 29761.f; }
   void init(float sr_) {
     sr = sr_; const float k = sc() * 2.2f;
@@ -76,7 +76,7 @@ struct Tank {
   void clear() { for (auto& a : inAp) a.d.clear(); for (int h = 0; h < 2; h++) { mAp[h].d.clear(); ap2[h].d.clear(); dl1[h].clear(); dl2[h].clear(); lp[h] = hp[h] = fbk[h] = 0; } bw = 0; }
   float loopLen(float S) const { return (4453 + 3720) * sc() * S / sr; }   // seconds for a trip round one half
   void block(int n, float mot, Rng& rng) {
-    for (int k = 0; k < 4; k++) drift[k] += ((rng.uni() * 2 - 1) - drift[k]) * 0.0004f * n;
+    for (int k = 0; k < 4; k++) dTo[k] = rng.uni() * 2 - 1;   // where the drift heads now; it glides there sample by sample (it jumped once a block, a faint grit)
   }
   // diff: how much the input is smeared first (PLATE more); mot: MOTION
   inline void tick(float x, float& oL, float& oR, float g, float aLP, float aHP, bool filt, bool limit, float mot, float diff) {
@@ -86,6 +86,7 @@ struct Tank {
     for (int k = 0; k < 4; k++) { ph[k] += (0.11 + k * 0.067) / sr; if (ph[k] >= 1) ph[k] -= 1; }
     oL = oR = 0;
     for (int h = 0; h < 2; h++) {
+      drift[h] += (dTo[h] - drift[h]) * 0.0004f;
       const float wob = mot * (std::sin((float)(ph[h] * TAU)) * 14.f + drift[h] * 10.f) * s0;
       float t = v + fbk[1 - h];
       mAp[h].n = (h ? 908 : 672) * k2; t = mAp[h].run(t, wob);
@@ -170,19 +171,20 @@ struct Shifter4 {
 // ---- SPECTRAL: the tail held as frequencies. Each frequency keeps its own level and fades at its own rate (TILT),
 // BLUR smears them into each other, and FREEZE can hold everything below a frequency while the rest moves on ----
 struct Spectral {
-  int N = 8192, H = 2048; FFT* fft = nullptr; std::vector<float> inBuf, win, P, re, im, re2, im2, phL, phR, olaL, olaR, wgt; int fill = 0, wpos = 0, outPos = 0; Rng r{31};
+  int N = 8192, H = 2048; FFT* fft = nullptr; std::vector<float> inBuf, win, P, Q, re, im, re2, im2, phL, phR, olaL, olaR, wgt; int fill = 0, wpos = 0, outPos = 0; Rng r{31};
   void init(float sr) { N = sr > 60000 ? 16384 : 8192; H = N / 8;   /* eight frames overlapping: smoother */ delete fft; fft = new FFT(N);
     inBuf.assign(N, 0); win.resize(N); for (int i = 0; i < N; i++) win[i] = 0.5f - 0.5f * std::cos(TAU * i / N);
-    P.assign(N / 2 + 1, 0); re.resize(N); im.resize(N); re2.resize(N); im2.resize(N); phL.assign(N / 2 + 1, 0); phR.assign(N / 2 + 1, 0); olaL.assign(2 * N, 0); olaR.assign(2 * N, 0); wgt.assign(N / 2 + 1, 0);
+    P.assign(N / 2 + 1, 0); Q.assign(N / 2 + 1, 0); re.resize(N); im.resize(N); re2.resize(N); im2.resize(N); phL.assign(N / 2 + 1, 0); phR.assign(N / 2 + 1, 0); olaL.assign(2 * N, 0); olaR.assign(2 * N, 0); wgt.assign(N / 2 + 1, 0);
     for (int k = 0; k <= N / 2; k++) { phL[k] = r.uni() * TAU; phR[k] = r.uni() * TAU; } }
   ~Spectral() { delete fft; }
-  void clear() { std::fill(inBuf.begin(), inBuf.end(), 0.f); std::fill(P.begin(), P.end(), 0.f); std::fill(olaL.begin(), olaL.end(), 0.f); std::fill(olaR.begin(), olaR.end(), 0.f); fill = 0; outPos = 0; }
+  void clear() { std::fill(inBuf.begin(), inBuf.end(), 0.f); std::fill(P.begin(), P.end(), 0.f); std::fill(Q.begin(), Q.end(), 0.f); std::fill(olaL.begin(), olaL.end(), 0.f); std::fill(olaR.begin(), olaR.end(), 0.f); fill = 0; outPos = 0; }
   // one frame: every H samples
-  void frame(float sr, float t60, bool inf, bool fz, float holdHz, float blur, float tilt, float mot, float aLP, float aHP) {
+  void frame(float sr, float t60, bool inf, bool fz, float holdHz, float blur, float tilt, float mot, float aLP, float aHP, float size) {
     for (int i = 0; i < N; i++) { re[i] = inBuf[(wpos + i) % N] * win[i]; im[i] = 0; }
     fft->run(re.data(), im.data(), false);
     const float hopS = (float)H / sr, binHz = sr / N, holdBin = holdHz >= 19500.f ? 1e9f : holdHz / binHz;
-    const float k0 = 1 - std::pow(10.f, -6.f * hopS / 2.f);   // how much a new frame adds (as if a 2 second reverb): keeps it at a normal level
+    const float k0 = 1 - std::pow(10.f, -6.f * hopS / 2.f);
+    const float qa = std::exp(-hopS / (0.005f + size * size * 0.9f));   // SIZE: how slowly new sound swells into the tail (a bigger space fills more slowly)   // how much a new frame adds (as if a 2 second reverb): keeps it at a normal level
     for (int k = 1; k < N / 2; k++) {
       const float f = k * binHz, x2 = (re[k] * re[k] + im[k] * im[k]) / (N * 0.375f);
       const bool held = fz && k < holdBin;
@@ -190,7 +192,8 @@ struct Spectral {
       if (held || inf) g = 1.f;
       else { const float tm = std::max(0.1f, std::min(10.f, std::pow(std::max(20.f, f) / 1000.f, tilt * 0.7f)));   // TILT: highs ring longer (up) or shorter (down)
         g = std::pow(10.f, -6.f * hopS / std::max(0.05f, t60 * tm)); }
-      P[k] = held ? P[k] : P[k] * g + (fz ? 0.f : x2 * k0);
+      Q[k] = Q[k] * qa + (fz ? 0.f : x2) * (1 - qa);
+      P[k] = held ? P[k] : P[k] * g + (fz ? 0.f : Q[k] * k0);
       if (P[k] > 0.25f) P[k] = 0.25f;   // nothing runs away, even on INFINITE with sound pouring in
     }
     // BLUR: each frequency borrows from its neighbours (wider the more BLUR)
@@ -214,10 +217,10 @@ struct Spectral {
     }
   }
   // one sample in, two out; a frame whenever H new samples have come in
-  inline void tick(float x, float& L, float& R, float sr, float t60, bool inf, bool fz, float holdHz, float blur, float tilt, float mot, float aLP, float aHP) {
+  inline void tick(float x, float& L, float& R, float sr, float t60, bool inf, bool fz, float holdHz, float blur, float tilt, float mot, float aLP, float aHP, float size) {
     inBuf[wpos] = x; wpos = (wpos + 1) % N;
     L = olaL[outPos % (2 * N)]; R = olaR[outPos % (2 * N)]; olaL[outPos % (2 * N)] = 0; olaR[outPos % (2 * N)] = 0; outPos = (outPos + 1) % (2 * N);
-    if (++fill >= H) { fill = 0; frame(sr, t60, inf, fz, holdHz, blur, tilt, mot, aLP, aHP); }
+    if (++fill >= H) { fill = 0; frame(sr, t60, inf, fz, holdHz, blur, tilt, mot, aLP, aHP, size); }
   }
 };
 
@@ -256,9 +259,9 @@ struct Swarm {
 
 struct Reverb : Module {
   enum { TYPE, DECAY, SIZE, PRE, TONE, LOWCUT, MOTION, SHIFT, AMOUNT, SPREAD, FREEZE, WIDTH, MIX, LOWDEC, HIDEC, FALL, BLUR, TILT, HOLD, DRIVE, WOW, DENSITY, SCATTER };
-  FDN net, swell; Tank tank; Shifter shL, shR, shD; DelayLine pdl[2]; AP diff[2][4];
-  Dense dense; Shifter4 p4[4]; Spectral spec; Swarm swarm; DelayLine tape; double wowPh = 0, flutPh = 0; float wowDrift = 0, tapeLp[2] = {}, tapeHp[2] = {}, pz[4] = {};
-  Smooth dry, wet, pd, sz, spr; float outLP = 1, outHP = 0, oz[2][2] = {}, sz2[4] = {}; float shEnv = 0, fbL = 0, fbR = 0, frzRms = 0, holdLeft = 0, inEnv = 0, xf = 1;
+  FDN net, swell; Tank tank; Shifter4 shL, shR, shD; DelayLine pdl[2]; AP diff[2][4];
+  Dense dense; Shifter4 p4[4]; Spectral spec; Swarm swarm; DelayLine tape; double wowPh = 0, flutPh = 0; float wowDrift = 0, wowTo = 0, wowRate = 0.45f, tapeLp[2] = {}, tapeHp[2] = {}, pz[4] = {};
+  Smooth dry, wet, pd, sz, spr; float outLP = 1, outHP = 0, oz[2][2] = {}, sz2[4] = {}; float shEnv = 0, fbL = 0, fbR = 0, frzRms = 0, frzG = 1, holdLeft = 0, inEnv = 0, xf = 1;
   int cur = -1, want = HALL; bool fading = false;
   static constexpr float MAXLINE = 1.6f;
   void prepare() override {
@@ -342,8 +345,8 @@ struct Reverb : Module {
     if (ty == FROZEN && !fz) netInf = true;   // FROZEN holds without fading, and the gate below decides when it ends
     net.setDecay(t60, sr, netInf);
     if (ty == FROZEN && !fz) {   // while the gate is open: no loss at all, but if it gets loud it eases back
-      const float over = std::max(0.f, frzRms - 0.18f); const float gg = std::max(0.9f, 1.f - over * 0.5f);
-      if (holdLeft <= 0 && !inf) { net.setDecay(0.12f, sr, false); } else for (auto& g : net.g) g = gg; }
+      const float over = std::max(0.f, frzRms - 0.08f); frzG += (std::max(0.97f, 1.f - over * 0.4f) - frzG) * 0.05f;   // eases back gently when it builds up (well before it would hit the ceiling and distort)
+      if (holdLeft <= 0 && !inf) { net.setDecay(0.12f, sr, false); } else for (auto& g : net.g) g = frzG; }
     if (ty == BLOOM) swell.setDecay(std::min(8.f, std::max(0.4f, (inf ? 10.f : T60) * 0.8f)), sr, false);   // the swell: nearly as long as the decay, so it rises slowly
     const float depth = mot * (ty == ROOM ? 0.0006f : ty == NEBULA ? 0.004f : ty == CATHEDRAL ? 0.0025f : 0.0018f) * sr;
     net.drift(depth, n, sr, rng); if (ty == BLOOM) swell.drift(depth * 0.5f, n, sr, rng);
@@ -390,7 +393,7 @@ struct Reverb : Module {
       for (int i = a; i < b; i++) {
         const float d = dry.tick(), w = wet.tick(), pdt = pd.tick(); const float x0 = 0.5f * (in[0][0][i] + in[0][1][i]);
         pdl[0].write(x0); const float x = pdt >= 1 ? pdl[0].read(pdt) : x0; float L, R;
-        spec.tick(x, L, R, sr, T60, inf, fz, e[HOLD], e[BLUR], e[TILT], mot, aLP, aHP);
+        spec.tick(x, L, R, sr, T60, inf, fz, e[HOLD], e[BLUR], e[TILT], mot, aLP, aHP, S);
         finish(i, softLimit(L * lvl), softLimit(R * lvl), d, w, wd); }   /* a ceiling: even INFINITE with sound pouring in stays in bounds */
       return; }
     // the dense network: GRAND CATHEDRAL and PRISM SHIMMER; the eight-line one: TAPE SPACE and SWARM
@@ -402,10 +405,10 @@ struct Reverb : Module {
     } else { setLines(ty == TAPE ? HALL : CATHEDRAL, S); net.setDecay(T60 * 1.25f, sr, inf || fz); }
     const float aLo = onePoleA(250, sr), aHi = onePoleA(3500, sr);
     // TAPE SPACE: the tape loop's three heads, its speed wobbling (WOW), and how hard it's driven (SATURATE)
-    const float tT = 0.12f + S * 0.9f, wowD = e[WOW], drive = 1 + e[DRIVE] * 5;
+    const float tT = 0.12f + S * 0.9f, wowD = e[WOW], drive = 1 + e[DRIVE] * e[DRIVE] * 24;
     const float tg = inf || fz ? 0.97f : std::min(0.97f, std::pow(10.f, -3.f * tT / std::max(0.1f, T60)));
-    if (ty == TAPE) { const float wr = 0.45f + 0.2f * wowDrift; wowPh += (double)wr * n / sr; flutPh += 6.3 * n / sr; if (wowPh > 1) wowPh -= 1; if (flutPh > 1) flutPh -= 1;
-      wowDrift += ((rng.uni() * 2 - 1) - wowDrift) * 0.002f * n; net.drift(mot * 0.0015f * sr, n, sr, rng); }
+    if (ty == TAPE) { if (rng.uni() < (float)n / sr * 0.7f) wowTo = rng.uni() * 2 - 1;   // the tape's speed wanders: a new place to drift towards now and then, reached slowly
+      wowRate = 0.38f + 0.12f * wowDrift; net.drift(mot * 0.0015f * sr, n, sr, rng); }
     if (ty == SWARM) net.drift(mot * 0.0018f * sr, n, sr, rng);
     static const float SH[6][2] = {{2.f, 0}, {1.5f, 0}, {1.3348f, 0}, {0.5f, 0}, {2.f, 0.5f}, {4.f, 0}};
     const int si = std::max(0, std::min(5, (int)std::lround(e[SHIFT])));
@@ -432,11 +435,14 @@ struct Reverb : Module {
         dense.tick(xl, xr, L, R, f, aLo, aHi, inf || fz || ty == PRISM);
       } else if (ty == TAPE) {
         // the tape: what comes in plus what's already on it, driven into saturation, darkened, and read back by three heads
-        const float wob = wowD * (std::sin((float)(wowPh * TAU)) * 0.004f + std::sin((float)(flutPh * TAU)) * 0.00035f + wowDrift * 0.002f) * sr;
+        // WOW: slow wow, a little fast flutter and a slow drift, all moving smoothly sample by sample (they moved in steps
+        // once a block before, which roughened the sound like distortion)
+        wowPh += wowRate / sr; if (wowPh >= 1) wowPh -= 1; flutPh += 6.1 / sr; if (flutPh >= 1) flutPh -= 1; wowDrift += (wowTo - wowDrift) * (1.5f / sr);
+        const float wob = wowD * (std::sin((float)(wowPh * TAU)) * 0.0028f + std::sin((float)(flutPh * TAU)) * 0.00006f + wowDrift * 0.0035f) * sr;
         const float h1 = readCubic(tape, std::max(2.f, tT * 0.33f * sr + wob)), h2 = readCubic(tape, std::max(2.f, tT * 0.62f * sr + wob * 1.1f)), h3 = readCubic(tape, std::max(2.f, tT * sr + wob * 1.2f));
         float fb = (h1 * 0.25f + h2 * 0.3f + h3 * 0.45f) * tg;
         tapeLp[0] += tapeHz * (fb - tapeLp[0]); fb = tapeLp[0]; tapeHp[0] += tapeHpA * (fb - tapeHp[0]); fb -= tapeHp[0];
-        float v = softLimit(((xl + xr) * 0.7f + fb) * drive) / drive * (1 + 0.15f * e[DRIVE]);
+        float v = softLimit(((xl + xr) * 0.7f + fb) * drive) / std::pow(drive, 0.95f);   // SATURATE: driven harder (and brought back down part of the way), so it rounds and thickens
         tapeLp[1] += tapeBw * (v - tapeLp[1]); v = tapeLp[1]; tape.write(sane(v));   // the tape's own bandwidth: the saturation's harshest edges never make it on
         float nl, nr; net.tick(h1 * 0.5f + h3 * 0.3f, h2 * 0.5f + h3 * 0.3f, nl, nr, f, aLP, aHP, !(inf || fz), true);
         L = (h1 * 0.4f + h3 * 0.25f) + nl * 1.2f; R = (h2 * 0.4f + h3 * 0.25f) + nr * 1.2f;
