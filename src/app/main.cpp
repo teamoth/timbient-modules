@@ -22,7 +22,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.39.0";
+static const char* VERSION = "0.40.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -255,14 +255,22 @@ int main(int argc, char** argv) {
                                        "I", "9", "O", "0", "P", "[", "=", "]", "", "", "", ""};
   SDL_Keycode qwMap[36];
   auto qwNames = [&] { for (int i = 0; i < 36; i++) { std::string s = qwMap[i] ? SDL_GetKeyName(qwMap[i]) : ""; for (auto& ch : s) ch = (char)std::toupper((unsigned char)ch); ui.qwKeys[i] = s; } };
-  auto qwDefault = [&] { for (int i = 0; i < 36; i++) qwMap[i] = QW_DEFAULT[i][0] ? SDL_GetKeyFromName(QW_DEFAULT[i]) : 0; };
+  // a second ready-made layout: three rows of the keyboard, the black notes on the row above where they fall (bottom octave first)
+  static const char* QW_ROWS[36] = {"Y", "1", "U", "2", "I", "O", "3", "P", "4", "A", "5", "S",
+                                    "D", "6", "F", "7", "G", "H", "8", "J", "9", "K", "0", "L",
+                                    "Z", "Q", "X", "W", "C", "V", "E", "B", "R", "N", "T", "M"};
+  auto qwSet = [&](const char* const* L) { for (int i = 0; i < 36; i++) qwMap[i] = L[i][0] ? SDL_GetKeyFromName(L[i]) : 0; };
+  auto qwDefault = [&] { qwSet(QW_DEFAULT); };
   auto qwSave = [&] { Json a = Json::array(); for (int i = 0; i < 36; i++) a.push(Json::string(qwMap[i] ? SDL_GetKeyName(qwMap[i]) : "")); settings.set("qwertyMap", a); saveSettings(); qwNames(); };
   qwDefault();
   if (const Json* a = settings.get("qwertyMap")) if (a->t == Json::ARR && a->a.size() == 36) for (int i = 0; i < 36; i++) qwMap[i] = a->a[i].t == Json::STR && !a->a[i].s.empty() ? SDL_GetKeyFromName(a->a[i].s.c_str()) : 0;
   qwNames();
   ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
     const std::string& ty = u->m->def->type;
-    if (ty == "qwerty" && k == "reset") { qwDefault(); qwSave(); ui.qwLearn = -1; ui.status("QWERTY MIDI: THE DEFAULT KEYS (AS SUNVOX)", 3); return true; }
+    if (ty == "qwerty" && k == "reset") {   // KEY LAYOUTS: the ready-made ones to choose from (your own changes are kept until you pick one)
+      Dropdown l; l.items = {"PIANO LAYOUT (Z S X D ...)", "TIMBIENT LAYOUT (Y 1 U 2 ...)"}; l.x = u->x - ui.viewX + 12; l.y = u->y - ui.viewY + 74;
+      l.pick = [&, u](int i) { qwSet(i == 0 ? QW_DEFAULT : QW_ROWS); qwSave(); ui.qwLearn = -1; ui.status(std::string("QWERTY MIDI: ") + (i == 0 ? "THE PIANO LAYOUT" : "THE TIMBIENT LAYOUT"), 3); };
+      ui.openDropdown(l); return true; }
     if ((ty == "sample" || ty == "looper" || ty == "stretch") && k == "edit") {   // EDIT SOUND: the editor, with this module's sound (for SAMPLE, the place on show)
       const int slot = ty == "sample" ? std::max(0, std::min(UiMod::SLOTS - 1, u->shown)) : 0; const UiMod::Snd& sd = u->snd[slot];
       if (sd.id.empty()) { ui.status("THERE'S NO SOUND TO EDIT YET: LOAD ONE FIRST", 4); return true; }
@@ -445,8 +453,11 @@ int main(int argc, char** argv) {
       else if (i == 8) { ui.cableMotion = !ui.cableMotion; settings.set("cableMotion", Json::number(ui.cableMotion ? 1 : 0)); saveSettings();
         ui.status(ui.cableMotion ? "CABLE MOTION ON: PULSES AND FLOW ALONG THE CABLES" : "CABLE MOTION OFF: A LITTLE LIGHTER ON OLDER COMPUTERS", 4); return; }
       else if (i == 9) { openTheme(x0); return; }
-      else if (i == 10) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
-          "ALSO SDL 3, MINIAUDIO AND RTMIDI", "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
+      else if (i == 10) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "DESIGNED BY TIM MEDLICOTT,", "  BUILT WITH CLAUDE, ANTHROPIC'S AI", "BUILT ON THESE OPEN-SOURCE PROJECTS,", "  EACH USED AS ITS LICENCE ALLOWS:",
+          "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
+          "SDL 3: WINDOW AND DRAWING", "  BY SAM LANTINGA (ZLIB LICENCE)", "MINIAUDIO: SOUND IN AND OUT", "  BY DAVID REID (PUBLIC DOMAIN / MIT-0)",
+          "RTMIDI: MIDI DEVICES", "  BY GARY P. SCAVONE (MIT LICENCE)", "EVERYTHING ELSE WAS WRITTEN FOR TIMBIENT MODULES",
+          "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);
     };

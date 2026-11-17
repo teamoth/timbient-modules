@@ -136,7 +136,7 @@ static Reg rKeys(new ModuleDef{"keys", "NOTE GRID", Cat::Trig, {}, {{"NOTE", PTy
 // The screen sends each key press in (port -1) as a note; OCTAVE says where C-0 sits
 struct Qwerty : Module { void trig(int port, const Event& ev) override { if (port == -1) emit(0, ev); } };
 static Reg rQwerty(new ModuleDef{"qwerty", "QWERTY MIDI", Cat::Trig, {}, {{"NOTE", PType::Trig}},
-  {noMod(pct("vel", "VELOCITY", 0.8f)), noMod(fmt(ST("oct", "OCTAVE", 1, 8, 4), [](float v) { return "C-0 = C" + std::to_string((int)std::lround(v)); })), ACT("reset", "DEFAULT KEYS")}, 32, 118, false, [] { return new Qwerty(); }});
+  {noMod(pct("vel", "VELOCITY", 0.8f)), noMod(fmt(ST("oct", "OCTAVE", 1, 8, 4), [](float v) { return "C-0 = C" + std::to_string((int)std::lround(v)); })), ACT("reset", "KEY LAYOUTS")}, 32, 118, false, [] { return new Qwerty(); }});
 
 // ---------------- LFO ----------------
 struct Lfo : Module {

@@ -2,6 +2,7 @@
 #include <set>
 // Timbient native: drawing the patch and handling the pointer (see ui.h)
 #include "ui.h"
+#include <chrono>
 #include "help.h"
 #include "../engine_mi/mi_labels.h"
 #include "../engine/params.h"
@@ -18,6 +19,34 @@ static int catCol(Cat c) { switch (c) { case Cat::Trig: return 24; case Cat::Voi
 // TRACKER, NOTE LOOPER: moving BPM while TEMPO is SHARED makes it OWN, starting from the session's tempo
 static void takeOwnTempo(UiMod* u, int k, Engine& eng) { const ModuleDef* d = u->m->def; if (d->type == "clock" || d->params[k].key != "bpm") return; const int si = d->paramIndex("sync");
   if (si < 0 || u->m->p[si].load() < 0.5f || u->m->clockedIn.load()) return; u->m->p[si].store(0); u->m->p[k].store(std::round(eng.tempo.bpm.load())); }
+static void clockToTempo(UiMod* u, int k, Engine& eng);
+// TAP: the speed controls follow taps in rhythm (three or more). What a tap gap means for each:
+// 0 not tappable, 1 BPM, 2 steps a second (shown as BPM), 3 seconds, 4 Hz
+static int tapKind(const ModuleDef* d, const ParamDef& q) {
+  if (q.key == "bpm") return 1;
+  if ((d->type == "clump" && q.key == "speed") || (d->type == "hops" && q.key == "rate")) return 2;
+  if ((d->type == "echo" && q.key == "time") || (d->type == "lfo" && q.key == "rate") || (d->type == "rand" && q.key == "rate")) return 3;
+  if (d->type == "phaser" && q.key == "rate") return 4;
+  return 0; }
+bool Ui::tapRow(UiMod* u, int k) {
+  const ModuleDef* d = u->m->def; const ParamDef& q = d->params[k]; const int kind = tapKind(d, q); if (!kind) return false;
+  const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (tapM != u || tapK != k) { tapTimes.clear(); tapM = u; tapK = k; }
+  if (!tapTimes.empty() && now - tapTimes.back() > 4) tapTimes.clear();   // a long pause: starting again
+  tapTimes.push_back(now); if (tapTimes.size() > 5) tapTimes.erase(tapTimes.begin());
+  if (tapTimes.size() < 3) return false;   // the first two taps behave as before
+  std::vector<double> gaps; for (size_t i = 1; i < tapTimes.size(); i++) gaps.push_back(tapTimes[i] - tapTimes[i - 1]);
+  std::vector<double> srt = gaps; std::sort(srt.begin(), srt.end()); const double med = srt[srt.size() / 2];
+  double sum = 0; int nn = 0; for (double g : gaps) if (g > med * 0.6 && g < med * 1.6) { sum += g; nn++; }   // a stray slow (or quick) tap is left out
+  if (nn < 2 || med < 0.05) return false;
+  const double gap = sum / nn; float v = 0;
+  switch (kind) { case 1: v = (float)(60 / gap); break; case 2: v = (float)(1 / gap); break; case 3: v = (float)gap; break; default: v = (float)(1 / gap); break; }
+  v = clampf(v, q.min, q.max); if (kind == 1) v = std::round(v);
+  takeOwnTempo(u, k, eng); u->m->p[k].store(v); clockToTempo(u, k, eng);
+  char b[48]; if (kind <= 2) std::snprintf(b, 48, "TAP %d BPM", (int)std::lround(kind == 1 ? v : v * 60)); else if (kind == 3) std::snprintf(b, 48, "TAP %.2f S", v); else std::snprintf(b, 48, "TAP %.2f HZ", v);
+  status(d->name + "  " + q.label + "  " + b, 1.5f); changed(); return true;
+}
+static int heavyFrom(const std::string& ty) { return ty == "echo" ? 6 : 8; }   // where the heavy TYPEs start
 // REVERB: a new TYPE brings its usual DECAY (a ROOM doesn't ring for 6 seconds); INFINITE stays INFINITE
 static void verbTypeSet(UiMod* u, int k, float old, float v) {
   const ModuleDef* d = u->m->def; if (d->type != "reverb" || d->params[k].key != "type" || std::lround(old) == std::lround(v)) return;
@@ -29,7 +58,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "journey", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "audioin"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "listen"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "noinput", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -123,7 +152,7 @@ static const Layout& layoutOf(const ModuleDef* d) {
   else {
     static const std::map<std::string, std::vector<std::string>> MODES = {
       {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
-      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
+      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"echo", {"type", "wow", "drive", "age", "pattern", "shift", "bend", "sweep", "smear", "crush", "scatter", "density"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
     const bool keyed = d->keyIdx >= 0;
     put(key("poly"), 0); for (int j = 0; j < n; j++) if (recButton(d, d->params[j])) put(j, 0);
     if (auto m = MODES.find(d->type); m != MODES.end()) for (auto& k : m->second) put(key(k.c_str()), 0);
@@ -921,11 +950,11 @@ std::string Ui::helpAt(float sx, float sy) {
     const int pj = paramAt(u, ly);
     if (pj >= 0 && d->type == "mi" && !(jacksIn && lx < 9)) { const std::string& k = d->params[pj].key; const int w3 = k == "harm" ? 0 : k == "timb" ? 1 : k == "morph" ? 2 : -1;   // MI VOICES: what this model does with it
       if (w3 >= 0) { const int mdl = std::max(0, std::min(MI_ENGINES - 1, (int)u->m->p[0].load())); return std::string(miEngines()[mdl].k[w3]) + "|" + miHelp(mdl, w3) + " (PLAITS' " + d->params[pj].label + " CONTROL, ON " + miEngines()[mdl].name + ")"; } }
-    if (pj >= 0 && d->type == "reverb" && d->params[pj].key == "type") {   // REVERB: what this type does, and the others
-      const ParamDef& q = d->params[pj]; const int t = std::max(0, std::min((int)q.opts.size() - 1, (int)std::lround(u->m->p[pj].load())));
-      std::string s = helpOther("VERB " + q.opts[t]); const size_t bar = s.find('|'); std::string lt, hv; for (size_t i = 0; i < q.opts.size(); i++) (i < 8 ? lt : hv) += ((i < 8 ? lt : hv).empty() ? "" : ", ") + q.opts[i];
-      if (bar != std::string::npos) return "Type: " + s.substr(0, bar) + (t < 8 ? " (light)" : "") + "|" + s.substr(bar + 1) + " (LIGHT, ABOUT 1% EACH: " + lt + ". HEAVY, MORE CPU: " + hv + ". CHANGING TYPE ALSO SETS DECAY TO ITS USUAL LENGTH.)"; }
-    if (pj >= 0) return jacksIn && lx < 9 && modulatable(d->params[pj]) ? modNote(u, pj) : withRange(d, pj);
+    if (pj >= 0 && (d->type == "reverb" || d->type == "echo") && d->params[pj].key == "type") {   // REVERB, ECHO: what this type does, and the others
+      const ParamDef& q = d->params[pj]; const int t = std::max(0, std::min((int)q.opts.size() - 1, (int)std::lround(u->m->p[pj].load()))), H = heavyFrom(d->type);
+      std::string s = helpOther((d->type == "echo" ? "ECHO " : "VERB ") + q.opts[t]); const size_t bar = s.find('|'); std::string lt, hv; for (size_t i = 0; i < q.opts.size(); i++) ((int)i < H ? lt : hv) += (((int)i < H ? lt : hv).empty() ? "" : ", ") + q.opts[i];
+      if (bar != std::string::npos) return "Type: " + s.substr(0, bar) + (t < H ? " (light)" : "") + "|" + s.substr(bar + 1) + " (LIGHT: " + lt + ". HEAVY, MORE CPU: " + hv + "." + (d->type == "reverb" ? " CHANGING TYPE ALSO SETS DECAY TO ITS USUAL LENGTH." : "") + ")"; }
+    if (pj >= 0) return jacksIn && lx < 9 && modulatable(d->params[pj]) ? modNote(u, pj) : withRange(d, pj) + (tapKind(d, d->params[pj]) ? " TAP IT THREE TIMES OR MORE IN RHYTHM TO SET IT." : "");
     return helpModule(d->type); }
   const int ci = cableAt(wx, wy, 3); if (ci >= 0) {   // a cable: what kind (its colour), what it joins, and what you can do with it
     const UiCable& cb = cables[ci]; const std::string b = helpOther("CABLE"), how = b.substr(b.find('|') + 1);
@@ -1178,9 +1207,9 @@ void Ui::pointerDown(float sx, float sy) {
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }
       Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + rowPx(*u, pj) + 4;
-      if (d->type == "reverb" && q.key == "type") {   // the light types, then the heavy ones under a heading
-        l.items.insert(l.items.begin() + 8, "HEAVIER (MORE CPU):"); l.title = 8; if (l.cur >= 8) l.cur++;
-        l.pick = [this, u, pj](int i) { if (i > 8) i--; verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); status(u->m->def->name + "  TYPE  " + u->m->def->params[pj].opts[i] + (i >= 8 ? "  (HEAVY: USES MORE CPU)" : "  (LIGHT)")); changed(); };
+      if ((d->type == "reverb" || d->type == "echo") && q.key == "type") {   // the light types, then the heavy ones under a heading
+        const int H = heavyFrom(d->type); l.items.insert(l.items.begin() + H, "HEAVIER (MORE CPU):"); l.title = H; if (l.cur >= H) l.cur++;
+        l.pick = [this, u, pj, H](int i) { if (i > H) i--; verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); status(u->m->def->name + "  TYPE  " + u->m->def->params[pj].opts[i] + (i >= H ? "  (HEAVY: USES MORE CPU)" : "  (LIGHT)")); changed(); };
         openDropdown(l); return; }
       l.pick = [this, u, pj](int i) { verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i] + (qq.key == "chan" ? (u->m->def->type == "sample" ? "  (FOR THE NEXT SOUND YOU LOAD OR RECORD)" : "  (FOR THE NEXT SOUND YOU LOAD OR CATCH)") : ""), qq.key == "chan" ? 4.f : 2.f); changed(); };
       openDropdown(l); return; }
@@ -1250,6 +1279,7 @@ void Ui::pointerMove(float sx, float sy) {
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
   if (d.kind == D_TEMPO) { changed(); return; }
+  if (d.kind == D_PARAM && !d.moved && !d.held && d.m) { tapRow(d.m, d.k); }   // a tap that didn't drag: three or more in rhythm set a speed row
   if (d.kind == D_HOLD) { eng.action(d.k, "hold:0"); changed(); return; }
   if (d.kind == D_NLOOP) { changed(); return; }
   if (d.kind == D_TLINE) { if (byId(d.k)) timelineUp(*byId(d.k), d.moved, d.dir); changed(); return; }

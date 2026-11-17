@@ -58,6 +58,7 @@ public:
   // building a patch
   UiMod* add(const std::string& type, int x, int y, int id = 0);   // id: put back with the number it had (undo)
   void remove(UiMod* u);
+  bool tapRow(UiMod* u, int k);   // a tap on a speed row (three or more in rhythm set it); true when it did
   void removeGently(UiMod* u);   // the × button: bridges an effect's chain, lets its sound ring out
   bool connect(UiMod* a, int outPort, UiMod* b, int inPort);
   bool connect(UiMod* a, const std::string& outPort, UiMod* b, const std::string& inPort);
@@ -188,6 +189,7 @@ private:
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
   enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_TLINE, D_NLOOP, D_HOLD, D_WANDER };
+  UiMod* tapM = nullptr; int tapK = -1; std::vector<double> tapTimes;   // TAP on speed rows
   float wanderTapT = -9; int wanderTapK = -1; UiMod* wanderTapM = nullptr;   // the Tracker's column numbers: a second tap soon after sets RANDOM NOTE back to 0
   // cables as curves you can touch
   bool cableEnds(const UiCable& c, float& ax, float& ay, float& bx, float& by);

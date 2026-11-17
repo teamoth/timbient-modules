@@ -401,6 +401,35 @@ int main(int argc, char** argv) {
         if ((a + 0.05f) / (b + 0.05f) < 2.5f) { poor++; if (ex.size() < 120) ex += std::string(" [") + pr.first + ": " + r.s.substr(0, 16) + "]"; } }
       for (UiMod* m : made) u2.remove(m); }
     if (poor) fails++; std::printf("theme text: %d hard to read%s%s\n", poor, ex.c_str(), poor ? "  WRONG" : ""); }
+  // ECHO: every TYPE repeats (a burst comes back), fades with FEEDBACK at 0.6, and stays in bounds at 0.95 with sound pouring in
+  { std::string res; bool ok = true;
+    for (int ty = 0; ty < 13; ty++) { double w[12] = {}; float mx = 0;
+      for (int mode = 0; mode < 2; mode++) { Module* m = eng.create("echo", 980); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
+        set("type", (float)ty); set("mix", 1); set("time", 0.3f); set("fb", mode ? 0.95f : 0.6f); m->prepare(); Rng r(4);
+        for (int k = 0; k < (int)(10 * 48000 / 64); k++) { for (int i = 0; i < 64; i++) { const int n = k * 64 + i; const float x = (mode || n < 4800) ? (r.uni() * 2 - 1) * 0.4f : 0; m->in[0][0][i] = m->in[0][1][i] = x; }
+          m->render(0, 64); for (int i = 0; i < 64; i++) { const float y = m->out[0][0][i], z = m->out[0][1][i]; if (!std::isfinite(y) || !std::isfinite(z)) ok = false; if (mode) mx = std::max(mx, std::max(std::fabs(y), std::fabs(z))); else w[k * 64 / 48000] += y * y + z * z; } }
+        delete m; }
+      const double a = 10 * std::log10(w[0] / 96000 + 1e-30), b = 10 * std::log10(w[6] / 96000 + 1e-30);
+      if (a < -40 || b > a - 20 || mx > 1.0f) ok = false; char bb[40]; std::snprintf(bb, 40, " %d:%.0f/%.0f/%.2f", ty, a, b, mx); res += bb; }
+    if (!ok) fails++; std::printf("echo types (first second dB / at 6 s / peak at FB .95):%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
+  // NO-INPUT MIXER: quiet with GAIN low, sings near FREQ with GAIN up, never past its ceiling
+  { bool ok = true; double lv[2] = {}; float pkHz = 0, mx = 0;
+    for (int g = 0; g < 2; g++) { Module* m = eng.create("noinput", 990); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
+      set("g1", g ? 0.6f : 0.2f); set("f1", 440); m->prepare(); std::vector<float> rec;
+      for (int k = 0; k < 4 * 48000 / 64; k++) { for (int i = 0; i < 64; i++) m->in[0][0][i] = m->in[0][1][i] = 0; m->render(0, 64); for (int i = 0; i < 64; i++) { rec.push_back(m->out[0][0][i]); mx = std::max(mx, std::fabs(m->out[0][0][i])); } }
+      delete m; const int N = 65536; double s2 = 0; for (size_t i = rec.size() - N; i < rec.size(); i++) s2 += rec[i] * rec[i]; lv[g] = 10 * std::log10(s2 / N + 1e-30);
+      if (g) { std::vector<float> re(N), im(N, 0); for (int i = 0; i < N; i++) re[i] = rec[rec.size() - N + i]; FFT f(N); f.run(re.data(), im.data(), false); double bp = 0; for (int k = 1; k < N / 2; k++) { const double p = re[k] * re[k] + im[k] * im[k]; if (p > bp) { bp = p; pkHz = k * 48000.f / N; } } } }
+    if (lv[0] > -80 || lv[1] < -30 || std::fabs(pkHz - 440) > 30 || mx > 0.71f) ok = false; if (!ok) fails++;
+    std::printf("no-input mixer: gain low %.0f dB, gain up %.0f dB singing at %.0f Hz (FREQ 440), peak %.2f%s\n", lv[0], lv[1], pkHz, mx, ok ? "" : "  WRONG"); }
+  // TAP: three taps in rhythm set a speed row (and a drag doesn't count as a tap)
+  { UiMod* ck = ui.add("clock", 10, 10); UiMod* ec = ui.add("echo", 100, 10); bool ok = true;
+    const int bi = ck->m->def->paramIndex("bpm"), ti = ec->m->def->paramIndex("time");
+    ck->m->p[ck->m->def->paramIndex("sync")].store(0);
+    auto tapAt = [&](UiMod* u, int k, double gap, int n) { for (int i = 0; i < n; i++) { ui.tapRow(u, k); const auto t0 = std::chrono::steady_clock::now(); while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < gap) {} } };
+    tapAt(ck, bi, 0.5, 4); const float b1 = ck->m->p[bi].load(); if (std::fabs(b1 - 120) > 2) ok = false;
+    tapAt(ec, ti, 0.3, 3); const float t1 = ec->m->p[ti].load(); if (std::fabs(t1 - 0.3f) > 0.03f) ok = false;
+    ui.remove(ck); ui.remove(ec); if (!ok) fails++;
+    std::printf("tap tempo: 4 taps 0.5 s apart -> %.0f BPM; 3 taps 0.3 s apart -> echo %.2f s%s\n", b1, t1, ok ? "" : "  WRONG"); }
   // RANDOMISE: themes from one hue, every cable clear against the background, the modules and each other
   { std::mt19937 r(3); int bad = 0, kinds[4] = {}; for (int st = 0; st < 4; st++) for (int k = 0; k < 500; k++) { const Theme t = harmonyTheme(st, [&](int m) { return (int)(r() % (unsigned)m); });
       for (const std::string* c : {&t.audio, &t.trig, &t.modc}) if (contrast(*c, t.bg) < cableNeedBg(st) || contrast(*c, t.mod) < cableNeedMod(st)) bad++;
