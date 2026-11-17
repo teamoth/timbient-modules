@@ -415,12 +415,20 @@ int main(int argc, char** argv) {
   // NO-INPUT MIXER: quiet with GAIN low, sings near FREQ with GAIN up, never past its ceiling
   { bool ok = true; double lv[2] = {}; float pkHz = 0, mx = 0;
     for (int g = 0; g < 2; g++) { Module* m = eng.create("noinput", 990); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
-      set("g1", g ? 0.6f : 0.2f); set("f1", 440); m->prepare(); std::vector<float> rec;
+      set("g1", g ? 0.6f : 0.2f); set("f1", 440); set("pulse", 0); m->prepare(); std::vector<float> rec;
       for (int k = 0; k < 4 * 48000 / 64; k++) { for (int i = 0; i < 64; i++) m->in[0][0][i] = m->in[0][1][i] = 0; m->render(0, 64); for (int i = 0; i < 64; i++) { rec.push_back(m->out[0][0][i]); mx = std::max(mx, std::fabs(m->out[0][0][i])); } }
       delete m; const int N = 65536; double s2 = 0; for (size_t i = rec.size() - N; i < rec.size(); i++) s2 += rec[i] * rec[i]; lv[g] = 10 * std::log10(s2 / N + 1e-30);
       if (g) { std::vector<float> re(N), im(N, 0); for (int i = 0; i < N; i++) re[i] = rec[rec.size() - N + i]; FFT f(N); f.run(re.data(), im.data(), false); double bp = 0; for (int k = 1; k < N / 2; k++) { const double p = re[k] * re[k] + im[k] * im[k]; if (p > bp) { bp = p; pkHz = k * 48000.f / N; } } } }
     if (lv[0] > -80 || lv[1] < -30 || std::fabs(pkHz - 440) > 30 || mx > 0.71f) ok = false; if (!ok) fails++;
     std::printf("no-input mixer: gain low %.0f dB, gain up %.0f dB singing at %.0f Hz (FREQ 440), peak %.2f%s\n", lv[0], lv[1], pkHz, mx, ok ? "" : "  WRONG"); }
+  // NO-INPUT MIXER, PULSE: left alone, it chokes and builds again by itself, about SPEED times a second
+  { bool ok = true; std::string res;
+    for (float spd : {1.f, 3.f}) { Module* m = eng.create("noinput", 991); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
+      set("g1", 0.6f); set("pulse", 0.5f); set("prate", spd); m->prepare(); double acc = 0; int c = 0, rises = 0; bool up = false;
+      for (int k = 0; k < 12 * 48000 / 64; k++) { for (int i = 0; i < 64; i++) m->in[0][0][i] = m->in[0][1][i] = 0; m->render(0, 64);
+        for (int i = 0; i < 64; i++) { acc += m->out[0][0][i] * m->out[0][0][i]; if (++c == 480) { const bool u = 10 * std::log10(acc / 480 + 1e-30) > -30; if (k > 2 * 48000 / 64 && u && !up) rises++; up = u; acc = 0; c = 0; } } }
+      delete m; if (rises < spd * 10 * 0.6f || rises > spd * 10 * 1.6f) ok = false; char b[32]; std::snprintf(b, 32, " %.0f Hz: %d", spd, rises); res += b; }
+    if (!ok) fails++; std::printf("no-input pulse, pulses in 10 s at SPEED%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
   // TAP: three taps in rhythm set a speed row (and a drag doesn't count as a tap)
   { UiMod* ck = ui.add("clock", 10, 10); UiMod* ec = ui.add("echo", 100, 10); bool ok = true;
     const int bi = ck->m->def->paramIndex("bpm"), ti = ec->m->def->paramIndex("time");

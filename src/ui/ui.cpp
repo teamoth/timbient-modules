@@ -57,8 +57,8 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "journey", "midi", "midiout", "qwerty"}},
-  {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "audioin"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "noinput", "listen"}},
+  {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "noinput", "audioin"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -152,7 +152,7 @@ static const Layout& layoutOf(const ModuleDef* d) {
   else {
     static const std::map<std::string, std::vector<std::string>> MODES = {
       {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
-      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"echo", {"type", "wow", "drive", "age", "pattern", "shift", "bend", "sweep", "smear", "crush", "scatter", "density"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
+      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"noinput", {"route", "pulse", "prate"}}, {"echo", {"type", "wow", "drive", "age", "pattern", "shift", "bend", "sweep", "smear", "crush", "scatter", "density"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
     const bool keyed = d->keyIdx >= 0;
     put(key("poly"), 0); for (int j = 0; j < n; j++) if (recButton(d, d->params[j])) put(j, 0);
     if (auto m = MODES.find(d->type); m != MODES.end()) for (auto& k : m->second) put(key(k.c_str()), 0);

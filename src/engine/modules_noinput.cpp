@@ -10,12 +10,12 @@
 namespace tb {
 
 struct NoInput : Module {
-  enum { ROUTE, G1, F1, G2, F2, G3, F3, G4, F4, LOW, HIGH, DRIVE, INPUT, LEVEL };
+  enum { ROUTE, G1, F1, G2, F2, G3, F3, G4, F4, LOW, HIGH, DRIVE, INPUT, LEVEL, PULSE, PRATE };
   static constexpr int C = 4;
-  Biquad pk[C], ls[C], hs[C], bl[C], hpf[C]; float y[C] = {}, dc[C] = {}; Smooth gS[C], fS[C], lowS, highS, drS, inS, lvS; int cnt = 0;
+  Biquad pk[C], ls[C], hs[C], bl[C], hpf[C]; float y[C] = {}, dc[C] = {}, env[C] = {}, chk[C] = {}; bool choked[C] = {}; Smooth gS[C], fS[C], lowS, highS, drS, inS, lvS; int cnt = 0;
   void prepare() override {
     for (int c = 0; c < C; c++) { gS[c].setTime(0.02f, sr); gS[c].snap(e[G1 + 2 * c]); fS[c].setTime(0.02f, sr); fS[c].snap(std::log(e[F1 + 2 * c])); bl[c].set(Biquad::LP, 12000, 0.6f, sr); hpf[c].set(Biquad::HP, 45, 0.6f, sr); }
-    for (Smooth* s : {&lowS, &highS, &drS, &inS, &lvS}) s->setTime(0.02f, sr);
+    for (Smooth* s : {&lowS, &highS, &drS, &inS, &lvS}) s->setTime(0.02f, sr); for (int c = 0; c < C; c++) env[c] = 0;
     lowS.snap(e[LOW]); highS.snap(e[HIGH]); drS.snap(e[DRIVE]); inS.snap(e[INPUT]); lvS.snap(e[LEVEL]);
     retune();
   }
@@ -31,20 +31,30 @@ struct NoInput : Module {
       case 2: R[0][1] = R[1][0] = R[2][3] = R[3][2] = 1; break;                                // PAIRS: 1 and 2 into each other, 3 and 4 too
       case 3: for (int c = 0; c < C; c++) for (int j = 0; j < C; j++) R[c][j] = c == j ? 0.4f : 0.35f; break;   // ALL: everything into everything
     }
+    const float depth = e[PULSE], restart = 0.02f * (1 - depth) * (1 - depth) + 0.0005f, atk = 1 - std::exp(-1.f / (0.02f * sr));
+    static const float SPREAD[C] = {1.f, 1.31f, 0.77f, 1.62f}; float rel[C];
+    for (int c = 0; c < C; c++) rel[c] = 1 - std::exp(-1.f / (std::max(0.01f, 0.2f / e[PRATE]) * SPREAD[c] * sr));
     for (int i = a; i < b; i++) {
       const float x = 0.5f * (in[0][0][i] + in[0][1][i]) * inS.tick() * 2, dr = 1 + drS.tick() * 5, lv = lvS.tick(); lowS.tick(); highS.tick();
-      float g[C]; for (int c = 0; c < C; c++) { const float q = gS[c].tick(); g[c] = 0.05f + q * q * 2.5f; fS[c].tick(); }   // GAIN: about a third of the way up it tips into feedback on its own; higher, enough for rings and pairs too
+      float g[C]; for (int c = 0; c < C; c++) { const float q = gS[c].tick(); chk[c] += ((choked[c] ? 0.f : 1.f) - chk[c]) * 0.003f; const float g0 = 0.05f + q * q * 2.5f; g[c] = g0 * chk[c] + std::min(g0, 0.06f) * (1 - chk[c]); fS[c].tick(); }   // PULSE: a choked channel's gain drops away (smoothly)   // GAIN: about a third of the way up it tips into feedback on its own; higher, enough for rings and pairs too
       if ((cnt++ & 7) == 0) retune();   // FREQ, LOW and HIGH glide (the EQs re-tuned every 8 samples)
       float ny[C];
       for (int c = 0; c < C; c++) {
-        float v = x + (rng.uni() * 2 - 1) * 1e-5f;   // a desk's own faint hiss: what the feedback grows from
+        float v = x + (rng.uni() * 2 - 1) * 1e-4f;   // a desk's own faint hiss: what the feedback grows from
         for (int j = 0; j < C; j++) if (R[c][j] != 0) v += R[c][j] * y[j];
         v *= g[c];
         v = (float)pk[c].run(v, 0); v = (float)ls[c].run(v, 0); v = (float)hs[c].run(v, 0); v = (float)bl[c].run(v, 0);
         v = (float)hpf[c].run(v, 0);   // nothing below about 45 Hz goes round (it would rumble, or creep off-centre)
         ny[c] = softLimit(v * dr) / dr;    // DRIVE: how hard it saturates (and what holds it in bounds); quiet signals pass unchanged, so GAIN alone decides when it tips over
       }
-      for (int c = 0; c < C; c++) y[c] = sane(ny[c]);
+      for (int c = 0; c < C; c++) { y[c] = sane(ny[c]);
+        // PULSE: each channel's own slow memory of how loud it's been. Once it has sung loud enough, the channel chokes (its
+        // gain drops below where it can feed back) and dies away; the memory drains slowly (SPEED; more PULSE, it waits
+        // longer, for sparser pulses), and once it's low enough the
+        // gain comes back and the feedback builds up from the hiss again: on its own, over and over, a rhythm. Each channel
+        // drains at a slightly different rate, so several together make shifting rhythms
+        const float av = std::fabs(y[c]); env[c] += (av > env[c] ? atk : rel[c]) * (av - env[c]);
+        if (depth > 0.01f) { if (!choked[c] && env[c] > 0.12f) choked[c] = true; else if (choked[c] && env[c] < restart) choked[c] = false; } else choked[c] = false; }
       const float mk = std::sqrt(dr) * 1.8f;   // louder again after the drive, then the ceiling
       const float L = (y[0] + 0.35f * y[1] + y[2] * 0.75f + 0.25f * y[3]) * 0.4f, Rr = (0.35f * y[0] + y[1] + 0.25f * y[2] + 0.75f * y[3]) * 0.4f;
       out[0][0][i] = softLimit(L * lv * mk) * 0.7f; out[0][1][i] = softLimit(Rr * lv * mk) * 0.7f;   // the ceiling: never louder than this
@@ -60,6 +70,7 @@ static Reg rNoInput(new ModuleDef{"noinput", "NO-INPUT MIXER", Cat::Proc, {{"IN"
    pct("g4", "GAIN 4", 0.f), prHz("f4", "FREQ 4", 40, 8000, 3300),
    fmt(pr("low", "LOW", -15, 15, 0), [](float v) { char b[16]; std::snprintf(b, 16, "%+.0f DB", v); return std::string(b); }),
    fmt(pr("high", "HIGH", -15, 15, 0), [](float v) { char b[16]; std::snprintf(b, 16, "%+.0f DB", v); return std::string(b); }),
-   pct("drive", "DRIVE", 0.3f), pct("input", "INPUT", 0.f), pct("level", "LEVEL", 0.5f)}, 0, 72, false, [] { return new NoInput(); }});
+   pct("drive", "DRIVE", 0.3f), pct("input", "INPUT", 0.f), pct("level", "LEVEL", 0.5f),
+   pct("pulse", "PULSE", 0.5f), fmt(prExp("prate", "SPEED", 0.1f, 8, 1), [](float v) { char b[16]; std::snprintf(b, 16, "%.2g HZ", v); return std::string(b); })}, 0, 72, false, [] { return new NoInput(); }});
 
 }  // namespace tb

@@ -14,6 +14,7 @@
 #include "../engine/analyse.h"
 #include "midi.h"
 #include <cstdio>
+#include <fstream>
 #include <ctime>
 #include <set>
 #include <mutex>
@@ -22,7 +23,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.40.0";
+static const char* VERSION = "0.41.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -88,13 +89,17 @@ struct Sound {
 };
 
 // ---------------- results from the system file dialogs (they may arrive on another thread) ----------------
-struct DialogResult { bool open; std::string path; int target = 0, slot = 0; bool folder = false; };   // target: the module a sound file is for
+struct DialogResult { bool open; std::string path; int target = 0, slot = 0; bool folder = false; std::string recFrom; bool recording = false; };   // recording: where a just-stopped recording should go (path empty: cancelled)   // target: the module a sound file is for
 static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
 static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "tmbnt;json;txt"}};
 static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
 static void onSaveDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({false, files[0]}); } }
 static void onFolderDialog(void* ud, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.folder = true; r.target = ud ? -1 : 0; dlgResults.push_back(r); } }
 static const SDL_DialogFileFilter AUDIO_FILTER[] = {{"Sound files", "wav;wave;aif;aiff;flac;mp3"}};
+static const SDL_DialogFileFilter WAV_FILTER[] = {{"WAV sound file", "wav"}};
+// where to save a recording that has just stopped: ud is the recording as it was made (a heap string, freed here)
+static void onRecDialog(void* ud, const char* const* files, int) { std::string* from = (std::string*)ud; DialogResult r{false, files && files[0] ? files[0] : ""}; r.recording = true; r.recFrom = *from; delete from;
+  std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back(r); }
 // a sound file chosen for a Sample or Grain Looper: ud carries the module id and the place (-1: fill the empty places, one per file)
 static void onAudioDialog(void* ud, const char* const* files, int) {
   if (!files) return; const intptr_t v = (intptr_t)ud; const int id = (int)(v >> 8), slot = (int)(v & 0xff) - 1; std::lock_guard<std::mutex> l(dlgMx);
@@ -265,11 +270,35 @@ int main(int argc, char** argv) {
   qwDefault();
   if (const Json* a = settings.get("qwertyMap")) if (a->t == Json::ARR && a->a.size() == 36) for (int i = 0; i < 36; i++) qwMap[i] = a->a[i].t == Json::STR && !a->a[i].s.empty() ? SDL_GetKeyFromName(a->a[i].s.c_str()) : 0;
   qwNames();
+  // QWERTY MIDI: the layouts you've saved (a name, and the key for each of the 36 notes), kept with the settings
+  std::vector<std::pair<std::string, std::vector<std::string>>> qwMine;
+  if (const Json* a = settings.get("qwertyLayouts")) if (a->t == Json::ARR) for (auto& x : a->a) {
+    const Json* nm = x.get("name"); const Json* ks = x.get("keys"); if (!nm || nm->t != Json::STR || !ks || ks->t != Json::ARR || ks->a.size() != 36) continue;
+    std::vector<std::string> v; for (auto& k : ks->a) v.push_back(k.t == Json::STR ? k.s : ""); qwMine.push_back({nm->s, v}); }
+  auto qwMineSave = [&] { Json a = Json::array(); for (auto& [nm, ks] : qwMine) { Json o = Json::object(); o.set("name", Json::string(nm)); Json k = Json::array(); for (auto& x : ks) k.push(Json::string(x)); o.set("keys", k); a.push(o); }
+    settings.set("qwertyLayouts", a); saveSettings(); };
   ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
     const std::string& ty = u->m->def->type;
     if (ty == "qwerty" && k == "reset") {   // KEY LAYOUTS: the ready-made ones to choose from (your own changes are kept until you pick one)
-      Dropdown l; l.items = {"PIANO LAYOUT (Z S X D ...)", "TIMBIENT LAYOUT (Y 1 U 2 ...)"}; l.x = u->x - ui.viewX + 12; l.y = u->y - ui.viewY + 74;
-      l.pick = [&, u](int i) { qwSet(i == 0 ? QW_DEFAULT : QW_ROWS); qwSave(); ui.qwLearn = -1; ui.status(std::string("QWERTY MIDI: ") + (i == 0 ? "THE PIANO LAYOUT" : "THE TIMBIENT LAYOUT"), 3); };
+      // the two ready-made layouts, then yours, then SAVE THIS LAYOUT (and REMOVE, once there's one to remove)
+      Dropdown l; l.items = {"PIANO LAYOUT (Z S X D ...)", "TIMBIENT LAYOUT (Y 1 U 2 ...)"}; for (auto& m : qwMine) l.items.push_back(m.first);
+      const int nMine = (int)qwMine.size(); l.items.push_back("SAVE THIS LAYOUT..."); if (nMine) l.items.push_back("REMOVE A SAVED LAYOUT...");
+      l.x = u->x - ui.viewX + 12; l.y = u->y - ui.viewY + 74;
+      l.pick = [&, u, nMine](int i) {
+        if (i < 2) { qwSet(i == 0 ? QW_DEFAULT : QW_ROWS); qwSave(); ui.qwLearn = -1; ui.status(std::string("QWERTY MIDI: ") + (i == 0 ? "THE PIANO LAYOUT" : "THE TIMBIENT LAYOUT"), 3); return; }
+        if (i < 2 + nMine) { const auto& m = qwMine[i - 2]; for (int k = 0; k < 36; k++) qwMap[k] = m.second[k].empty() ? 0 : SDL_GetKeyFromName(m.second[k].c_str()); qwSave(); ui.qwLearn = -1; ui.status("QWERTY MIDI: " + m.first, 3); return; }
+        if (i == 2 + nMine) {   // SAVE THIS LAYOUT: a name for the keys as they are now (the same name again replaces it)
+          ui.askText("NAME THIS LAYOUT", "MY LAYOUT", [&](const std::string& nm0) { std::string nm = nm0; for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); if (nm.empty()) return;
+            std::vector<std::string> ks; for (int k = 0; k < 36; k++) ks.push_back(qwMap[k] ? SDL_GetKeyName(qwMap[k]) : "");
+            bool replaced = false; for (auto& m : qwMine) if (m.first == nm) { m.second = ks; replaced = true; } if (!replaced) qwMine.push_back({nm, ks});
+            qwMineSave(); ui.status((replaced ? "QWERTY MIDI: UPDATED " : "QWERTY MIDI: SAVED ") + nm + " (IT'S IN KEY LAYOUTS)", 4); }); return; }
+        // REMOVE A SAVED LAYOUT: which one, then sure?
+        Dropdown r; for (auto& m : qwMine) r.items.push_back(m.first); r.x = u->x - ui.viewX + 12; r.y = u->y - ui.viewY + 74;
+        r.pick = [&, u](int j) { if (j < 0 || j >= (int)qwMine.size()) return; const std::string nm = qwMine[j].first;
+          Dropdown c; c.items = {"REMOVE " + nm, "KEEP IT"}; c.x = u->x - ui.viewX + 12; c.y = u->y - ui.viewY + 74;
+          c.pick = [&, nm](int q) { if (q != 0) return; for (size_t z = 0; z < qwMine.size(); z++) if (qwMine[z].first == nm) { qwMine.erase(qwMine.begin() + z); break; } qwMineSave(); ui.status("QWERTY MIDI: REMOVED " + nm, 3); };
+          ui.openDropdown(c); };
+        ui.openDropdown(r); };
       ui.openDropdown(l); return true; }
     if ((ty == "sample" || ty == "looper" || ty == "stretch") && k == "edit") {   // EDIT SOUND: the editor, with this module's sound (for SAMPLE, the place on show)
       const int slot = ty == "sample" ? std::max(0, std::min(UiMod::SLOTS - 1, u->shown)) : 0; const UiMod::Snd& sd = u->snd[slot];
@@ -296,7 +325,9 @@ int main(int argc, char** argv) {
       if (!rec.on()) { std::time_t tt = std::time(nullptr); char nm[64]; std::strftime(nm, 64, "timbient-%Y%m%d-%H%M%S.wav", std::localtime(&tt));
         if (rec.start(engine, recDir + nm)) ui.status("RECORDING"); else ui.status("COULD NOT START A RECORDING IN " + recDir, 6); }
       else { const std::string p = rec.path; const bool got = rec.stop(engine); if (Module* o = outMod()) o->disp[1].store(0);
-        if (got) { std::string nm = p.substr(p.find_last_of("/\\") + 1); for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); ui.status("SAVED " + nm + " IN MUSIC / TIMBIENT MODULES", 6); } else { std::remove(p.c_str()); ui.status("NOTHING RECORDED"); } }
+        if (got) { ui.status("RECORDING STOPPED: CHOOSE WHERE TO SAVE IT", 6);   // ask where it goes (it's safe in Music / Timbient Modules meanwhile)
+          SDL_ShowSaveFileDialog(onRecDialog, new std::string(p), win, WAV_FILTER, 1, p.c_str()); }
+        else { std::remove(p.c_str()); ui.status("NOTHING RECORDED"); } }
       return true; }
     if (ty == "midiout" && k == "pick") {   // MIDI OUT: choose the device
       const auto names = midi.outputs(); if (names.empty()) { ui.status("NO MIDI OUTPUTS FOUND. PLUG ONE IN AND TRY AGAIN", 4); return true; }
@@ -579,6 +610,14 @@ int main(int argc, char** argv) {
     // files chosen in the system dialogs
     { std::vector<DialogResult> rs; { std::lock_guard<std::mutex> l(dlgMx); rs.swap(dlgResults); }
       for (auto& r : rs) {
+        if (r.recording) {   // a recording: moved where it was asked to go, or left in Music / Timbient Modules
+          std::string nm = r.recFrom.substr(r.recFrom.find_last_of("/\\") + 1); for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch);
+          if (r.path.empty() || r.path == r.recFrom) { ui.status("KEPT " + nm + " IN MUSIC / TIMBIENT MODULES", 6); continue; }
+          std::string to = r.path; if (to.size() < 4 || (to.substr(to.size() - 4) != ".wav" && to.substr(to.size() - 4) != ".WAV")) to += ".wav";
+          bool ok = std::rename(r.recFrom.c_str(), to.c_str()) == 0;
+          if (!ok) { std::ifstream a(r.recFrom, std::ios::binary); std::ofstream b(to, std::ios::binary); b << a.rdbuf(); ok = a.good() && b.good(); b.close(); if (ok) std::remove(r.recFrom.c_str()); }   // another drive: copied across
+          std::string shown = to.substr(to.find_last_of("/\\") + 1); for (auto& ch : shown) ch = (char)std::toupper((unsigned char)ch);
+          ui.status(ok ? "SAVED " + shown : "COULDN'T SAVE THERE: KEPT " + nm + " IN MUSIC / TIMBIENT MODULES", 6); continue; }
         if (r.folder && r.target == -1) {   // the old in-app sessions, each as its own .tmbnt in this folder
           int n = 0; for (auto& ss : store.list) { std::string nm; for (char ch : ss.name) nm += (std::isalnum((unsigned char)ch) || ch == ' ' || ch == '-' || ch == '_') ? ch : '_';
             if (nm.empty()) nm = "SESSION"; std::string path = r.path + "/" + nm + ".tmbnt"; for (int k = 2; !readFile(path).empty(); k++) path = r.path + "/" + nm + " " + std::to_string(k) + ".tmbnt";
