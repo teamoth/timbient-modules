@@ -163,17 +163,17 @@ static Reg rLfo(new ModuleDef{"lfo", "LFO", Cat::Mod, {{"CLOCK", PType::Trig}}, 
 
 // ---------------- OUTPUT: crossfade A/B, LOW / MID / HIGH EQ, level, to the master ----------------
 struct Out : Module {
-  Biquad lo, mid, hi; float gA = 1, gB = 0, lev = 0.85f, peak = 0, sig[3] = {99, 99, 99};
-  enum { REC, AGAIN, XF, LEVEL_, LOW, MID, HIGH };
+  Biquad lo, mid, hi; float lev = 0.85f, peak = 0, sig[3] = {99, 99, 99};
+  enum { REC, AGAIN, LEVEL_, LOW, MID, HIGH };
   void render(int a, int b) override {
-    const float x = clampf(e[XF], 0, 1), ta = std::cos(x * PI / 2), tb = std::sin(x * PI / 2), k = 1 - std::exp(-1.f / (0.012f * sr));
+    const float k = 1 - std::exp(-1.f / (0.012f * sr));
     if (e[LOW] != sig[0] || e[MID] != sig[1] || e[HIGH] != sig[2]) { sig[0] = e[LOW]; sig[1] = e[MID]; sig[2] = e[HIGH];   // two gentle shelves and a broad middle
       lo.setShelf(false, 200, e[LOW], sr); mid.set(Biquad::PEAK, 1000, 0.6f, sr, e[MID]); hi.setShelf(true, 4000, e[HIGH], sr); }
     const bool flat = std::fabs(e[LOW]) < 0.05f && std::fabs(e[MID]) < 0.05f && std::fabs(e[HIGH]) < 0.05f;
     for (int i = a; i < b; i++) {
-      gA += (ta - gA) * k; gB += (tb - gB) * k; lev += (e[LEVEL_] - lev) * k;
+      lev += (e[LEVEL_] - lev) * k;
       for (int ch = 0; ch < 2; ch++) {
-        float v = in[0][ch][i] * gA + in[1][ch][i] * gB;
+        float v = in[0][ch][i];
         if (!flat) v = hi.run(mid.run(lo.run(v, ch), ch), ch);
         v = sane(v) * lev; (ch ? eng->masterR : eng->masterL)[i] += v; float& pk = ch ? peakR : peak; pk = std::max(pk * 0.99995f, std::fabs(v));
       }
@@ -183,7 +183,7 @@ struct Out : Module {
   float peakR = 0;
 };
 static ParamDef eqP(const char* k, const char* l) { auto p = pr(k, l, -12, 12, 0); p.fmt = [](float v) { char b[16]; std::snprintf(b, 16, "%+.1fDB", v); return std::string(std::fabs(v) < 0.05f ? "0DB" : b); }; return p; }
-static Reg rOut(new ModuleDef{"out", "OUTPUT", Cat::Out, {{"A", PType::Audio}, {"B", PType::Audio}}, {},
-  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pct("xf", "X-FADE", 0), pctX("level", "LEVEL", 1.5f, 0.85f), noMod(eqP("low", "LOW")), noMod(eqP("mid", "MID")), noMod(eqP("high", "HIGH"))}, 30, 68, true, [] { return new Out(); }});
+static Reg rOut(new ModuleDef{"out", "OUTPUT", Cat::Out, {{"IN", PType::Audio}}, {},
+  {ACT("rec", "RECORD"), ACT("again", "RECORDINGS"), pctX("level", "LEVEL", 1.5f, 0.85f), noMod(eqP("low", "LOW")), noMod(eqP("mid", "MID")), noMod(eqP("high", "HIGH"))}, 22, 68, true, [] { return new Out(); }});
 
 }  // namespace tb

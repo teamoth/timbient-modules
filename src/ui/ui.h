@@ -15,8 +15,7 @@ struct UiMod; struct UiCable;
 void keysCell(const UiMod& u, int& cw, int& ch);   // NOTE GRID: how big its buttons are
 struct UiMod {
   int colScroll = 0;   // TRACKER: the first of the columns on show
-  int tlSel = -1;      // TIMELINE: the event picked (its place in the list), or -1
-  const std::vector<UiCable>* cables = nullptr; std::vector<float> spec; float clearAsk = 0, shakeT = 0;   // spec: STRETCH's spectrum as shown (gliding)
+  const std::vector<UiCable>* cables = nullptr; std::vector<float> spec, specPk, specPkT, specRing; float clearAsk = 0, shakeT = 0;   // spec: STRETCH's spectrum as shown (gliding)
   int valK = -1; float valT = 0;   // valK, valT: the row - or + last moved, and how much longer its value shows   // clearAsk: CLEAR was tapped once (a second tap within this long clears)   // its Ui's cables (a row can wait on one)
   int lastTake = 0, fbSent = -1; float recGiveT = 0;   // SAMPLER: the last take copied out; the feedback warning sent; when it was last given somewhere to record
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
@@ -166,7 +165,7 @@ public:
   int inJackX(const UiMod& u) const { return u.x + (jacksIn ? 4 : 0); }
   int outJackX(const UiMod& u) const { return u.x + geom(u).w - 1 - (outInHead(u) && jacksIn ? 11 : jacksIn ? 4 : 0); }
   int sockX(const UiMod& u) const { return u.x + (jacksIn ? 4 : -2); }
-  // the SWITCH socket in the footer, beside the ON / M buttons: a trigger turns the module on, off or over (a Timeline lane, say)
+  // the SWITCH socket in the footer, beside the ON / M buttons: a trigger turns the module on, off or over (any trigger)
   bool hasSwitch(const UiMod& u) const;
   bool hasKey(const UiMod& u) const; int kyX(const UiMod& u) const;
   bool feedsBack(int id, int port) const;
@@ -177,18 +176,12 @@ public:
   int minusX(const UiMod& u, int j) const;   // where a slider row's "-" sits, from the module's left
 private:
   void keysPress(UiMod& u, int x, int y);
-  // TIMELINE
-  void drawTimeline(Canvas& c, UiMod& u, int x, int y, int w);
-  void timelineDown(UiMod& u, int vx, int vy, int w);
-  void timelineDrag(UiMod& u, int vx, int vy, int w);
-  void timelineUp(UiMod& u, bool moved, int dir);
-  std::string tlEventText(UiMod& u, int i);
   void drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt);
   void trackerWatch(UiMod& u);
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_TLINE, D_NLOOP, D_HOLD, D_WANDER, D_EUCLID };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID };
   UiMod* tapM = nullptr; int tapK = -1; std::vector<double> tapTimes;   // TAP on speed rows
   float wanderTapT = -9; int wanderTapK = -1; UiMod* wanderTapM = nullptr;   // the Tracker's column numbers: a second tap soon after sets RANDOM NOTE back to 0
   // cables as curves you can touch

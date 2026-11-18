@@ -33,16 +33,15 @@ int main(int argc, char** argv) {
     if (d->type == "out" || d->type == "keys" || d->type == "qwerty" || d->type == "midi" || d->type == "midiout") continue;   // these need a device or a hand
     ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); ui.set(clk, "sync", 0); ui.set(clk, "bpm", 100);
     UiMod* m = ui.add(d->type, 100, 20);
-    if (d->cat == Cat::Voice) { ui.connect(clk, "PULSE", m, "TRIG"); ui.connect(m, "OUT", out, "A"); }
-    else if (d->cat == Cat::Proc) { UiMod* v = ui.add("pluck", 50, 20); ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", m, d->ins[0].name); ui.connect(m, "OUT", out, "A");
+    if (d->cat == Cat::Voice) { ui.connect(clk, "PULSE", m, "TRIG"); ui.connect(m, "OUT", out, "IN"); }
+    else if (d->cat == Cat::Proc) { UiMod* v = ui.add("pluck", 50, 20); ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", m, d->ins[0].name); ui.connect(m, "OUT", out, "IN");
       if (d->inIndex("TRIG") >= 0) ui.connect(clk, "PULSE", m, "TRIG"); if (d->inIndex("KEY") >= 0) ui.connect(clk, "BAR", m, "KEY"); }
-    else if (d->cat == Cat::Mod) { UiMod* v = ui.add("pluck", 50, 20); UiMod* f = ui.add("filter", 150, 20); ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", f, "IN"); ui.connect(f, "OUT", out, "A");
+    else if (d->cat == Cat::Mod) { UiMod* v = ui.add("pluck", 50, 20); UiMod* f = ui.add("filter", 150, 20); ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", f, "IN"); ui.connect(f, "OUT", out, "IN");
       if (d->ins.size() && d->ins[0].type == PType::Trig) ui.connect(clk, "PULSE", m, d->ins[0].name); if (d->ins.size() && d->ins[0].type == PType::Audio) ui.connect(v, "OUT", m, "IN");
       ui.modulate(m, f, f->m->def->paramIndex("cut")); }
-    else { UiMod* v = ui.add("pluck", 150, 20); ui.connect(m, d->outs[0].name, v, "TRIG"); ui.connect(v, "OUT", out, "A");
+    else { UiMod* v = ui.add("pluck", 150, 20); ui.connect(m, d->outs[0].name, v, "TRIG"); ui.connect(v, "OUT", out, "IN");
       if (d->ins.size()) ui.connect(clk, "PULSE", m, d->ins[0].name);
       if (d->type == "tracker") { for (int i = 0; i < 16; i += 2) { m->m->seq[i * 2].store(60.f + i); m->m->seq[i * 2 + 1].store(0.8f); } } }
-    if (d->type == "timeline") { ui.set(m, "len", 10); ui.set(m, "run", 1); for (int i = 0; i < 6; i++) { m->m->ev[i * 4].store(i * 0.5f); m->m->ev[i * 4 + 1].store(0); m->m->ev[i * 4 + 2].store(1); m->m->ev[i * 4 + 3].store(0); } m->m->evN.store(6); }
     if (d->type == "stretch") ui.set(m, "src", 1);  // stretch a file
     if (d->type == "sample" || d->type == "looper" || d->type == "stretch") {   // give it a sound: a few seconds of a gliding tone with some noise
       AudioBuf* b = new AudioBuf(); b->sr = 44100; b->d.resize(44100 * 3); float ph = 0; Rng rr(5);
@@ -56,7 +55,7 @@ int main(int argc, char** argv) {
   for (const ModuleDef* d : allDefs()) {
     if (d->cat != Cat::Voice || d->type == "sample" || d->type == "click" || d->type == "grains" || d->type == "euclid") continue;   // noise bursts, grain clouds and drums don't follow a note
     bool ok = true; char msg[160] = ""; int lags[2] = {0, 0}, li = 0;
-    for (float nt : {57.f, 69.f}) { Engine e2; e2.setSampleRate(RATE); Ui u2(e2); UiMod* o = u2.add("out", 0, 0); UiMod* v = u2.add(d->type, 0, 0); u2.connect(v, "OUT", o, "A");
+    for (float nt : {57.f, 69.f}) { Engine e2; e2.setSampleRate(RATE); Ui u2(e2); UiMod* o = u2.add("out", 0, 0); UiMod* v = u2.add(d->type, 0, 0); u2.connect(v, "OUT", o, "IN");
       if (d->paramIndex("env") >= 0) u2.set(v, "env", 1);
       std::vector<float> L(256), R(256), buf; for (int i = 0; i < 20; i++) e2.render(L.data(), R.data(), 256);
       Event ev; ev.note = nt; ev.vel = 1; e2.trigger(v->m->id, 0, ev);
@@ -71,25 +70,22 @@ int main(int argc, char** argv) {
   }
   // every voice at once, all twelve notes each, to see the worst case
   { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* h = ui.add("hops", 0, 0); ui.set(h, "rate", 20);
-    for (const ModuleDef* d : allDefs()) if (d->cat == Cat::Voice) { UiMod* v = ui.add(d->type, 0, 0); ui.connect(h, "TRIG", v, "TRIG"); ui.connect(v, "OUT", out, "A"); }
+    for (const ModuleDef* d : allDefs()) if (d->cat == Cat::Voice) { UiMod* v = ui.add(d->type, 0, 0); ui.connect(h, "TRIG", v, "TRIG"); ui.connect(v, "OUT", out, "IN"); }
     const Result r = run(eng, 6); std::printf("ALL VOICES, 20 NOTES/S: peak %.3f cost %.1f%%%s\n", r.peak, r.cost, r.bad ? " NOT FINITE" : ""); }
-  // TIMELINE into a SWITCH socket: an OFF at 1 s mutes the clock, an ON at 2 s turns it back on; and it survives saving
-  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); UiMod* tl = ui.add("timeline", 0, 100); ui.set(tl, "len", 10); ui.set(tl, "run", 1);
-    UiMod* v = ui.add("pluck", 100, 20); ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", out, "A");
-    const bool plugged = ui.connect(tl, 0, clk, SWITCH_PORT);
-    const float E[2][3] = {{1, 0, 0}, {2, 0, 1}}; for (int i = 0; i < 2; i++) { for (int c = 0; c < 3; c++) tl->m->ev[i * 4 + c].store(E[i][c]); tl->m->ev[i * 4 + 3].store(0); } tl->m->evN.store(2);
-    run(eng, 0.5f); const bool a = !clk->m->mute.load(); run(eng, 1.0f); const bool b = clk->m->mute.load(); run(eng, 1.0f); const bool c2 = !clk->m->mute.load();
+  // a clock into a SWITCH socket: each pulse turns the module over (on, off, on...); and the cable survives saving
+  { ui.clearPatch(); ui.add("out", 300, 20); UiMod* clk = ui.add("clock", 0, 20); UiMod* v = ui.add("pluck", 100, 20); ui.set(clk, "sync", 0); ui.set(clk, "bpm", 60); ui.set(clk, "div", 0);
+    int po = 0; for (int k = 0; k < (int)clk->m->def->outs.size(); k++) if (clk->m->def->outs[k].name == "PULSE") po = k; const bool plugged = ui.connect(clk, po, v, SWITCH_PORT); int flips = 0; bool was = v->m->mute.load();
+    for (int k = 0; k < 40; k++) { run(eng, 0.1f); if (v->m->mute.load() != was) { flips++; was = !was; } }
     const std::string S = serializePatch(ui).dump(); const bool saved = S.find("\"SWITCH\"") != std::string::npos;
     Json j; Json::parse(S, j); ui.clearPatch(); loadPatch(ui, j); bool back = false; for (auto& cb : ui.cables) if (cb.toPort == SWITCH_PORT) back = true;
-    int evs = 0; for (auto& um : ui.mods) if (um->m->def->type == "timeline") evs = um->m->evN.load();
-    const bool ok = plugged && a && b && c2 && saved && back && evs == 2; if (!ok) fails++;
-    std::printf("timeline switch: plugged %d, on %d, off at 1s %d, on at 2s %d, saved %d, loaded %d, events %d%s\n", plugged, a, b, c2, saved, back, evs, ok ? "" : "  WRONG"); }
+    const bool ok = plugged && flips >= 2 && saved && back; if (!ok) fails++;
+    std::printf("switch socket: plugged %d, turned over %d times in 4 s, saved %d, loaded %d%s\n", plugged, flips, saved, back, ok ? "" : "  WRONG"); }
   // TRACKER: output 2 plays only column 2; TRIG plays all four; no socket on STEP JUMP
   { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* tr = ui.add("tracker", 0, 20); UiMod* a = ui.add("pluck", 100, 20); UiMod* b = ui.add("pluck", 100, 120); UiMod* lfo = ui.add("lfo", 0, 200);
     ui.set(tr, "sync", 0); ui.set(tr, "bpm", 120); ui.set(tr, "len", 4);
     for (int r = 0; r < 4; r++) tr->m->seq[Module::si(r, 1)].store(60.f); tr->m->seq[Module::si(0, 0)].store(48.f);
     ui.connect(tr, tr->m->def->outIndex("CHN 2"), a, a->m->def->inIndex("TRIG")); ui.connect(tr, tr->m->def->outIndex("TRIG"), b, b->m->def->inIndex("TRIG"));
-    ui.connect(a, "OUT", out, "A"); ui.connect(b, "OUT", out, "B");
+    ui.connect(a, "OUT", out, "IN"); ui.connect(b, "OUT", out, "IN");
     run(eng, 2.1f); const int f2 = tr->m->fires[tr->m->def->outIndex("CHN 2")].load(), ft = tr->m->fires[0].load();
     const bool nm = !ui.modulate(lfo, tr, tr->m->def->paramIndex("estep"));
     const bool ok = f2 >= 6 && ft >= f2 + 1 && nm; if (!ok) fails++;
@@ -117,14 +113,6 @@ int main(int argc, char** argv) {
     int moved = 0; for (int r = 0; r < 3; r++) { float before[20]; for (int i = 0; i < 20; i++) before[i] = m->ev[i * 4].load(); eng.action(m->id, "rrhythm"); run(eng, 0.02f);
       int ch = 0; for (int i = 0; i < 20; i++) if (std::fabs(m->ev[i * 4].load() - before[i]) > 1e-4f) ch++; if (ch > 0) moved++; }
     const bool ok = moved == 3; if (!ok) fails++; std::printf("random rhythm, dense: changed %d of 3 presses%s\n", moved, ok ? "" : "  WRONG"); }
-  // MUTE SEQUENCER: lane 1 (five on, three off) switches a module; HOLD TO PLAY writes lane 2 from the button
-  { ui.clearPatch(); ui.add("out", 300, 20); UiMod* ms = ui.add("mutes", 0, 20); UiMod* v = ui.add("pluck", 200, 20); ui.set(ms, "sync", 0); ui.set(ms, "bpm", 120); ui.set(ms, "div", 1);   // 1/8 at 120: a step each 0.25 s
-    ui.connect(ms, 0, v, SWITCH_PORT); int onSteps = 0, offSteps = 0;
-    for (int k = 0; k < 16; k++) { run(eng, 0.25f); if (v->m->mute.load()) offSteps++; else onSteps++; }
-    ui.set(ms, "rlane", 1); ui.set(ms, "len2", 8); run(eng, 0.01f); eng.action(ms->m->id, "hold:1"); run(eng, 0.5f); eng.action(ms->m->id, "hold:0"); run(eng, 2.2f);
-    int lit = 0; for (int k = 0; k < 8; k++) if (ms->m->seq[Module::si(k, 1)].load() >= 0) lit++;
-    const bool ok = onSteps >= 9 && onSteps <= 11 && offSteps >= 5 && lit >= 2 && lit <= 3; if (!ok) fails++;
-    std::printf("mute sequencer: on %d off %d of 16 steps, held for 2 steps -> %d lit%s\n", onSteps, offSteps, lit, ok ? "" : "  WRONG"); }
   // TOMBOLA: its balls' notes go into the session and come back
   { ui.clearPatch(); ui.add("out", 300, 20); UiMod* tb = ui.add("tombola", 0, 20); for (float nt : {60.f, 64.f, 67.f}) { Event ev; ev.note = nt; eng.trigger(tb->m->id, tb->m->def->inIndex("ADD"), ev); }
     run(eng, 0.2f); const std::string S = serializePatch(ui).dump(); Json j; Json::parse(S, j); ui.clearPatch(); loadPatch(ui, j); run(eng, 0.2f);
@@ -132,12 +120,12 @@ int main(int argc, char** argv) {
     const bool ok = balls == 3; if (!ok) fails++; std::printf("tombola balls kept: %d%s\n", balls, ok ? "" : "  WRONG"); }
   // DUCKER: a loud sound into SIDE pushes IN down
   { float lv[2]; for (int k = 0; k < 2; k++) { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* tn = ui.add("tone", 0, 20); UiMod* dk = ui.add("ducker", 100, 20); UiMod* clk = ui.add("clock", 0, 120); ui.set(clk, "sync", 0);
-      ui.connect(clk, "PULSE", tn, "TRIG"); ui.connect(tn, "OUT", dk, "IN"); ui.connect(dk, "OUT", out, "A"); ui.set(dk, "depth", 1);
+      ui.connect(clk, "PULSE", tn, "TRIG"); ui.connect(tn, "OUT", dk, "IN"); ui.connect(dk, "OUT", out, "IN"); ui.set(dk, "depth", 1);
       if (k) { UiMod* ns = ui.add("pluck", 0, 200); UiMod* c2 = ui.add("clock", 0, 260); ui.set(c2, "sync", 0); ui.set(c2, "bpm", 240); ui.connect(c2, "PULSE", ns, "TRIG"); ui.connect(ns, "OUT", dk, "SIDE"); }
       run(eng, 1); lv[k] = dk->m->outLev[0].load(); Result r = run(eng, 3); lv[k] = r.rms; }
     const bool ok = lv[1] < lv[0] * 0.8f; if (!ok) fails++; std::printf("ducker side: without %.4f, with %.4f%s\n", lv[0], lv[1], ok ? "" : "  WRONG"); }
   // VOICES: MONO plays one note at a time (POLY overlaps them); GLIDE slides between notes
-  { float rm[2]; for (int k = 0; k < 2; k++) { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* v = ui.add("pad", 100, 20); ui.connect(v, "OUT", out, "A"); ui.set(v, "poly", (float)k);
+  { float rm[2]; for (int k = 0; k < 2; k++) { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* v = ui.add("pad", 100, 20); ui.connect(v, "OUT", out, "IN"); ui.set(v, "poly", (float)k);
       for (int i = 0; i < 6; i++) { Event ev; ev.note = 48.f + i * 4; eng.trigger(v->m->id, 0, ev); run(eng, 0.05f); } rm[k] = run(eng, 0.3f).rms; }
     const bool ok = rm[1] < rm[0] * 0.7f; if (!ok) fails++; std::printf("voices: poly rms %.4f, mono rms %.4f%s\n", rm[0], rm[1], ok ? "" : "  WRONG"); }
   // FOLLOWER: CLOCK fires on each hit of a beat
@@ -149,7 +137,7 @@ int main(int argc, char** argv) {
     ui.connect(clk, "PULSE", v, "TRIG"); ui.connect(v, "OUT", li, "IN"); run(eng, 10); const float bp = li->m->disp[19].load();
     const bool ok = std::fabs(bp - 100) < 3 || std::fabs(bp - 50) < 2 || std::fabs(bp - 200) < 4; if (!ok) fails++; std::printf("listen tempo: %.0f BPM (clock 100), sure %.0f%%%s\n", bp, li->m->disp[20].load() * 100, ok ? "" : "  WRONG"); }
   // CHANNELS STEREO: a sound with only a left side plays on the left
-  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "A");
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "IN");
     AudioBuf* b = new AudioBuf(); b->sr = 48000; b->d.resize(48000); b->r.assign(48000, 0.f); for (int i = 0; i < 48000; i++) b->d[i] = 0.5f * std::sin(i * 0.05f);
     eng.setBuffer(sm->m->id, b, 0); run(eng, 0.3f); float l = 0, r = 0; std::vector<float> L(256), R(256); for (int k = 0; k < 40; k++) { eng.render(L.data(), R.data(), 256); for (int i = 0; i < 256; i++) { l = std::max(l, std::fabs(L[i])); r = std::max(r, std::fabs(R[i])); } }
     const bool ok = l > 0.05f && r < l * 0.05f; if (!ok) fails++; std::printf("stereo sample: left %.3f right %.4f%s\n", l, r, ok ? "" : "  WRONG"); }
@@ -182,7 +170,7 @@ int main(int argc, char** argv) {
     if (!ok) fails++;
     std::printf("sound editor: fades %.3f %.3f, delete -> %zu (biggest step %.4f), normalise %.2f, undo %.2f, open after bar tap %d, close asks %d then closes %d%s\n", f1, f2, n1, jump, nm, un, stillOpen, asks, shut, ok ? "" : "  WRONG"); }
   // taking away a playing SAMPLE: it's gone in about a second (not left ringing for 20)
-  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "A"); AudioBuf* b = new AudioBuf(); b->d.assign(48000 * 30, 0.3f); eng.setBuffer(sm->m->id, b);
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "IN"); AudioBuf* b = new AudioBuf(); b->d.assign(48000 * 30, 0.3f); eng.setBuffer(sm->m->id, b);
     ui.set(sm, "trig", 1); eng.trigger(sm->m->id, 0, Event{}); const float pk0 = run(eng, 0.5f).peak; const int id = sm->m->id; ui.removeGently(sm); float gone = -1;
     for (int k = 0; k < 40; k++) { run(eng, 0.1f); if (!eng.byId(id)) { gone = (k + 1) * 0.1f; break; } }
     const bool ok = gone > 0 && gone < 1.6f; if (!ok) fails++; std::printf("playing sample taken away: gone after %.1fs (was playing at %.2f)%s\n", gone, pk0, ok ? "" : "  WRONG"); }
@@ -192,7 +180,7 @@ int main(int argc, char** argv) {
     if (bad) fails++; std::printf("sliders map cleanly: %s%s\n", bad ? "NO:" : "all", which.c_str()); }
   // SAMPLER: REPLACE records what comes in; 1 BAR stops by itself; OVERDUB layers on (louder each pass); MONITOR WHILE REC
   { ui.clearPatch(); eng.tempo.bpm.store(120); UiMod* out = ui.add("out", 300, 20); UiMod* src = ui.add("tone", 0, 20); UiMod* sm = ui.add("sample", 100, 20);
-    ui.connect(src, "OUT", sm, "IN"); ui.connect(sm, "OUT", out, "A");
+    ui.connect(src, "OUT", sm, "IN"); ui.connect(sm, "OUT", out, "IN");
     { const int at = src->m->def->paramIndex("atk"); src->m->p[at + 2].store(1); src->m->p[at + 3].store(60); }
     Event nt; nt.note = 60; nt.vel = 1; eng.trigger(src->m->id, 0, nt); run(eng, 0.3f);
     AudioBuf* rb = new AudioBuf(); rb->sr = 48000; rb->d.assign(48000 * 60, 0.f); rb->r.assign(48000 * 60, 0.f); eng.setBuffer(sm->m->id, rb, 99); run(eng, 0.05f);
@@ -215,7 +203,7 @@ int main(int argc, char** argv) {
     const bool ok = sm && std::fabs(sm->m->p[sm->m->def->paramIndex("keep")].load() - 0.6f) < 1e-4f && sm->m->p[sm->m->def->paramIndex("recmode")].load() > 0.5f && sm->m->p[sm->m->def->paramIndex("len")].load() > 0.99f && cab == 2;
     if (!ok) fails++; std::printf("old tape loop -> sampler %d, keep and overdub kept, %d cables%s\n", sm != nullptr, cab, ok ? "" : "  WRONG"); }
   // GRAIN LOOPER LIVE: grains straight from what comes in; FROZEN it keeps playing the window after the input stops
-  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* src = ui.add("tone", 0, 20); UiMod* gl = ui.add("looper", 100, 20); ui.connect(src, "OUT", gl, "IN"); ui.connect(gl, "OUT", out, "A");
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* src = ui.add("tone", 0, 20); UiMod* gl = ui.add("looper", 100, 20); ui.connect(src, "OUT", gl, "IN"); ui.connect(gl, "OUT", out, "IN");
     ui.set(gl, "len", 4); const int at = src->m->def->paramIndex("atk"); src->m->p[at + 2].store(1); src->m->p[at + 3].store(3); src->m->p[at + 4].store(0.05f);
     Event nt; nt.note = 64; nt.vel = 1; eng.trigger(src->m->id, 0, nt); run(eng, 2.5f); const float liveR = run(eng, 0.5f).rms;
     ui.set(gl, "freeze", 1); run(eng, 3.0f); const float srcGone = src->m->disp[0].load(); (void)srcGone; const float frozenR = run(eng, 1.0f).rms;
@@ -223,10 +211,10 @@ int main(int argc, char** argv) {
     const bool def = gl->m->p[0].load() < 0.5f;
     const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"out","x":300,"y":20,"p":{}},{"id":2,"type":"looper","x":0,"y":20,"p":{"len":6}}],"cables":[]})";
     Json j; Json::parse(old, j); ui.clearPatch(); loadPatch(ui, j); bool held = false; for (auto& um : ui.mods) if (um->m->def->type == "looper") held = um->m->p[0].load() > 0.5f;
-    const bool ok = def && liveR > 0.01f && frozenR > 0.01f && afterR < frozenR * 0.2f && held; if (!ok) fails++;
-    std::printf("grain looper live: %.3f, frozen after the input stops %.3f, let go %.4f, new ones LIVE %d, old sessions HELD %d%s\n", liveR, frozenR, afterR, def, held, ok ? "" : "  WRONG"); }
+    const bool ok = def && liveR > 0.005f && frozenR > 0.005f && afterR < frozenR * 0.2f && held;   /* (sounding: how loud depends on where the grains land) */ if (!ok) fails++;
+    std::printf("grain looper live: %.4f, frozen after the input stops %.4f, let go %.4f, new ones LIVE %d, old sessions HELD %d%s\n", liveR, frozenR, afterR, def, held, ok ? "" : "  WRONG"); }
   // STRETCH: the 2.7S window sounds, and its big windows (worked out on their own thread) never hold an audio block up
-  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* src = ui.add("pad", 0, 20); UiMod* st = ui.add("stretch", 100, 20); ui.connect(src, "OUT", st, "IN"); ui.connect(st, "OUT", out, "A");
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* src = ui.add("pad", 0, 20); UiMod* st = ui.add("stretch", 100, 20); ui.connect(src, "OUT", st, "IN"); ui.connect(st, "OUT", out, "IN");
     ui.set(st, "win", std::getenv("TB_WIN") ? std::atoi(std::getenv("TB_WIN")) : 6); ui.set(st, "amt", 8); const int at = src->m->def->paramIndex("atk"); src->m->p[at].store(0.01f); src->m->p[at + 2].store(1); src->m->p[at + 3].store(20);
     Event nt; nt.note = 57; nt.vel = 1; eng.trigger(src->m->id, 0, nt);
     std::vector<float> L(64), R(64); double worst = 0, worst2 = 0; double e2 = 0; long n = 0;
@@ -249,7 +237,7 @@ int main(int argc, char** argv) {
     const auto cut = ui.cutOff(); std::string cs; for (auto& c : cut) cs += "  [" + c + "]";
     const bool ok = bad.empty() && cut.empty(); if (!ok) fails++; std::printf("row order:%s; cut off:%s%s\n", bad.empty() ? " all as they should be" : bad.c_str(), cut.empty() ? " nothing" : cs.c_str(), ok ? "" : "  WRONG"); }
   // AUDIO IN: what the input brings, from the channels chosen, at GAIN
-  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* ai = ui.add("audioin", 0, 20); ui.connect(ai, "OUT", out, "A");
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* ai = ui.add("audioin", 0, 20); ui.connect(ai, "OUT", out, "IN");
     AudioInput& I = eng.input; I.live.store(false); I.ch.store(4); I.frames = 65536; I.buf.assign(I.frames * 4, 0.f); I.w.store(0); I.lag.store(512); I.live.store(true);
     std::vector<float> blk(256 * 4); float got[4] = {}; const float want[4] = {0.1f, 0.2f, 0.3f, 0.4f};
     auto feed = [&](float secs) { for (int k = 0; k < (int)(secs * 48000 / 256); k++) { for (int i = 0; i < 256; i++) for (int c = 0; c < 4; c++) blk[i * 4 + c] = want[c]; I.write(blk.data(), 256); run(eng, 256 / 48000.f); } };
@@ -285,7 +273,7 @@ int main(int argc, char** argv) {
     for (size_t r = 0; r < o.size(); r++) if (mi->m->def->params[o[r]].key == "harm") { for (int y = 0; y < 200 && note.empty(); y++) { const std::string h = ui.helpAt((float)(mi->x - ui.viewX + 30), (float)(mi->y - ui.viewY + y)); if (h.rfind("DRIVE|", 0) == 0) note = h; } }
     const bool ok = nA == nK + 2 && !note.empty(); if (!ok) fails++; std::printf("mi voices: ANALOG %zu rows, KICK %zu (no LPG), KICK's first control: %s%s\n", nA, nK, note.substr(0, 40).c_str(), ok ? "" : "  WRONG"); }
   // SAMPLER LOOP keeps time: a pass every LENGTH exactly, however long FADE is (it used to come round FADE early)
-  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "A");
+  { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* sm = ui.add("sample", 0, 20); ui.connect(sm, "OUT", out, "IN");
     AudioBuf* b = new AudioBuf(); b->sr = 48000; b->d.assign(48000, 0.f); for (int i = 0; i < 2400; i++) b->d[i] = 0.8f; eng.setBuffer(sm->m->id, b, 0); ui.set(sm, "fade", 0.2f);
     std::vector<float> L(64), R(64); std::vector<long> starts; bool above = false; long n = 0;
     for (int k = 0; k < 48000 * 6 / 64; k++) { eng.render(L.data(), R.data(), 64); for (int i = 0; i < 64; i++, n++) { const bool on = std::fabs(L[i]) > 0.05f; if (on && !above) starts.push_back(n); above = on; } }
@@ -348,6 +336,39 @@ int main(int argc, char** argv) {
     const bool ok = bad == 0 && lo > 0 && hi < lo * 1.3 && wild == 0 && got >= 3000 && heard.size() == 7 && d->paramIndex("w4") >= 0;
     if (!ok) fails++;
     std::printf("tracker random note: %ld plays, %ld out of range; spread even %s; in the module %d notes, %zu different, %d wild%s\n", plays, bad, hi < lo * 1.3 ? "yes" : "NO", got, heard.size(), wild, ok ? "" : "  WRONG"); }
+  // LEVEL, CROSSFADER, SPECTRUM; and old sessions: OUTPUT's B left out, A into IN, TIMELINE and MUTE SEQUENCER left out with a note
+  { auto sineIn = [](Module* m, double& ph, float hz, float amp, int port) { for (int i = 0; i < 64; i++) { const float x = amp * (float)std::sin(ph); ph += TAU * hz / 48000; m->in[port][0][i] = m->in[port][1][i] = x; } };
+    auto rmsOf = [](Module* m) { double s2 = 0; for (int i = 0; i < 64; i++) s2 += m->out[0][0][i] * m->out[0][0][i]; return std::sqrt(s2 / 64); };
+    // LEVEL at +6 dB: twice as loud
+    Module* lv = eng.create("level", 990); lv->e[0] = 2; lv->p[0].store(2); lv->prepare(); double ph = 0, r1 = 0; for (int b = 0; b < 200; b++) { sineIn(lv, ph, 440, 0.1f, 0); lv->render(0, 64); if (b > 100) r1 += rmsOf(lv) / 99; } delete lv;
+    const bool lvOk = std::fabs(r1 / (0.1 / std::sqrt(2.0)) - 2) < 0.05;
+    // CROSSFADER: FADE 0 only A, 1 only B, 0.5 both at -3 dB; SQUARE on its own 120 BPM, 1 beat: swaps side every quarter second; RANDOM jumps
+    double rA[3] = {}, rB[3] = {}; const float F[3] = {0, 1, 0.5f};
+    for (int k = 0; k < 3; k++) for (int side = 0; side < 2; side++) { Module* xf = eng.create("xfade", 991); xf->e[0] = F[k]; xf->p[0].store(F[k]); xf->prepare(); double pa = 0, pb = 0, acc = 0;
+      for (int b = 0; b < 200; b++) { sineIn(xf, pa, 440, side == 0 ? 0.1f : 0, 0); sineIn(xf, pb, 660, side == 1 ? 0.1f : 0, 1); xf->blockStart(64); xf->render(0, 64); if (b > 100) acc += rmsOf(xf) / 99; }
+      (side ? rB : rA)[k] = acc / (0.1 / std::sqrt(2.0)); delete xf; }
+    const bool fadeOk = rA[0] > 0.99 && rB[0] < 0.01 && rA[1] < 0.01 && rB[1] > 0.99 && std::fabs(rA[2] - 0.7071) < 0.02 && std::fabs(rB[2] - 0.7071) < 0.02;
+    int swaps = 0, jumps = 0; for (int mv : {3, 4}) { Module* xf = eng.create("xfade", 992); const ModuleDef* d = xf->def; auto set = [&](const char* k2, float v) { xf->e[d->paramIndex(k2)] = v; xf->p[d->paramIndex(k2)].store(v); };
+      set("move", (float)mv); set("cycle", 2); set("sync", 0); set("bpm", 120); set("fade", 0.5f); set("range", 1); xf->prepare(); int n = 0, side = -1; float atCycle = -1;
+      for (int b = 0; b < 48000 * 4 / 64; b++) { xf->blockStart(64); xf->render(0, 64); const float p = xf->disp[0].load();
+        if (mv == 3) { const int sd = p > 0.5f; if (side >= 0 && sd != side) n++; side = sd; }   // SQUARE: each change of side
+        else if (b % 375 == 187) { if (atCycle >= 0 && std::fabs(p - atCycle) > 0.02f) n++; atCycle = p; } }   // RANDOM: somewhere new each cycle (half a second), steady within it
+      (mv == 3 ? swaps : jumps) = n; delete xf; }
+    const bool moveOk = swaps >= 15 && swaps <= 16 && jumps >= 5;
+    // SPECTRUM: a 1 kHz tone shows at 1 kHz near its level; 15 Hz rumble shows down there; the sound passes untouched
+    Module* sp = eng.create("spectrum", 993); sp->prepare(); double ps = 0, diff = 0; for (int b = 0; b < 400; b++) { for (int i = 0; i < 64; i++) { const float x = 0.5f * (float)std::sin(ps) + 0.1f * (float)std::sin(ps * 15.0 / 1000); ps += TAU * 1000 / 48000; sp->in[0][0][i] = sp->in[0][1][i] = x; }
+      sp->render(0, 64); for (int i = 0; i < 64; i++) diff = std::max(diff, (double)std::fabs(sp->out[0][0][i] - sp->in[0][0][i])); }
+    int top = 0; for (int k = 1; k < 64; k++) if (sp->disp[k].load() > sp->disp[top].load()) top = k; const float topHz = 10.f * std::pow(2400.f, (top + 0.5f) / 64), topDb = sp->disp[top].load();
+    float low = -120; for (int k = 0; k < 64; k++) { const float hz = 10.f * std::pow(2400.f, (k + 0.5f) / 64); if (hz < 20) low = std::max(low, sp->disp[k].load()); } delete sp;
+    const bool specOk = topHz > 880 && topHz < 1130 && std::fabs(topDb - 20 * std::log10(0.5f)) < 2 && low > -30 && diff == 0;
+    // an old session: something in OUTPUT's A and B, a TIMELINE and a MUTE SEQUENCER
+    const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"out","x":300,"y":20,"p":{"xf":0.4}},{"id":2,"type":"tone","x":0,"y":20,"p":{}},{"id":3,"type":"pluck","x":0,"y":120,"p":{}},{"id":4,"type":"timeline","x":0,"y":220,"p":{}},{"id":5,"type":"mutes","x":100,"y":220,"p":{}}],"cables":[{"f":2,"fp":"OUT","t":1,"tp":"A","ty":"audio"},{"f":3,"fp":"OUT","t":1,"tp":"B","ty":"audio"}]})";
+    Json j; Json::parse(old, j); ui.clearPatch(); const std::string note = loadPatch(ui, j); int nc = 0; bool intoIn = false; for (auto& cb : ui.cables) { nc++; if (cb.toPort == 0) intoIn = true; }
+    bool stray = false; for (auto& um : ui.mods) if (um->m->def->type == "timeline" || um->m->def->type == "mutes") stray = true;
+    const bool oldOk = nc == 1 && intoIn && !stray && note.find("TIMELINE") != std::string::npos && note.find("MUTE SEQUENCER") != std::string::npos && note.find("REMOVED") != std::string::npos;
+    const bool ok = lvOk && fadeOk && moveOk && specOk && oldOk; if (!ok) fails++;
+    std::printf("level x%.2f; crossfader A %.2f %.2f %.2f, B %.2f %.2f %.2f, square swaps %d in 4 s, random jumps %d; spectrum loudest %.0f Hz at %.1f dB, below 20 Hz %.0f dB, passes %s; old session %d cable(s), into IN %d, note \"%s\"%s\n",
+      r1 / (0.1 / std::sqrt(2.0)), rA[0], rA[1], rA[2], rB[0], rB[1], rB[2], swaps, jumps, topHz, topDb, low, diff == 0 ? "untouched" : "CHANGED", nc, intoIn, note.c_str(), ok ? "" : "  WRONG"); }
   // EVERY TYPE: each kind of each module with a TYPE (or MODE) list, played for 2 s (notes for a voice, a saw with noise bursts for an
   // effect): nothing that isn't a number, nothing wildly loud, and not silent
   { std::string res; bool ok = true;

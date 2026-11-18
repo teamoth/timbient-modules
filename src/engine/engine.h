@@ -44,7 +44,7 @@ struct ParamDef {
 };
 
 // a note or trigger travelling down a TRIG cable
-struct Event { float note = 60, vel = 1, period = 0, ppb = 0; int offset = 0; int sw = -1; };   // sw: a TIMELINE's switch event (0 off, 1 on, 2 over); -1 for an ordinary trigger
+struct Event { float note = 60, vel = 1, period = 0, ppb = 0; int offset = 0; int sw = -1; };   // sw: a switch event (0 off, 1 on, 2 over); -1 for an ordinary trigger
 
 class Engine;
 class Module;
@@ -70,7 +70,7 @@ std::vector<const ModuleDef*>& allDefs();
 void registerDef(ModuleDef* d);
 
 constexpr int MAX_EVENTS = 64;
-// a trigger into a module's SWITCH socket (next to its ON / M button) turns it on, off or over: a Timeline's event says on (sw 1), off (0) or over (2); any other trigger turns it over
+// a trigger into a module's SWITCH socket (next to its ON / M button) turns it on, off or over: an event can say on (sw 1), off (0) or over (2); an ordinary trigger turns it over
 constexpr int SWITCH_PORT = 99;
 // a KEY JOURNEY's KEY output into a sequencer's KEY socket (next to its SWITCH): while patched, the sequencer plays in the
 // journey's key and scale instead of its own (read every block, not sent as triggers)
@@ -107,7 +107,7 @@ public:
   // Written by either thread, one value at a time; seqVer counts changes so the screen can save them.
   static constexpr int SEQ_MAX = 128;
   std::unique_ptr<std::atomic<float>[]> seq;
-  // NOTE LOOPER: its recorded notes, four numbers each (when, note, velocity, layer); evN of them. TIMELINE: its events (seconds, lane, what, 0)
+  // NOTE LOOPER: its recorded notes, four numbers each (when, note, velocity, layer); evN of them
   static constexpr int EV_MAX = 1024; std::unique_ptr<std::atomic<float>[]> ev; std::atomic<int> evN{0};
   void allocEv() { ev.reset(new std::atomic<float>[EV_MAX * 4]); for (int i = 0; i < EV_MAX * 4; i++) ev[i].store(0); }
   std::atomic<int> cursor{0}, seqVer{0};

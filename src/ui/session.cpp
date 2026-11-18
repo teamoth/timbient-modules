@@ -207,14 +207,14 @@ std::string loadPatch(Ui& ui, const Json& data0) {
   if (cables && cables->t == Json::ARR) for (auto& c : cables->a) {
     auto fi = idmap.find((int)c.num("f")), ti = idmap.find((int)c.num("t")); if (fi == idmap.end() || ti == idmap.end()) { lost++; continue; }
     UiMod *a = fi->second, *b = ti->second; const std::string ty = c.str("ty"), fp = c.str("fp"); std::string tp = c.str("tp");
-    if (b->m->def->type == "out" && tp == "IN") tp = "A"; if (tp == "SWELL") tp = "TRIG";
+    if (b->m->def->type == "out") { if (tp == "B") continue; if (tp == "A") tp = "IN"; }   // OUTPUT's B went (and its X-FADE): what was in B is left out if (tp == "SWELL") tp = "TRIG";
     std::string tq = c.str("tq");
     if (auto ov = oldVerb.find((int)c.num("t")); ov != oldVerb.end()) { if (tq == "damp") tq = "tone"; else if (ov->second == 2 && tq == "size") tq = "decay"; }
     if (ty == "mod") { const int pk = b->m->def->paramIndex(tq); if (pk < 0 || !ui.modulate(a, b, pk)) lost++; }
     else if (!ui.connect(a, outIdx(a->m->def, fp), b, inIdx(b->m->def, tp))) lost++;
   }
   std::string note;
-  std::vector<std::string> gone; for (const char* g : {"fm2", "grains", "bell", "glass", "crush"}) if (skipped.erase(g)) gone.push_back(std::string(g) == "fm2" ? "FM 2-OP" : std::string(g) == "grains" ? "GRAIN CLOUD" : std::string(g) == "bell" ? "MODAL BELL" : std::string(g) == "crush" ? "BITCRUSH" : "GLASS");
+  std::vector<std::string> gone; for (const char* g : {"fm2", "grains", "bell", "glass", "crush", "timeline", "mutes"}) if (skipped.erase(g)) gone.push_back(std::string(g) == "timeline" ? "TIMELINE" : std::string(g) == "mutes" ? "MUTE SEQUENCER" : std::string(g) == "fm2" ? "FM 2-OP" : std::string(g) == "grains" ? "GRAIN CLOUD" : std::string(g) == "bell" ? "MODAL BELL" : std::string(g) == "crush" ? "BITCRUSH" : "GLASS");
   if (!skipped.empty()) { note = "NOT IN THE NATIVE VERSION YET: "; bool first = true; for (auto& s : skipped) { const ModuleDef* d = findDef(s); std::string nm = d ? d->name : s; for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); note += (first ? "" : ", ") + nm; first = false; } }
   if (!gone.empty()) { std::string l; for (auto& g : gone) l += (l.empty() ? "" : ", ") + g; note += std::string(note.empty() ? "" : ". ") + l + (gone.size() > 1 ? " HAVE" : " HAS") + " BEEN REMOVED, SO LEFT OUT"; }
   return note;

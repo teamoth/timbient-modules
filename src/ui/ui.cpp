@@ -60,9 +60,9 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
-  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "journey", "midi", "midiout", "qwerty"}},
+  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "journey", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "euclid", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "noinput", "audioin"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "pitchshift", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "listen"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "pitchshift", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "xfade", "level", "listen", "spectrum"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -124,7 +124,7 @@ void Ui::demoPatch() {
   set(lfo, "rate", 20); set(pad, "air", 0.05f);
   connect(clump, "TRIG", pl, "TRIG"); connect(clump, "TRIG", fm, "TRIG"); connect(orb, "TRIG", pad, "TRIG"); connect(orb, "TRIG", bell, "TRIG");
   connect(pl, "OUT", echo, "IN"); connect(fm, "OUT", echo, "IN"); connect(echo, "OUT", mix, "1"); connect(pad, "OUT", filt, "IN"); connect(filt, "OUT", mix, "2"); connect(bell, "OUT", mix, "3");
-  connect(mix, "OUT", verb, "IN"); connect(verb, "OUT", duck, "IN"); connect(duck, "OUT", out, "A"); connect(clk, "BAR", duck, "KEY");
+  connect(mix, "OUT", verb, "IN"); connect(verb, "OUT", duck, "IN"); connect(duck, "OUT", out, "IN"); connect(clk, "BAR", duck, "KEY");
   modulate(lfo, filt, filt->m->def->paramIndex("cut"));
 }
 
@@ -156,7 +156,7 @@ static const Layout& layoutOf(const ModuleDef* d) {
   else {
     static const std::map<std::string, std::vector<std::string>> MODES = {
       {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type", "cut", "res", "vowel", "shape", "drive"}}, {"amp", {"type", "gain", "amt", "rate", "tone", "mix"}}, {"phaser", {"type", "rate", "depth", "time", "centre", "stages", "fb"}}, {"pluck", {"type", "rmodel", "rstruct", "rpos", "body", "symp"}}, {"resonator", {"type", "rmodel", "rstruct", "rpos"}}, {"pad", {"type", "wave", "scan", "tilt", "even", "shim", "spread"}}, {"analog", {"type", "shape", "drive"}}, {"breath", {"type", "blow", "jet", "stiff"}}, {"formant", {"type", "size"}}, {"fold", {"type"}}, {"tape", {"type", "age"}}, {"comp", {"type", "colour"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
-      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"noinput", {"route", "pulse", "prate"}}, {"euclid", {"lane", "st1", "hi1", "ro1", "tu1", "de1", "ch1", "lv1", "st2", "hi2", "ro2", "tu2", "de2", "ch2", "lv2", "st3", "hi3", "ro3", "tu3", "de3", "ch3", "lv3", "st4", "hi4", "ro4", "tu4", "de4", "ch4", "lv4"}}, {"pitchshift", {"mode", "shift", "fine", "inkey", "sub", "sub2", "up", "detune", "h1", "h2", "h3"}}, {"echo", {"type", "wow", "drive", "age", "pattern", "shift", "bend", "sweep", "smear", "crush", "scatter", "density"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
+      {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"noinput", {"route", "pulse", "prate"}}, {"euclid", {"lane", "st1", "hi1", "ro1", "tu1", "de1", "ch1", "lv1", "st2", "hi2", "ro2", "tu2", "de2", "ch2", "lv2", "st3", "hi3", "ro3", "tu3", "de3", "ch3", "lv3", "st4", "hi4", "ro4", "tu4", "de4", "ch4", "lv4"}}, {"pitchshift", {"mode", "shift", "fine", "inkey", "sub", "sub2", "up", "detune", "h1", "h2", "h3"}}, {"echo", {"type", "wow", "drive", "age", "pattern", "shift", "bend", "sweep", "smear", "crush", "scatter", "density"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
     const bool keyed = d->keyIdx >= 0;
     put(key("poly"), 0); for (int j = 0; j < n; j++) if (recButton(d, d->params[j])) put(j, 0);
     if (auto m = MODES.find(d->type); m != MODES.end()) for (auto& k : m->second) put(key(k.c_str()), 0);
@@ -184,8 +184,9 @@ static bool hiddenRow(const UiMod& u, int j, const std::vector<UiCable>* cables 
   if (q.only == "never") return true;   // kept with the session, but set somewhere else (the Tracker's RANDOM NOTE: on its column numbers)
   if (q.only.rfind("l:", 0) == 0) return std::to_string(std::lround(P("lane"))) != q.only.substr(2);   // EUCLID DRUMS: only the chosen LANE's settings
   if (q.only.rfind("v:", 0) == 0) {   // shown for some TYPEs only ("v:4,12": types 4 and 12)
-    const std::string want = "," + q.only.substr(2) + ",", t = "," + std::to_string(std::lround(P(d->paramIndex("type") >= 0 ? "type" : "mode"))) + ",";   /* TYPE, or PITCH SHIFT's MODE */ return want.find(t) == std::string::npos; }         // MI VOICES: the envelope is only used in ADSR
+    const std::string want = "," + q.only.substr(2) + ",", t = "," + std::to_string(std::lround(P(d->paramIndex("type") >= 0 ? "type" : d->paramIndex("move") >= 0 ? "move" : "mode"))) + ",";   /* TYPE, or PITCH SHIFT's MODE */ return want.find(t) == std::string::npos; }         // MI VOICES: the envelope is only used in ADSR
   if (d->type == "mi" && (q.key == "decay" || q.key == "colour") && miEngines()[std::max(0, std::min(MI_ENGINES - 1, (int)u.m->p[0].load()))].selfEnv) return true;   // models that shape themselves: Plaits skips its gate
+  if (d->type == "xfade" && (q.key == "sync" || q.key == "bpm") && std::lround(P("move")) == 0) return true;   // CROSSFADER: its tempo only matters while it moves
   if (q.only == "own") { const int si = d->paramIndex("sync"); if (si >= 0 && d->params[si].tog && u.m->p[si].load() > 0.5f) return true; }   // BPM: not while it follows the session's tempo
   if (d->type == "sample") { const int kind = (int)P("kind"); const bool once = P("mode") > 0.5f;   // what doesn't apply to this kind of sound or way of playing
     if ((q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once)) return true;
@@ -316,6 +317,17 @@ void Ui::drawJack(Canvas& c, int jx, int jy, PType t, bool conn, bool lit) {
 
 // each module's own little display
 // a stereo level meter, the same everywhere: L and R bars (-48 dB to 0 dB), each with its loudest moment held for a second
+// ---------------- SPECTRUM: where things sit, and the shading behind ----------------
+static inline float specHz(float k) { return 10.f * std::pow(2400.f, k / 64.f); }   // the edge of band k: 10 Hz to 24 kHz (as the engine's)
+static int specZone(float hz) { return hz < 20 || hz > 20000 ? 2 : hz < 30 || hz > 16000 ? 1 : 0; }   // 2: no one can hear it; 1: the edges of hearing
+static const char* specBuild(float hz) { return hz >= 200 && hz <= 500 ? "MUD" : hz >= 2000 && hz <= 5000 ? "HARSHNESS" : hz > 5000 && hz <= 9000 ? "SIBILANCE" : nullptr; }
+// a ringing peak: far above the bands a little either side, the top of its own hill, and among the loudest things in the sound
+// (a note in a chord stands out a little; a whistling resonance stands out a lot, and dominates). Shown once it has lasted a moment
+static bool specPeakNow(const std::vector<float>& v, int k) {
+  if (k < 3 || k > 60 || v[k] < -60) return false; float a = 0, top = -200; int n = 0; for (int j : {k - 5, k - 4, k + 4, k + 5}) if (j >= 0 && j < 64) { a += v[j]; n++; } for (float x : v) top = std::max(top, x);
+  return v[k] - a / std::max(1, n) > 24 && v[k] >= v[k - 1] && v[k] >= v[k + 1] && v[k] > top - 6; }
+static bool specPeak(const UiMod& u, int k) { return u.specRing.size() == 64 && u.specRing[k] > 1.5f; }
+static std::string hzText(float hz) { char b[16]; if (hz >= 1000) std::snprintf(b, 16, hz >= 10000 ? "%.0fKHZ" : "%.1fKHZ", hz / 1000); else std::snprintf(b, 16, "%.0fHZ", hz); return b; }
 static void stereoMeter(Canvas& c, UiMod& u, int x, int y, int w, float linL, float linR, float dt) {
   for (int s = 0; s < 2; s++) {
     const float lin = s ? linR : linL, n = clampf((20 * std::log10(lin + 1e-6f) + 48) / 48, 0, 1); const int bx = x + 5, bw = w - 5, fw = (int)(n * bw), by = y + 2 + s * 7;
@@ -382,19 +394,6 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int i = 0; i < w; i += 2) c.px(x + i, y + 2, 18);
     const float k = 0.5f + 0.5f * std::sin(D(0) * TAU) * m->p[1].load(); c.rect(x + (int)std::lround(k * (w - 3)), y, 3, 5, 17);
     if (m->p[5].load() > 0.5f) c.rect(x + (int)std::lround((1 - k) * (w - 3)), y + 1, 3, 3, 3);
-  } else if (ty == "tape") {   // a cassette: its reels turn (surging with WOW), the tape runs past the head, and the label warms with SATURATE
-    const float ang = D(0) * TAU * 3, sat = clampf(D(1), 0, 1), fl = D(2); const int H = vh;
-    c.frame(x, y, w, H, 18); c.frame(x + 2, y + 2, w - 4, 7, 21);
-    for (int k = 0; k < (int)std::lround(sat * (w - 8)); k++) c.px(x + 4 + k, y + 5, k % 2 ? 12 : 44);   // the label: a warmth bar for SATURATE
-    const int cy = y + 9 + (H - 15) / 2 + 1, lxc = x + w * 28 / 100, rxc = x + w * 72 / 100, rmax = std::max(4, std::min((H - 15) / 2, w / 6));
-    c.rect(lxc, cy - 4, rxc - lxc, 9, 25);   // the window between the reels
-    for (int s2 = 0; s2 < 2; s2++) { const int rx = s2 ? rxc : lxc; const float rr = rmax - 0.5f;
-      for (int yy = -rmax; yy <= rmax; yy++) for (int xx = -rmax; xx <= rmax; xx++) { const float d = std::sqrt((float)(xx * xx + yy * yy));
-        if (d <= rr && d > 2.5f) c.px(rx + xx, cy + yy, 44); else if (d <= 2.5f && d > 1.2f) c.px(rx + xx, cy + yy, 9); }
-      for (int sp = 0; sp < 3; sp++) { const float a = ang + sp * TAU / 3; c.px(rx + (int)std::lround(std::cos(a) * 2), cy + (int)std::lround(std::sin(a) * 2), 25);
-        c.px(rx + (int)std::lround(std::cos(a) * (rr - 1)), cy + (int)std::lround(std::sin(a) * (rr - 1)), 19); } }   // spokes, and a mark on each reel so you can see it turn
-    const int ty = y + H - 4 + (int)std::lround(fl * 1.5f); c.line(lxc, cy + rmax - 1, x + w / 2 - 4, ty, 44); c.line(rxc, cy + rmax - 1, x + w / 2 + 4, ty, 44); c.line(x + w / 2 - 4, ty, x + w / 2 + 4, ty, 44);   // the tape (fluttering)
-    c.rect(x + w / 2 - 2, y + H - 3, 5, 2, 12);   // the head
   } else if (ty == "sample" || ty == "looper" || ty == "stretch") {   // the sound's outline; the region or slices (Sample); playheads and grains
     const bool smp = ty == "sample"; const int kind = smp ? (int)m->p[1].load() : 0, multi = kind >= 2; int top = y;
     if (multi) {   // KIT / MULTI: a numbered place for each sound; tap one to load, replace, set its ROOT or remove it
@@ -458,16 +457,6 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
         const bool hit = euclidHit(k, st, hits, rot), now = k == at;
         if (hit) c.rect(px - 1, py - 1, 2, 2, now ? 4 : sel ? 9 : 18); else c.px(px, py, now ? 4 : sel ? 18 : 21); }
       const std::string t = NM[l]; c.text(t, cx - Canvas::tw(t) / 2, y + 2 * r + 4, D(9 + l) > 0.5f ? 4 : sel ? 9 : 21); }
-  } else if (ty == "mutes") {   // four lanes of steps (lit: ON), where each has got to, and the HOLD TO PLAY button
-    int ml = 1; int lens[4]; for (int l = 0; l < 4; l++) { lens[l] = std::max(1, std::min(32, (int)std::lround(m->p[3 + l].load()))); ml = std::max(ml, lens[l]); }
-    const int cw = std::max(2, (w - 6) / ml), running = D(10) > 0.5f, rec = (int)D(8), rl = rec > 0 ? (int)D(11) : (int)std::lround(m->p[9].load());
-    for (int l = 0; l < 4; l++) { const int ry = y + l * 7; c.text(std::to_string(l + 1), x, ry + 1, D(4 + l) > 0.5f ? 9 : 21);
-      for (int k = 0; k < lens[l]; k++) { const bool on = m->seq[Module::si(k, l)].load() >= 0, here = running && (int)D(l) == k; const int cx = x + 6 + k * cw;
-        c.rect(cx, ry, cw - 1, 6, on ? (here ? 4 : 7) : (here ? 18 : 21)); if (k % 4 == 0 && cw >= 4) c.px(cx, ry + 6, 18); } }
-    const int by = y + 29; const bool hold = D(9) > 0.5f; c.rect(x, by, w, 8, hold ? 12 : rec > 0 ? 14 : 21);
-    const std::string t = rec > 0 ? "RECORDING LANE " + std::to_string(rl + 1) + "  " + std::to_string(rec) : "HOLD TO PLAY LANE " + std::to_string(rl + 1);
-    c.text(t, x + (w - Canvas::tw(t)) / 2, by + 2, hold || rec > 0 ? 15 : 9);
-  } else if (ty == "timeline") { drawTimeline(c, u, x, y, w);
   } else if (ty == "nloop") {   // everything recorded (time along, pitch up), the part that plays round (START to its LENGTH) lit, the playhead
     const int H = vh, n = m->evN.load(); const int st = (int)D(1); const float S = D(6), L = std::max(0.01f, D(2));
     float lo = 200, hi = -1, tmax = 0; for (int i = 0; i < n; i++) { const float nt = m->ev[i * 4 + 1].load(); lo = std::min(lo, nt); hi = std::max(hi, nt); tmax = std::max(tmax, m->ev[i * 4].load()); }
@@ -528,105 +517,44 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int k = 0; k < 4; k++) { const int cx = x + k * 13; const float v = clampf((20 * std::log10(D(k) + 1e-6f) + 48) / 48, 0, 1);
       const float vr = clampf((20 * std::log10(D(4 + k) + 1e-6f) + 48) / 48, 0, 1);   // each channel: L and R
       c.text(std::to_string(k + 1), cx, y + 1, 18); for (int j = 0; j < 7; j++) for (int sd = 0; sd < 2; sd++) { const bool on = j < (int)std::lround((sd ? vr : v) * 7); c.rect(cx + 5 + sd * 3, y + 6 - j, 2, 1, on ? (j > 5 ? 14 : j > 3 ? 12 : 48) : 21); } }
-  } else if (ty == "amp") {
+  } else if (ty == "spectrum") {   // 64 bars, low on the left; behind them the shading (GUIDE); a mark over narrow peaks; the frequencies along the bottom
+    if (u.spec.size() != 64) { u.spec.assign(64, -120.f); u.specPk.assign(64, -120.f); u.specPkT.assign(64, 0.f); u.specRing.assign(64, 0.f); }
+    for (int k = 0; k < 64; k++) { const float v = D(k); u.spec[k] = v > u.spec[k] ? v : std::max(v, u.spec[k] - dt * 30);   // up at once, down 30 dB a second
+      if (u.spec[k] >= u.specPk[k]) { u.specPk[k] = u.spec[k]; u.specPkT[k] = 1.5f; } else if ((u.specPkT[k] -= dt) <= 0) u.specPk[k] = std::max(u.spec[k], u.specPk[k] - dt * 15); }
+    for (int k = 0; k < 64; k++) u.specRing[k] = specPeakNow(u.spec, k) ? std::min(5.f, u.specRing[k] + dt) : std::max(0.f, u.specRing[k] - dt * 2);   // how long it has been ringing
+    const int guide = (int)std::lround(m->p[0].load()), H = 36, top = y + 2, base = top + H; const float sr = std::max(8000.f, D(64));
+    auto hAt = [&](float db) { return (int)std::lround(clampf((db + 72) / 72, 0, 1) * H); };
+    for (int i = 0; i < w; i++) { const float k = (float)i / w * 64; const int kb = std::min(63, (int)k); const float hz = specHz(k + 0.5f / w * 64); const int z = guide ? specZone(hz) : 0;
+      for (int j = 0; j < H; j++) { const int py = base - 1 - j; if ((z == 2 && ((i + j) & 1) == 0) || (z == 1 && (i & 1) == 0 && (j & 1) == 0) || (z == 0 && j % 12 == 11 && (i & 1) == 0)) c.px(x + i, py, 21); }   // shading; and faint lines every 24 dB
+      if (hz > sr / 2) continue;
+      const int h = hAt(u.spec[kb]), col = guide && specZone(hz) == 2 && u.spec[kb] > -60 ? 14 : guide && specZone(hz) == 1 ? 12 : 3;
+      for (int j = 0; j < h; j++) c.px(x + i, base - 1 - j, col);
+      const int ph = hAt(u.specPk[kb]); if (ph > 0 && ph > h) c.px(x + i, base - ph, 9);
+      if (specPeak(u, kb) && (int)((float)(i + 1) / w * 64) != kb) { const int ty2 = base - h - 3; c.px(x + i, ty2, 14); c.px(x + i - 1, ty2 - 1, 14); c.px(x + i + 1, ty2 - 1, 14); } }   // over the middle of a peak's bar
+    if (guide == 2) for (auto zr : {std::pair<float, float>{200, 500}, {2000, 5000}, {5000, 9000}}) {   // ALL: where sound often piles up, marked along the top
+      const int a0 = x + (int)std::lround(std::log(zr.first / 10) / std::log(2400.f) * w), a1 = x + (int)std::lround(std::log(zr.second / 10) / std::log(2400.f) * w);
+      for (int i = a0; i < a1; i++) if ((i & 1) == 0) c.px(i, top - 1, 18); c.px(a0, top, 18); c.px(a1 - 1, top, 18); }
+    for (auto l : {std::pair<float, const char*>{20, "20"}, {100, "100"}, {1000, "1K"}, {10000, "10K"}}) { const int lx2 = x + (int)std::lround(std::log(l.first / 10) / std::log(2400.f) * w);
+      c.px(lx2, base, 18); c.text(l.second, std::max(x, std::min(x + w - Canvas::tw(l.second), lx2 - Canvas::tw(l.second) / 2)), base + 2, 18); }
+  } else if (ty == "amp" || ty == "level") {
     stereoMeter(c, u, x, y, w, D(0), D(1), dt);
+  } else if (ty == "xfade") {   // the fader: where it is now (the handle) and where FADE sits (a mark under the track); drag it to set FADE
+    const int sy = y + 5, tx0 = x + 6, tw0 = w - 12; const float now = clampf(D(0), 0, 1), fd = clampf(m->p[0].load(), 0, 1); const int hx = tx0 + (int)std::lround(now * tw0);
+    c.text("A", x, sy - 2, now < 0.5f ? 9 : 18); c.text("B", x + w - 3, sy - 2, now > 0.5f ? 9 : 18);
+    for (int i = 0; i <= tw0; i++) { c.px(tx0 + i, sy, 21); c.px(tx0 + i, sy + 1, 21); }
+    const int fx = tx0 + (int)std::lround(fd * tw0); c.px(fx, sy + 5, 9); c.px(fx - 1, sy + 6, 9); c.px(fx, sy + 6, 9); c.px(fx + 1, sy + 6, 9);
+    c.rect(hx - 2, sy - 3, 5, 8, 4); c.px(hx, sy - 2, 15); c.px(hx, sy + 3, 15);
   } else if (ty == "out") {
     stereoMeter(c, u, x, y, w, D(0), D(3), dt);
     if (m->disp[1].load() > 0.5f) { const int sec = (int)m->disp[2].load(); char b[24]; std::snprintf(b, 24, "REC %d:%02d", sec / 60, sec % 60);
       if (((int)(blink * 2)) % 2) c.rect(x + 2, y + 16, 3, 3, 14); c.text(b, x + 8, y + 15, 14); }
     else c.text("NOT RECORDING", x + 2, y + 15, 18);
-    const int sy = y + 24, tx0 = x + 6, tw0 = w - 12; const float xf = clampf(m->p[2].load(), 0, 1); const int hx = tx0 + (int)std::lround(xf * tw0);
-    c.text("A", x, sy - 2, xf < 0.5f ? 9 : 18); c.text("B", x + w - 3, sy - 2, xf > 0.5f ? 9 : 18);
-    for (int i = 0; i <= tw0; i++) { c.px(tx0 + i, sy, 21); c.px(tx0 + i, sy + 1, 21); }
-    for (float k : {0.f, 0.5f, 1.f}) c.px(tx0 + (int)std::lround(k * tw0), sy + 4, 18);
-    c.rect(hx - 2, sy - 3, 5, 8, 4); c.px(hx, sy - 2, 15); c.px(hx, sy + 3, 15);
   }
 }
 
 // ---------------- the Tracker's list of steps ----------------
 static void trClamp(UiMod& u) { u.scroll = clampf(std::round(u.scroll), 0, (float)std::max(0, trShown(u.m) - trRows(u.m))); }
 static void trShow(UiMod& u, int row) { if (row < u.scroll) u.scroll = (float)row; else if (row >= u.scroll + trRows(u.m)) u.scroll = (float)(row - trRows(u.m) + 1); trClamp(u); }
-// ---------------- TIMELINE ----------------
-// along the top a ruler (tap or drag to move the playhead), then six lanes, one for each output: tap a lane to put an event
-// there (ON, then OFF, and so on), drag one to move it, tap a picked one to change what it does. Underneath: where it's got to,
-// and the picked event with < > to nudge it and DEL
-namespace {
-const int TL_RULER = 6, TL_LANE = 7, TL_LANES = 6, TL_LX = 6;   // lanes start below the ruler; the strip starts after the lane numbers
-const char* TL_WHAT[3] = {"OFF", "ON", "OVER"};
-float tlLen(UiMod& u) { return std::max(1.f, u.m->p[1].load()); }
-float tlSnap(UiMod& u) { static const float S[5] = {0, 1, 5, 10, 30}; return S[std::max(0, std::min(4, (int)std::lround(u.m->p[3].load())))]; }
-std::string tlTime(float s) { char b[16]; const int m = (int)(s / 60); std::snprintf(b, 16, "%d:%04.1f", m, s - m * 60.f); return b; }
-struct TlRead { int lt, txt, gt, del; std::string s; };
-}
-std::string Ui::tlEventText(UiMod& u, int i) { char b[40]; std::snprintf(b, 40, "%d %s %s", (int)u.m->ev[i * 4 + 1].load() + 1, TL_WHAT[std::max(0, std::min(2, (int)u.m->ev[i * 4 + 2].load()))], tlTime(u.m->ev[i * 4].load()).c_str()); return b; }
-static TlRead tlRead(int w, const std::string& s) { TlRead r; r.s = s; r.del = w - Canvas::tw("DEL"); r.gt = r.del - 8; r.txt = r.gt - 4 - Canvas::tw(s); r.lt = r.txt - 7; return r; }
-void Ui::drawTimeline(Canvas& c, UiMod& u, int x, int y, int w) {
-  Module* m = u.m; const float L = tlLen(u), pos = clampf(m->disp[0].load(), 0, L); const bool run = m->disp[1].load() > 0.5f; const int n = m->evN.load();
-  if (u.tlSel >= n) u.tlSel = -1;
-  const int sx = x + TL_LX, sw = w - TL_LX - 1; auto X = [&](float t) { return sx + (int)std::lround(clampf(t / L, 0, 1) * sw); };
-  // the ruler: a mark every so often (at least 12 pixels apart), a longer one each minute
-  static const float STEPS[] = {5, 10, 15, 30, 60, 120, 300, 600}; float st = 600; for (float s : STEPS) if (s / L * sw >= 12) { st = s; break; }
-  for (int i = 0; i <= sw; i += 2) c.px(sx + i, y + 4, 21);
-  for (float t = 0; t <= L + 0.01f; t += st) { const int tx = X(t); const bool big = std::fmod(t, 60.f) < 0.01f; c.px(tx, y + 3, big ? 9 : 18); if (big) c.px(tx, y + 2, 9); }
-  // lanes
-  const int ly0 = y + TL_RULER;
-  for (int k = 0; k < TL_LANES; k++) { const int cy = ly0 + k * TL_LANE + 3; c.text(std::to_string(k + 1), x, cy - 2, 18);
-    for (int i = 0; i <= sw; i += 3) c.px(sx + i, cy, 21);
-    // where the lane holds its module ON: from each ON to the next OFF (OVER turns it round), counting from OFF
-    std::vector<std::pair<float, int>> es; for (int i = 0; i < n; i++) if ((int)m->ev[i * 4 + 1].load() == k) es.push_back({m->ev[i * 4].load(), (int)m->ev[i * 4 + 2].load()});
-    std::sort(es.begin(), es.end()); bool on = false; float from = 0;
-    auto span = [&](float a, float b) { for (int px = X(a); px <= X(b); px++) { c.px(px, cy, 7); c.px(px, cy - 1, 7); } };
-    for (auto& e : es) { const bool was = on; on = e.second == 1 ? true : e.second == 0 ? false : !on; if (was && !on) span(from, e.first); if (!was && on) from = e.first; }
-    if (on) span(from, L); }
-  for (int i = 0; i < n; i++) { const int k = (int)m->ev[i * 4 + 1].load(); if (k < 0 || k >= TL_LANES) continue; const int ex = X(m->ev[i * 4].load()), cy = ly0 + k * TL_LANE + 3, what = (int)m->ev[i * 4 + 2].load();
-    const int col = i == u.tlSel ? 4 : what == 1 ? 9 : what == 0 ? 18 : 12;
-    if (what == 1) c.rect(ex - 1, cy - 1, 3, 3, col); else if (what == 0) c.frame(ex - 1, cy - 1, 3, 3, col); else { c.px(ex, cy - 1, col); c.px(ex - 1, cy, col); c.px(ex + 1, cy, col); c.px(ex, cy + 1, col); }
-    if (i == u.tlSel) { c.px(ex, cy - 3, 4); c.px(ex, cy + 3, 4); } }
-  // the playhead
-  const int px = X(pos); c.px(px - 1, y, run ? 12 : 9); c.px(px, y, run ? 12 : 9); c.px(px + 1, y, run ? 12 : 9); c.px(px, y + 1, run ? 12 : 9);
-  for (int yy = y + 2; yy < ly0 + TL_LANES * TL_LANE; yy += (run ? 1 : 2)) c.px(px, yy, run ? 12 : 18);
-  // underneath: where it's got to, and the picked event
-  const int ry = ly0 + TL_LANES * TL_LANE + 2; c.text(tlTime(pos).substr(0, tlTime(pos).size() - 2) + "/" + tlTime(L).substr(0, tlTime(L).size() - 2), x, ry, run ? 12 : 9);
-  if (u.tlSel >= 0) { const TlRead r = tlRead(w, tlEventText(u, u.tlSel)); c.text("<", x + r.lt, ry, 9); c.text(r.s, x + r.txt, ry, 4); c.text(">", x + r.gt, ry, 9); c.text("DEL", x + r.del, ry, 14); }
-  else { const std::string hint = n ? "TAP AN EVENT" : "TAP A LANE"; c.text(hint, x + w - Canvas::tw(hint), ry, 21); }
-}
-void Ui::timelineDown(UiMod& u, int vx, int vy, int w) {
-  Module* m = u.m; const float L = tlLen(u); const int sw = w - TL_LX - 1, n = m->evN.load(); const int id = m->id;
-  auto T = [&](int px) { float t = clampf((float)(px - TL_LX) / sw, 0, 1) * L; const float s = tlSnap(u); if (s > 0) t = std::min(L, std::round(t / s) * s); return t; };
-  drag.kind = D_TLINE; drag.m = &u; drag.k = id; drag.moved = false; drag.sx = (float)(vx + u.x + 3 - viewX); drag.sy = (float)(vy + u.y + geom(u).vy - viewY); drag.dir = 0;
-  if (vy < TL_RULER) { drag.dir = 1; const float t = clampf((float)(vx - TL_LX) / sw, 0, 1) * L; eng.action(id, "seek:" + std::to_string(t)); status("TIMELINE AT " + tlTime(t), 1.2f); return; }   // move the playhead
-  const int ry = TL_RULER + TL_LANES * TL_LANE;
-  if (vy >= ry) { drag.kind = D_NONE;   // the readout
-    if (u.tlSel < 0 || u.tlSel >= n) return; const TlRead r = tlRead(w, tlEventText(u, u.tlSel)); const int i = u.tlSel;
-    if (vx >= r.del - 2) { const int last = n - 1; for (int c2 = 0; c2 < 4; c2++) m->ev[i * 4 + c2].store(m->ev[last * 4 + c2].load()); m->evN.store(last); u.tlSel = -1; status("EVENT REMOVED", 1.2f); changed(); return; }
-    if (vx >= r.lt - 2 && vx < r.txt - 1) { const float s = tlSnap(u) > 0 ? tlSnap(u) : 0.1f; m->ev[i * 4].store(clampf(m->ev[i * 4].load() - s, 0, L)); }
-    else if (vx >= r.gt - 2 && vx < r.del - 2) { const float s = tlSnap(u) > 0 ? tlSnap(u) : 0.1f; m->ev[i * 4].store(clampf(m->ev[i * 4].load() + s, 0, L)); }
-    else if (vx >= r.txt - 1) m->ev[i * 4 + 2].store((float)(((int)m->ev[i * 4 + 2].load() + 2) % 3));   // ON, OFF, OVER
-    status("EVENT " + tlEventText(u, i), 1.5f); changed(); return; }
-  const int lane = std::max(0, std::min(TL_LANES - 1, (vy - TL_RULER) / TL_LANE));
-  int best = -1, bd = 3;   // an event near the tap, in that lane
-  for (int i = 0; i < n; i++) { if ((int)m->ev[i * 4 + 1].load() != lane) continue; const int ex = TL_LX + (int)std::lround(m->ev[i * 4].load() / L * sw), dd = std::abs(ex - vx); if (dd < bd) { bd = dd; best = i; } }
-  if (best >= 0) { drag.dir = best == u.tlSel ? 2 : 0; u.tlSel = best; status("EVENT " + tlEventText(u, best), 1.5f); return; }   // tap again (without moving) to change what it does
-  if (n >= Module::EV_MAX) { status("THE TIMELINE IS FULL", 2); drag.kind = D_NONE; return; }
-  const float t = T(vx); int what = 1; float prev = -1;   // ON, unless the lane's last event before here put it ON: then OFF
-  for (int i = 0; i < n; i++) { if ((int)m->ev[i * 4 + 1].load() != lane) continue; const float et = m->ev[i * 4].load(); if (et <= t && et > prev) { prev = et; const int w0 = (int)m->ev[i * 4 + 2].load(); what = w0 == 1 ? 0 : w0 == 0 ? 1 : 2; } }
-  m->ev[n * 4].store(t); m->ev[n * 4 + 1].store((float)lane); m->ev[n * 4 + 2].store((float)what); m->ev[n * 4 + 3].store(0); m->evN.store(n + 1); u.tlSel = n;
-  bool patched = false; for (auto& cb : cables) if (cb.from == id && cb.fromPort == lane) patched = true;
-  status("EVENT " + tlEventText(u, n) + (patched ? "" : "  (PATCH LANE " + std::to_string(lane + 1) + " INTO A MODULE'S SWITCH SOCKET)"), patched ? 1.5f : 4); changed();
-}
-void Ui::timelineDrag(UiMod& u, int vx, int vy, int w) {
-  Module* m = u.m; const float L = tlLen(u); const int sw = w - TL_LX - 1;
-  float t = clampf((float)(vx - TL_LX) / sw, 0, 1) * L;
-  if (drag.dir == 1) { eng.action(m->id, "seek:" + std::to_string(t)); status("TIMELINE AT " + tlTime(t), 1.2f); return; }
-  const int i = u.tlSel; if (i < 0 || i >= m->evN.load()) return;
-  const float s = tlSnap(u); if (s > 0) t = std::min(L, std::round(t / s) * s);
-  m->ev[i * 4].store(t); m->ev[i * 4 + 1].store((float)std::max(0, std::min(TL_LANES - 1, (vy - TL_RULER) / TL_LANE))); status("EVENT " + tlEventText(u, i), 1.5f);
-}
-void Ui::timelineUp(UiMod& u, bool moved, int dir) {   // a picked event tapped again: ON, OFF, OVER
-  Module* m = u.m; const int i = u.tlSel; if (moved || dir != 2 || i < 0 || i >= m->evN.load()) return;
-  m->ev[i * 4 + 2].store((float)(((int)m->ev[i * 4 + 2].load() + 2) % 3)); status("EVENT " + tlEventText(u, i), 1.5f);
-}
-
 void Ui::drawTracker(Canvas& c, UiMod& u, int x, int y0, int w, float dt) {
   Module* m = u.m; const int TR_ROWS = trRows(m), len = trLen(m), shown = trShown(m), pos = (int)m->disp[0].load(), div = std::max(1, (int)m->disp[1].load()), cur = m->cursor.load();
   const int nc = trCols(m), curC = std::min(nc - 1, m->cursorCol.load()), head = trHead(m), y = y0 + head;
@@ -949,6 +877,15 @@ std::string Ui::helpAt(float sx, float sy) {
     if (!d->fixed && ly >= g.h - FOOT) { const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod;
       if (lx >= g.w - 13) return helpOther("FOLD"); if (onOff && lx >= 3 && lx < 18) return helpOther("ON"); if (!onOff && lx >= 3 && lx < 12) return helpOther("M");
       if (lx >= 14 && lx < 23) return d->cat == Cat::Voice ? helpOther("S") : bypassable(d) ? helpOther("B") : std::string(); return {}; }
+    if (d->type == "spectrum" && d->vis && ly >= g.vy && ly < g.vy + g.vh) {   // SPECTRUM: the frequency under the pointer, how loud it is there, and what the shading means
+      const int w = g.w - 6; const float k = clampf((float)(lx - 3) / std::max(1, w) * 64, 0, 63.99f); const float hz = specHz(k); const int kb = (int)k;
+      const float db = u->spec.size() == 64 ? u->spec[kb] : -120; char b[48]; std::snprintf(b, 48, "%s  %s", hzText(hz).c_str(), db < -71 ? "NOTHING" : (std::to_string((int)std::lround(db)) + "DB").c_str());
+      const int z = specZone(hz); const char* bz = specBuild(hz);
+      std::string t = z == 2 ? "OUTSIDE HEARING (BELOW 20 HZ OR ABOVE 20 KHZ): NO ONE CAN HEAR THIS, IT ONLY TAKES UP ROOM. ANYTHING HERE IS WORTH FILTERING OUT."
+        : z == 1 ? (hz < 100 ? "THE LOW EDGE OF HEARING (20 TO 30 HZ): FELT MORE THAN HEARD, AND MOST SPEAKERS CAN'T PLAY IT. WORTH A LOOK." : "THE HIGH EDGE OF HEARING (16 TO 20 KHZ): MOST ADULTS HEAR LITTLE UP HERE. WORTH A LOOK.")
+        : bz ? std::string("WHERE SOUND OFTEN PILES UP (") + bz + "). NOT WRONG IN ITSELF; IF IT'S CROWDED HERE, TRY TAKING A LITTLE AWAY." : "THE MAIN RANGE OF HEARING.";
+      if (specPeak(*u, kb)) t = "A NARROW PEAK, WELL ABOVE ITS NEIGHBOURS: A RESONANCE THAT CAN RING OR WHISTLE. TRY A NARROW CUT HERE. " + t;
+      return std::string(b) + "|" + t; }
     if (d->type == "journey" && ly >= g.vy && ly < g.vy + 17) {   // KEY JOURNEY: a step, and how smooth the change into it is, in words
       const int N = std::max(1, std::min(8, (int)std::lround(u->m->p[0].load()))), sw = std::min(16, (g.w - 6 + 1) / N), i = (lx - 3) / std::max(1, sw); const int nsc = (int)scales().size();
       if (i >= 0 && i < N) { auto keyAt = [&](int k) { return (int)std::lround(u->m->seq[Module::si(k, 0)].load()); };
@@ -1119,7 +1056,7 @@ void Ui::pointerDown(float sx, float sy) {
   if (!u) {   // cables run behind modules, so only where you can see them
     bool onControl = false;
     if (u) { const Geom g0 = geom(*u); const ModuleDef* d0 = u->m->def;
-      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + g0.vh && (d0->type == "keys" || d0->type == "out" || d0->type == "tracker" || d0->type == "sample" || (d0->type == "tombola" && ly < g0.vy + 7 && lx >= g0.w - 30))); }
+      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + g0.vh && (d0->type == "keys" || d0->type == "xfade" || d0->type == "tracker" || d0->type == "sample" || (d0->type == "tombola" && ly < g0.vy + 7 && lx >= g0.w - 30))); }
     const int ci = onControl ? -1 : cableAt(wx, wy, u ? 2.5f : 4.f);
     if (ci >= 0) { drag.kind = D_GRAB; drag.grab = cables[ci]; return; }
   }
@@ -1147,7 +1084,6 @@ void Ui::pointerDown(float sx, float sy) {
   if (d->vis && ly >= g.vy && ly < g.vy + g.vh) {
     const int vx = lx - 3, vy = ly - g.vy;
     if (d->type == "keys") { keysPress(*u, vx, vy); return; }
-    if (d->type == "timeline") { timelineDown(*u, vx, vy, g.w - 6); return; }
     if (d->type == "journey" && vy < 17) {   // KEY JOURNEY: a step's key (top), or its own scale (below)
       const int N = std::max(1, std::min(8, (int)std::lround(u->m->p[0].load()))), sw = std::min(16, (g.w - 6 + 1) / N), i = vx / std::max(1, sw); if (i < 0 || i >= N) return;
       Module* m = u->m; Dropdown q; q.x = u->x - viewX + 3 + i * sw; q.y = u->y - viewY + g.vy + (vy < 9 ? 9 : 17); const int id = m->id;
@@ -1160,13 +1096,6 @@ void Ui::pointerDown(float sx, float sy) {
       Module* m = u->m; const int w = g.w - 6, l = std::max(0, std::min(3, vx * 4 / std::max(1, w))); static const char* NM[4] = {"KICK", "SNARE", "HAT", "PERC"};
       m->p[d->paramIndex("lane")].store((float)l); status(std::string("LANE: ") + NM[l] + "  (DRAG UP OR DOWN FOR HITS, SIDEWAYS TO ROTATE)", 2);
       const std::string k = std::to_string(l + 1); drag.kind = D_EUCLID; drag.m = u; drag.k = l; drag.n0 = m->p[d->paramIndex("hi" + k)].load(); drag.dir = (int)std::lround(m->p[d->paramIndex("ro" + k)].load()); changed(); return; }
-    if (d->type == "mutes") {   // tap a step to light or darken it; hold the bar to play a lane in
-      Module* m = u->m; const int w = g.w - 6;
-      if (vy >= 29) { eng.action(m->id, "hold:1"); drag.kind = D_HOLD; drag.k = m->id; return; }
-      int ml = 1; int lens[4]; for (int l = 0; l < 4; l++) { lens[l] = std::max(1, std::min(32, (int)std::lround(m->p[3 + l].load()))); ml = std::max(ml, lens[l]); }
-      const int cw = std::max(2, (w - 6) / ml), l = vy / 7, k = (vx - 6) / cw; if (l < 0 || l > 3 || vx < 6 || k >= lens[l]) return;
-      const int i = Module::si(k, l); const bool on = m->seq[i].load() >= 0; m->seq[i].store(on ? -1.f : 1.f); m->seqVer.fetch_add(1);
-      status("LANE " + std::to_string(l + 1) + "  STEP " + std::to_string(k + 1) + (on ? "  OFF" : "  ON"), 1.2f); changed(); return; }
     if (d->type == "nloop") {   // grab the start or end line (whichever is nearer, within a few pixels)
       Module* m = u->m; const int n = m->evN.load(); if ((int)m->disp[1].load() == 1 || n == 0) return; const float S = m->disp[6].load(), L = std::max(0.01f, m->disp[2].load());
       float tmax = 0; for (int i = 0; i < n; i++) tmax = std::max(tmax, m->ev[i * 4].load()); const float span = std::max(S + L, tmax + 0.25f); const int w = g.w - 6;
@@ -1177,7 +1106,7 @@ void Ui::pointerDown(float sx, float sy) {
       const int i = r * 12 + k; static const char* NM[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
       if (qwLearn == i) { qwLearn = -1; status("NO CHANGE", 1); return; }
       qwLearn = i; status(std::string("PRESS A KEY FOR ") + NM[k] + std::to_string(r) + "  (DELETE: NO KEY, ESCAPE: LEAVE IT)", 6); return; }
-    if (d->type == "out" && vy >= 20) { drag.kind = D_XFADE; drag.m = u; pointerMove(sx, sy); return; }
+    if (d->type == "xfade") { drag.kind = D_XFADE; drag.m = u; pointerMove(sx, sy); return; }
     if (d->type == "sample" && (int)u->m->p[1].load() >= 2 && vy < 6) {   // KIT / MULTI: a sound's place
       const int k = std::min(UiMod::SLOTS - 1, std::max(0, lx - 3) / 6); u->shown = k; const bool has = !u->snd[k].id.empty(), multi = (int)u->m->p[1].load() == 3;
       Dropdown z; z.x = u->x - viewX + 4; z.y = u->y - viewY + g.vy + 6;
@@ -1279,6 +1208,8 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng.tempo.bpm.load())) { eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
+  else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
+    drag.m->m->p[drag.m->m->def->paramIndex("fade")].store(v); char b[32]; std::snprintf(b, 32, "FADE  A %d / B %d", (int)std::lround((1 - v) * 100), (int)std::lround(v * 100)); status(b, 1); }
   else if (drag.kind == D_EUCLID) {   // EUCLID DRUMS: up for more HITS, sideways to ROTATE (about 6 pixels a step)
     Module* m = drag.m->m; const ModuleDef* d = m->def; const std::string k = std::to_string(drag.k + 1); const int st = (int)std::lround(m->p[d->paramIndex("st" + k)].load());
     const float h = std::max(0.f, std::min((float)st, std::round(drag.n0 + (drag.sy - sy) / 6))); const int ro = (((drag.dir + (int)std::lround((sx - drag.sx) / 6)) % st) + st) % st;
@@ -1295,18 +1226,13 @@ void Ui::pointerMove(float sx, float sy) {
     const int si = m->def->paramIndex("start"), li = m->def->paramIndex("lenb"); const float S = m->p[si].load(), E = S + m->p[li].load();
     if (drag.dir == 0) { const float S2 = clampf(t, 0, std::max(0.f, E - 0.25f)); m->p[si].store(std::min(128.f, S2)); m->p[li].store(clampf(E - S2, 0.25f, 128)); status("NOTE LOOPER  START  " + valueText(u, si, m->p[si].load(), 0), 1.5f); }
     else { m->p[li].store(clampf(t - S, 0.25f, 128)); status("NOTE LOOPER  LENGTH  " + valueText(u, li, m->p[li].load(), 0), 1.5f); } }
-  else if (drag.kind == D_TLINE) { if (std::fabs(sx - drag.sx) > 1 || std::fabs(sy - drag.sy) > 1) drag.moved = true; if (drag.moved) timelineDrag(*drag.m, wx - drag.m->x - 3, wy - drag.m->y - geom(*drag.m).vy, geom(*drag.m).w - 6); }
-  else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
-    drag.m->m->p[drag.m->m->def->paramIndex("xf")].store(v); char b[32]; std::snprintf(b, 32, "CROSSFADE  A %d / B %d", (int)std::lround((1 - v) * 100), (int)std::lround(v * 100)); status(b, 1); }
 }
 
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
   if (d.kind == D_TEMPO) { changed(); return; }
   if (d.kind == D_PARAM && !d.moved && !d.held && d.m) { tapRow(d.m, d.k); }   // a tap that didn't drag: three or more in rhythm set a speed row
-  if (d.kind == D_HOLD) { eng.action(d.k, "hold:0"); changed(); return; }
   if (d.kind == D_NLOOP) { changed(); return; }
-  if (d.kind == D_TLINE) { if (byId(d.k)) timelineUp(*byId(d.k), d.moved, d.dir); changed(); return; }
   if (d.kind == D_BROWSE) { if (!d.moved) browserPick(d.k); return; }
   if (d.kind == D_GRAB || d.kind == D_PULL) { selectCable(d.grab, sx, sy); return; }
   if (d.kind == D_MOVE && d.splice >= 0 && d.splice < (int)cables.size()) {   // drop an effect into a cable

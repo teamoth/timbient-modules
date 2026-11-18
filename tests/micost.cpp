@@ -9,7 +9,7 @@ int main() {
   int bad = 0;
   for (int env = 0; env < 2; env++) for (int k = 0; k < MI_ENGINES; k++) {
     Engine eng; eng.setSampleRate(48000); Ui ui(eng); UiMod* out = ui.add("out", 0, 0); UiMod* mi = ui.add("mi", 0, 0); UiMod* h = ui.add("hops", 0, 0);
-    ui.set(mi, "voice", (float)k); ui.set(mi, "env", (float)env); ui.set(h, "rate", 8); ui.connect(h, "TRIG", mi, "TRIG"); ui.connect(mi, "OUT", out, "A");
+    ui.set(mi, "voice", (float)k); ui.set(mi, "env", (float)env); ui.set(h, "rate", 8); ui.connect(h, "TRIG", mi, "TRIG"); ui.connect(mi, "OUT", out, "IN");
     std::vector<float> L(256), R(256); float pk = 0; int nan = 0; const float secs = 4;
     const auto t0 = std::chrono::steady_clock::now();
     for (int b = 0; b < (int)(48000 * secs / 256); b++) { eng.render(L.data(), R.data(), 256); for (float v : L) { if (!std::isfinite(v)) nan++; pk = std::max(pk, std::fabs(v)); } }

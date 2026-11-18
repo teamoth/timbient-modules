@@ -23,7 +23,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.44.0";
+static const char* VERSION = "0.45.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------

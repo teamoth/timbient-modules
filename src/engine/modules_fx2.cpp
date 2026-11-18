@@ -201,7 +201,7 @@ struct Tape : Module {
 static Reg rTape(new ModuleDef{"tape", "TAPE", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {pct("wow", "WOW", 0.3f), pct("flutter", "FLUTTER", 0.2f), pct("sat", "SATURATE", 0.3f), prHz("tone", "TONE", 800, 16000, 6000), pct("hiss", "HISS", 0.1f), pct("mix", "MIX", 1),
    noMod(OP("type", "TYPE", {"CLASSIC", "CASSETTE", "REEL", "DICTAPHONE"}, 0)), only(pct("age", "AGE", 0.2f), "v:1,2,3")},
-  36, 68, false, [] { return new Tape(); }});
+  0, 68, false, [] { return new Tape(); }});
 
 
 // ---------------- TRIG ENV: each trigger draws a rise and a fall ----------------

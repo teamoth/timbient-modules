@@ -57,7 +57,7 @@ void registerDef(ModuleDef* d) {
     d->params.push_back(OP("poly", "VOICES", {"POLY", "MONO"}, 0));    // TONE has a GLIDE of its own; FORMANT's "glide" is its vowel's MOVE TO, so its pitch glide has another key
     if (d->type != "sample" && d->type != "tone") { d->params.push_back(fmt(T(d->type == "formant" ? "pglide" : "glide", "GLIDE", 0.001f, 2, 0.001f), [](float v) { return v < 0.0015f ? std::string("OFF") : fmtSecs(v); })); if (d->type == "pluck") d->params.back().only = "v:0,1,2,3,4"; } }   // (PLUCK's RINGS has no glide)   // GLIDE all the way left: OFF (a time slider can't start at 0)
   bool audio = false; for (auto& o : d->outs) if (o.type == PType::Audio) audio = true;
-  if (audio && d->type != "mixer" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {
+  if (audio && d->type != "mixer" && d->type != "level" && d->type != "spectrum" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {   // (LEVEL: as small as it can be)
     ParamDef q = pr("pan", "PAN", -1, 1, 0); q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };
     d->panIdx = (int)d->params.size(); d->params.push_back(q); }
   for (auto& q : d->params) if (q.opts.empty() && !q.act && q.step >= 1 && std::fabs(q.step - std::round(q.step)) < 1e-4f && (q.max - q.min) / q.step + 1 <= 16.5f) q.stepper = true;   // up to 16 whole numbers: a stepper
@@ -225,7 +225,7 @@ void Engine::block(float* L, float* R, int n) {
       if (off > at) { pos = at; m->render(at, off); at = off; }
       pos = at;
       if (q.port[i] == KEY_PORT) continue;   // the KEY socket's pulses only show on the cable
-      if (q.port[i] == SWITCH_PORT) { const int a = q.ev[i].sw >= 0 ? q.ev[i].sw : 2; m->mute.store(a == 0 ? true : a == 1 ? false : !m->mute.load()); continue; }   // the SWITCH socket: a Timeline says ON (1) or OFF (0); any other trigger turns it over
+      if (q.port[i] == SWITCH_PORT) { const int a = q.ev[i].sw >= 0 ? q.ev[i].sw : 2; m->mute.store(a == 0 ? true : a == 1 ? false : !m->mute.load()); continue; }   // the SWITCH socket: on, off, or over; any other trigger turns it over
       m->trig(q.port[i], q.ev[i]); }
     if (at < n) { pos = at; m->render(at, n); }
     if (d->lpCut >= 0 && !m->out.empty()) {   // CUTOFF and RES (fully open: nothing)
