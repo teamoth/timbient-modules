@@ -70,7 +70,7 @@ static float fmAt(float v, int k) { const float x = clampf(v, 0, 1) * 4; const i
 // pulse shaped like the vocal folds opening and snapping shut, wavering very slightly from one cycle to the next as a real voice
 // does, with breath that comes and goes with each opening; five resonances per vowel, including the "singer's ring" round 3 kHz.
 // SIZE moves the voice from a bass (left) to a soprano (right).
-static const float SING[2][5][15] = {   // [bass, soprano][A E I O U]: five resonances (Hz), their levels (dB), their widths (Hz)
+static const float SINGER_TAB[2][5][15] = {   // [bass, soprano][A E I O U]: five resonances (Hz), their levels (dB), their widths (Hz)
   {{600, 1040, 2250, 2450, 2750, 0, -7, -9, -9, -20, 60, 70, 110, 120, 130}, {400, 1620, 2400, 2800, 3100, 0, -12, -9, -12, -18, 40, 80, 100, 120, 120},
    {250, 1750, 2600, 3050, 3340, 0, -30, -16, -22, -28, 60, 90, 100, 120, 120}, {400, 750, 2400, 2600, 2900, 0, -11, -21, -20, -40, 40, 80, 100, 120, 120},
    {350, 600, 2400, 2675, 2950, 0, -20, -32, -28, -36, 40, 80, 100, 120, 120}},
@@ -88,7 +88,7 @@ struct Formant : Poly<FormantV> {
   void singerAt(FormantV& x, float v) {   // the five resonances for this vowel (sliding between neighbours) and SIZE (bass to soprano)
     const float p = clampf(v, 0, 1) * 4; const int i = std::min(3, (int)p); const float fr = p - i, sz = iSize >= 0 ? e[iSize] : 0.5f;
     for (int k = 0; k < 5; k++) { float F[2], A[2], W[2];
-      for (int g = 0; g < 2; g++) { const float* a0 = SING[g][i]; const float* a1 = SING[g][i + 1]; F[g] = a0[k] + (a1[k] - a0[k]) * fr; A[g] = a0[5 + k] + (a1[5 + k] - a0[5 + k]) * fr; W[g] = a0[10 + k] + (a1[10 + k] - a0[10 + k]) * fr; }
+      for (int g = 0; g < 2; g++) { const float* a0 = SINGER_TAB[g][i]; const float* a1 = SINGER_TAB[g][i + 1]; F[g] = a0[k] + (a1[k] - a0[k]) * fr; A[g] = a0[5 + k] + (a1[5 + k] - a0[5 + k]) * fr; W[g] = a0[10 + k] + (a1[10 + k] - a0[10 + k]) * fr; }
       const float f = std::min(0.45f * sr, F[0] * std::pow(F[1] / F[0], sz)), w = W[0] + (W[1] - W[0]) * sz; x.b5[k].set(Biquad::BP, f, f / w, sr); x.a5[k] = dbToGain(A[0] + (A[1] - A[0]) * sz); } }
   void voice(FormantV& x, float& l, float& r) override {
     static const float Q[3] = {7, 10, 12}, A[3] = {1, 0.45f, 0.2f};
