@@ -46,7 +46,11 @@ bool Ui::tapRow(UiMod* u, int k) {
   char b[48]; if (kind <= 2) std::snprintf(b, 48, "TAP %d BPM", (int)std::lround(kind == 1 ? v : v * 60)); else if (kind == 3) std::snprintf(b, 48, "TAP %.2f S", v); else std::snprintf(b, 48, "TAP %.2f HZ", v);
   status(d->name + "  " + q.label + "  " + b, 1.5f); changed(); return true;
 }
-static int heavyFrom(const std::string& ty) { return ty == "echo" ? 6 : 8; }   // where the heavy TYPEs start
+static bool euclidHit(int i, int steps, int hits, int rot) { if (steps < 1 || hits < 1) return false; if (hits >= steps) return true; const int k = ((i - rot) % steps + steps) % steps; return (k * hits) % steps < hits; }   // as EUCLID DRUMS plays it
+// modules whose TYPE (or MODE) list has light kinds then heavier ones: the key, where the heavy ones start (past the end: none) and the help prefix
+struct TypeInfo { const char* type; const char* key; int from; const char* prefix; };
+static const TypeInfo TYPE_INFO[] = {{"reverb", "type", 8, "VERB "}, {"echo", "type", 6, "ECHO "}, {"pitchshift", "mode", 3, "PITCH "}, {"filter", "type", 5, "FILTER "}, {"amp", "type", 6, "DRIVE "}, {"phaser", "type", 4, "MOVE "}};
+static const TypeInfo* typeInfo(const std::string& ty, const std::string& key) { for (const TypeInfo& t : TYPE_INFO) if (ty == t.type && key == t.key) return &t; return nullptr; }
 // REVERB: a new TYPE brings its usual DECAY (a ROOM doesn't ring for 6 seconds); INFINITE stays INFINITE
 static void verbTypeSet(UiMod* u, int k, float old, float v) {
   const ModuleDef* d = u->m->def; if (d->type != "reverb" || d->params[k].key != "type" || std::lround(old) == std::lround(v)) return;
@@ -57,8 +61,8 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "timeline", "mutes", "journey", "midi", "midiout", "qwerty"}},
-  {"VOICES", {"tone", "pluck", "mi", "click", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "noinput", "audioin"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "listen"}},
+  {"VOICES", {"tone", "pluck", "mi", "click", "euclid", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "noinput", "audioin"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "pitchshift", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "listen"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -151,8 +155,8 @@ static const Layout& layoutOf(const ModuleDef* d) {
   if (sp != SPEC.end()) { int part = 0; for (auto& k : sp->second) { if (k == "|") { part++; continue; } put(key(k.c_str()), part); } for (int j = 0; j < n; j++) put(j, part); }   // anything not named: at the end
   else {
     static const std::map<std::string, std::vector<std::string>> MODES = {
-      {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
-      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"noinput", {"route", "pulse", "prate"}}, {"echo", {"type", "wow", "drive", "age", "pattern", "shift", "bend", "sweep", "smear", "crush", "scatter", "density"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
+      {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type", "cut", "res", "vowel", "shape", "drive"}}, {"amp", {"type", "gain", "amt", "rate", "tone", "mix"}}, {"phaser", {"type", "rate", "depth", "time", "centre", "stages", "fb"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
+      {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"noinput", {"route", "pulse", "prate"}}, {"euclid", {"lane", "st1", "hi1", "ro1", "tu1", "de1", "ch1", "lv1", "st2", "hi2", "ro2", "tu2", "de2", "ch2", "lv2", "st3", "hi3", "ro3", "tu3", "de3", "ch3", "lv3", "st4", "hi4", "ro4", "tu4", "de4", "ch4", "lv4"}}, {"pitchshift", {"mode", "shift", "fine", "inkey", "sub", "sub2", "up", "detune", "h1", "h2", "h3"}}, {"echo", {"type", "wow", "drive", "age", "pattern", "shift", "bend", "sweep", "smear", "crush", "scatter", "density"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
     const bool keyed = d->keyIdx >= 0;
     put(key("poly"), 0); for (int j = 0; j < n; j++) if (recButton(d, d->params[j])) put(j, 0);
     if (auto m = MODES.find(d->type); m != MODES.end()) for (auto& k : m->second) put(key(k.c_str()), 0);
@@ -178,8 +182,9 @@ static bool hiddenRow(const UiMod& u, int j, const std::vector<UiCable>* cables 
   if (q.only == "overdub" && P("recmode") < 0.5f) return true;          // SAMPLER: KEEP is for OVERDUB
   if (q.only == "adsr" && u.m->p[6].load() < 0.5f) return true;
   if (q.only == "never") return true;   // kept with the session, but set somewhere else (the Tracker's RANDOM NOTE: on its column numbers)
+  if (q.only.rfind("l:", 0) == 0) return std::to_string(std::lround(P("lane"))) != q.only.substr(2);   // EUCLID DRUMS: only the chosen LANE's settings
   if (q.only.rfind("v:", 0) == 0) {   // shown for some TYPEs only ("v:4,12": types 4 and 12)
-    const std::string want = "," + q.only.substr(2) + ",", t = "," + std::to_string(std::lround(P("type"))) + ","; return want.find(t) == std::string::npos; }         // MI VOICES: the envelope is only used in ADSR
+    const std::string want = "," + q.only.substr(2) + ",", t = "," + std::to_string(std::lround(P(d->paramIndex("type") >= 0 ? "type" : "mode"))) + ",";   /* TYPE, or PITCH SHIFT's MODE */ return want.find(t) == std::string::npos; }         // MI VOICES: the envelope is only used in ADSR
   if (d->type == "mi" && (q.key == "decay" || q.key == "colour") && miEngines()[std::max(0, std::min(MI_ENGINES - 1, (int)u.m->p[0].load()))].selfEnv) return true;   // models that shape themselves: Plaits skips its gate
   if (q.only == "own") { const int si = d->paramIndex("sync"); if (si >= 0 && d->params[si].tog && u.m->p[si].load() > 0.5f) return true; }   // BPM: not while it follows the session's tempo
   if (d->type == "sample") { const int kind = (int)P("kind"); const bool once = P("mode") > 0.5f;   // what doesn't apply to this kind of sound or way of playing
@@ -443,6 +448,16 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
         if (lit || learn) c.rect(cx, ry, cw - 1, 7, learn ? 12 : 4); else c.rect(cx, ry, cw - 1, 7, sharp ? 26 : 21);
         std::string s = qwKeys[i]; if (s.size() > 2) s = s.substr(0, 2); if (qwLearn == i) s = "?";
         if (!s.empty()) c.text(s, cx + (cw - 1 - Canvas::tw(s)) / 2, ry + 1, lit || learn ? 15 : 9); } }
+  } else if (ty == "euclid") {   // EUCLID DRUMS: each lane's rhythm as a ring (its hits filled in, where it's got to lit), the chosen lane brighter
+    static const char* NM[4] = {"KICK", "SNARE", "HAT", "PERC"}; const int lane = (int)std::lround(m->p[m->def->paramIndex("lane")].load());
+    const int r = std::max(6, std::min(14, w / 8 - 2));
+    for (int l = 0; l < 4; l++) {
+      const int cx = x + w * (2 * l + 1) / 8, cy = y + r + 1; const int st = std::max(1, std::min(32, (int)std::lround(m->p[m->def->paramIndex("st" + std::to_string(l + 1))].load())));
+      const int pk = (int)D(4 + l), hits = pk / 64, rot = pk % 64 - 32, at = (int)D(l); const bool sel = l == lane;
+      for (int k = 0; k < st; k++) { const float an = -PI / 2 + TAU * k / st; const int px = cx + (int)std::lround(std::cos(an) * r), py = cy + (int)std::lround(std::sin(an) * r);
+        const bool hit = euclidHit(k, st, hits, rot), now = k == at;
+        if (hit) c.rect(px - 1, py - 1, 2, 2, now ? 4 : sel ? 9 : 18); else c.px(px, py, now ? 4 : sel ? 18 : 21); }
+      const std::string t = NM[l]; c.text(t, cx - Canvas::tw(t) / 2, y + 2 * r + 4, D(9 + l) > 0.5f ? 4 : sel ? 9 : 21); }
   } else if (ty == "mutes") {   // four lanes of steps (lit: ON), where each has got to, and the HOLD TO PLAY button
     int ml = 1; int lens[4]; for (int l = 0; l < 4; l++) { lens[l] = std::max(1, std::min(32, (int)std::lround(m->p[3 + l].load()))); ml = std::max(ml, lens[l]); }
     const int cw = std::max(2, (w - 6) / ml), running = D(10) > 0.5f, rec = (int)D(8), rl = rec > 0 ? (int)D(11) : (int)std::lround(m->p[9].load());
@@ -950,10 +965,10 @@ std::string Ui::helpAt(float sx, float sy) {
     const int pj = paramAt(u, ly);
     if (pj >= 0 && d->type == "mi" && !(jacksIn && lx < 9)) { const std::string& k = d->params[pj].key; const int w3 = k == "harm" ? 0 : k == "timb" ? 1 : k == "morph" ? 2 : -1;   // MI VOICES: what this model does with it
       if (w3 >= 0) { const int mdl = std::max(0, std::min(MI_ENGINES - 1, (int)u->m->p[0].load())); return std::string(miEngines()[mdl].k[w3]) + "|" + miHelp(mdl, w3) + " (PLAITS' " + d->params[pj].label + " CONTROL, ON " + miEngines()[mdl].name + ")"; } }
-    if (pj >= 0 && (d->type == "reverb" || d->type == "echo") && d->params[pj].key == "type") {   // REVERB, ECHO: what this type does, and the others
-      const ParamDef& q = d->params[pj]; const int t = std::max(0, std::min((int)q.opts.size() - 1, (int)std::lround(u->m->p[pj].load()))), H = heavyFrom(d->type);
-      std::string s = helpOther((d->type == "echo" ? "ECHO " : "VERB ") + q.opts[t]); const size_t bar = s.find('|'); std::string lt, hv; for (size_t i = 0; i < q.opts.size(); i++) ((int)i < H ? lt : hv) += (((int)i < H ? lt : hv).empty() ? "" : ", ") + q.opts[i];
-      if (bar != std::string::npos) return "Type: " + s.substr(0, bar) + (t < H ? " (light)" : "") + "|" + s.substr(bar + 1) + " (LIGHT: " + lt + ". HEAVY, MORE CPU: " + hv + "." + (d->type == "reverb" ? " CHANGING TYPE ALSO SETS DECAY TO ITS USUAL LENGTH." : "") + ")"; }
+    if (pj >= 0 && typeInfo(d->type, d->params[pj].key)) {   // REVERB, ECHO, FILTER...: what this type does, and the others
+      const TypeInfo* ti = typeInfo(d->type, d->params[pj].key); const ParamDef& q = d->params[pj]; const int t = std::max(0, std::min((int)q.opts.size() - 1, (int)std::lround(u->m->p[pj].load()))), H = std::min((int)q.opts.size(), ti->from);
+      std::string s = helpOther(ti->prefix + q.opts[t]); const size_t bar = s.find('|'); std::string lt, hv; for (size_t i = 0; i < q.opts.size(); i++) ((int)i < H ? lt : hv) += (((int)i < H ? lt : hv).empty() ? "" : ", ") + q.opts[i];
+      if (bar != std::string::npos) return std::string(q.key == "mode" ? "Mode: " : "Type: ") + s.substr(0, bar) + (t < H ? " (light)" : " (heavy)") + "|" + s.substr(bar + 1) + (hv.empty() ? " (ALL LIGHT: " + lt + ".)" : " (LIGHT: " + lt + ". HEAVY, MORE CPU: " + hv + ".") + (hv.empty() ? "" : ")") + (d->type == "reverb" ? " CHANGING TYPE ALSO SETS DECAY TO ITS USUAL LENGTH." : ""); }
     if (pj >= 0) return jacksIn && lx < 9 && modulatable(d->params[pj]) ? modNote(u, pj) : withRange(d, pj) + (tapKind(d, d->params[pj]) ? " TAP IT THREE TIMES OR MORE IN RHYTHM TO SET IT." : "");
     return helpModule(d->type); }
   const int ci = cableAt(wx, wy, 3); if (ci >= 0) {   // a cable: what kind (its colour), what it joins, and what you can do with it
@@ -1141,6 +1156,10 @@ void Ui::pointerDown(float sx, float sy) {
       else { q.items.push_back("HOME SCALE"); for (auto& sc : scales()) q.items.push_back(sc.name); const float sv = m->seq[Module::si(i, 0) + 1].load(); q.cur = sv >= 10 ? (int)std::lround(sv) - 9 : 0;
         q.pick = [this, id, i](int j) { if (UiMod* um = byId(id)) { um->m->seq[Module::si(i, 0) + 1].store(j == 0 ? 0.8f : (float)(9 + j)); changed(); } }; }
       openDropdown(q); return; }
+    if (d->type == "euclid") {   // tap a ring to choose that lane; drag it up or down for HITS, sideways for ROTATE
+      Module* m = u->m; const int w = g.w - 6, l = std::max(0, std::min(3, vx * 4 / std::max(1, w))); static const char* NM[4] = {"KICK", "SNARE", "HAT", "PERC"};
+      m->p[d->paramIndex("lane")].store((float)l); status(std::string("LANE: ") + NM[l] + "  (DRAG UP OR DOWN FOR HITS, SIDEWAYS TO ROTATE)", 2);
+      const std::string k = std::to_string(l + 1); drag.kind = D_EUCLID; drag.m = u; drag.k = l; drag.n0 = m->p[d->paramIndex("hi" + k)].load(); drag.dir = (int)std::lround(m->p[d->paramIndex("ro" + k)].load()); changed(); return; }
     if (d->type == "mutes") {   // tap a step to light or darken it; hold the bar to play a lane in
       Module* m = u->m; const int w = g.w - 6;
       if (vy >= 29) { eng.action(m->id, "hold:1"); drag.kind = D_HOLD; drag.k = m->id; return; }
@@ -1207,9 +1226,9 @@ void Ui::pointerDown(float sx, float sy) {
     if (!q.opts.empty()) {
       if (q.opts.size() == 2 && (q.play || q.tog || q.opts[0] == "OFF")) { const float v = u->m->p[pj].load() > 0.5f ? 0.f : 1.f; u->m->p[pj].store(v); status(d->name + "  " + q.label + "  " + q.opts[(int)v]); changed(); return; }
       Dropdown l; l.items = q.opts; l.cur = (int)std::lround(u->m->p[pj].load()); l.x = u->x - viewX + 12; l.y = u->y - viewY + g.py + rowPx(*u, pj) + 4;
-      if ((d->type == "reverb" || d->type == "echo") && q.key == "type") {   // the light types, then the heavy ones under a heading
-        const int H = heavyFrom(d->type); l.items.insert(l.items.begin() + H, "HEAVIER (MORE CPU):"); l.title = H; if (l.cur >= H) l.cur++;
-        l.pick = [this, u, pj, H](int i) { if (i > H) i--; verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); status(u->m->def->name + "  TYPE  " + u->m->def->params[pj].opts[i] + (i >= H ? "  (HEAVY: USES MORE CPU)" : "  (LIGHT)")); changed(); };
+      if (typeInfo(d->type, q.key) && typeInfo(d->type, q.key)->from < (int)q.opts.size()) {   // the light types, then the heavy ones under a heading
+        const int H = typeInfo(d->type, q.key)->from; l.items.insert(l.items.begin() + H, "HEAVIER (MORE CPU):"); l.title = H; if (l.cur >= H) l.cur++;
+        l.pick = [this, u, pj, H](int i) { if (i > H) i--; verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); status(u->m->def->name + "  " + u->m->def->params[pj].label + "  " + u->m->def->params[pj].opts[i] + (i >= H ? "  (HEAVY: USES MORE CPU)" : "  (LIGHT)")); changed(); };
         openDropdown(l); return; }
       l.pick = [this, u, pj](int i) { verbTypeSet(u, pj, u->m->p[pj].load(), (float)i); u->m->p[pj].store((float)i); const ParamDef& qq = u->m->def->params[pj]; status(u->m->def->name + "  " + qq.label + "  " + qq.opts[i] + (qq.key == "chan" ? (u->m->def->type == "sample" ? "  (FOR THE NEXT SOUND YOU LOAD OR RECORD)" : "  (FOR THE NEXT SOUND YOU LOAD OR CATCH)") : ""), qq.key == "chan" ? 4.f : 2.f); changed(); };
       openDropdown(l); return; }
@@ -1260,6 +1279,11 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng.tempo.bpm.load())) { eng.tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
+  else if (drag.kind == D_EUCLID) {   // EUCLID DRUMS: up for more HITS, sideways to ROTATE (about 6 pixels a step)
+    Module* m = drag.m->m; const ModuleDef* d = m->def; const std::string k = std::to_string(drag.k + 1); const int st = (int)std::lround(m->p[d->paramIndex("st" + k)].load());
+    const float h = std::max(0.f, std::min((float)st, std::round(drag.n0 + (drag.sy - sy) / 6))); const int ro = (((drag.dir + (int)std::lround((sx - drag.sx) / 6)) % st) + st) % st;
+    if (h != m->p[d->paramIndex("hi" + k)].load() || ro != (int)m->p[d->paramIndex("ro" + k)].load()) { m->p[d->paramIndex("hi" + k)].store(h); m->p[d->paramIndex("ro" + k)].store((float)ro);
+      status(std::to_string((int)h) + " HITS IN " + std::to_string(st) + "  ROTATE " + std::to_string(ro), 1.2f); } }
   else if (drag.kind == D_WANDER) {   // up for more, about 6 pixels a step
     const float v = std::max(0.f, std::min(7.f, std::round(drag.n0 + (drag.sy - sy) / 6))); if (v != drag.m->m->p[drag.k].load()) { drag.m->m->p[drag.k].store(v);
       const int col = drag.k - drag.m->m->def->paramIndex("w1") + 1; status("COLUMN " + std::to_string(col) + (v > 0 ? " RANDOM NOTE: UP TO " + std::to_string((int)v) + " STEP" + (v > 1 ? "S" : "") + " OF THE SCALE EITHER WAY" : " RANDOM NOTE OFF"), 1.5f); } }

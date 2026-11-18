@@ -1,6 +1,7 @@
 // Timbient native: more effects (envelope VCA, resonator, phaser, tape, bitcrush) and the mod sources
 // that follow triggers or sound (trig envelope, random, follower).
 #include "params.h"
+#include "dsp2.h"
 
 namespace tb {
 
@@ -66,11 +67,19 @@ static Reg rResonator(new ModuleDef{"resonator", "RESONATOR", Cat::Proc, {{"IN",
    pct("damp", "DAMP", 0.4f), pct("inharm", "INHARM", 0), pct("spread", "WIDTH", 0.4f), pct("mix", "MIX", 0.5f)}, 0, 68, false, [] { return new Resonator(); }});
 
 // ---------------- PHASER: two chains of allpass filters swept by one LFO; STEREO sweeps the right side the opposite way ----------------
+// MOVEMENT (it was PHASER; its key is still "phaser"). TYPE: PHASER as it always was. Light: CHORUS (a slightly late,
+// wavering copy: wider and softer), FLANGER (a very short wavering copy fed back: the jet sweep; TIME sets where it sits),
+// VIBRATO (only the wavering copy: the pitch wobbles). Heavy: ENSEMBLE (three wavering copies each side, each moved by a slow
+// and a quick wobble together: the lush string-machine shimmer).
 struct Phaser : Module {
-  enum { RATE, DEPTH, CENTRE, STAGES, FB, STEREO, MIX };
-  Biquad ap[2][8]; DelayLine fbd[2]; float tail[2] = {0, 0}, ph = 0; int cnt = 0; DryWet dw; Smooth fbS;
-  void prepare() override { for (auto& d : fbd) d.init(0.01f, sr); dw.init(sr, 1 - e[MIX], e[MIX]); ph = rng.uni(); fbS.setTime(0.01f, sr); fbS.snap(e[FB] * 0.85f); }
+  enum { RATE, DEPTH, CENTRE, STAGES, FB, STEREO, MIX, TYPE, TIME };
+  enum { PHASE, CHORUS, FLANGE, VIB, ENSEMBLE };
+  Biquad ap[2][8]; DelayLine fbd[2], md[2]; float tail[2] = {0, 0}, ph = 0, ph2 = 0, fl[2] = {}; int cnt = 0, cur = -1; DryWet dw; Smooth fbS, dpS, tmS;
+  void prepare() override { for (auto& d : fbd) d.init(0.01f, sr); for (auto& d : md) d.init(0.06f, sr); dw.init(sr, 1 - e[MIX], e[MIX]); ph = rng.uni(); ph2 = rng.uni(); fbS.setTime(0.01f, sr); fbS.snap(e[FB] * 0.85f);
+    dpS.setTime(0.02f, sr); dpS.snap(e[DEPTH]); tmS.setTime(0.05f, sr); tmS.snap(e[TIME]); }
   void render(int a, int b) override {
+    const int ty = std::max(0, std::min(4, (int)std::lround(e[TYPE]))); if (ty != cur) { cur = ty; for (int c = 0; c < 2; c++) { md[c].clear(); fl[c] = 0; } }
+    if (ty != PHASE) { renderMod(a, b, ty); return; }
     dw.target(1 - e[MIX], e[MIX]); const int n = ((int)e[STAGES] + 1) * 2; const float sw = e[CENTRE] * e[DEPTH] * 0.85f, dly = 0.003f * sr; fbS.t = e[FB] * 0.85f;
     for (int i = a; i < b; i++) {
       ph += e[RATE] / sr; if (ph >= 1) ph -= 1;
@@ -85,10 +94,32 @@ struct Phaser : Module {
     }
     disp[0].store(ph);
   }
+  void renderMod(int a, int b, int ty) {
+    const float mix = ty == VIB ? 1.f : e[MIX]; dw.target(ty == VIB ? 0.f : 1 - mix * 0.5f, ty == VIB ? 1.f : mix * (ty == CHORUS ? 0.8f : 0.7f));
+    fbS.t = ty == FLANGE ? e[FB] * 0.95f : 0; dpS.t = e[DEPTH]; tmS.t = e[TIME]; const bool st = e[STEREO] > 0.5f;
+    for (int i = a; i < b; i++) {
+      ph += e[RATE] / sr; if (ph >= 1) ph -= 1; ph2 += (e[RATE] * 7.3f + 3.1f) / sr; if (ph2 >= 1) ph2 -= 1;
+      const float d = dw.d.tick(), w = dw.w.tick(), fb = fbS.tick(), dp = dpS.tick(), tm = tmS.tick();
+      for (int s = 0; s < 2; s++) {
+        const float off = st && s == 1 ? 0.25f : 0.f, l = std::sin(TAU * (ph + off)); const float x = in[0][s][i]; float y;
+        switch (ty) {
+          case CHORUS: { const float dl = (0.012f + 0.006f * dp * (1 + l) * 0.5f) * sr; y = readCubic(md[s], dl); md[s].write(x); break; }
+          case VIB: { const float dl = (0.002f + 0.004f * dp * (1 + l) * 0.5f) * sr; y = readCubic(md[s], dl); md[s].write(x); break; }
+          case FLANGE: { const float base = 0.0003f + 0.006f * tm * tm, dl = std::max(2.f, (base + base * 0.95f * dp * l) * sr + 1); y = readCubic(md[s], dl); md[s].write(sane(x + softLimit(y * fb))); break; }
+          default: {   // ENSEMBLE: three taps 120 degrees apart, each moved by the slow wobble and a quick shimmer
+            y = 0; for (int v = 0; v < 3; v++) { const float pv = ph + v / 3.f + off * 0.5f, qv = ph2 + v / 3.f + off; const float dl = (0.007f + 0.0035f * dp * (1 + std::sin(TAU * pv)) + 0.0004f * dp * std::sin(TAU * qv)) * sr; y += readCubic(md[s], dl); }
+            y *= 0.45f; md[s].write(x); break; }
+        }
+        out[0][s][i] = x * d + y * w;
+      }
+    }
+    disp[0].store(ph);
+  }
 };
-static Reg rPhaser(new ModuleDef{"phaser", "PHASER", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
+static Reg rPhaser(new ModuleDef{"phaser", "MOVEMENT", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {fmt(prExp("rate", "RATE", 0.02f, 8, 0.25f), [](float v) { char b[16]; std::snprintf(b, 16, v < 1 ? "%.2fHZ" : "%.1fHZ", v); return std::string(b); }), pct("depth", "DEPTH", 0.7f),
-   prHz("centre", "CENTRE", 150, 4000, 700), OP("stages", "STAGES", {"2", "4", "6", "8"}, 1), pr("fb", "FEEDBACK", 0, 0.9f, 0.45f), OP("stereo", "STEREO", {"OFF", "ON"}, 1), pct("mix", "MIX", 0.5f)},
+   only(prHz("centre", "CENTRE", 150, 4000, 700), "v:0"), only(OP("stages", "STAGES", {"2", "4", "6", "8"}, 1), "v:0"), only(pr("fb", "FEEDBACK", 0, 0.9f, 0.45f), "v:0,2"), OP("stereo", "STEREO", {"OFF", "ON"}, 1), only(pct("mix", "MIX", 0.5f), "v:0,1,2,4"),
+   noMod(OP("type", "TYPE", {"PHASER", "CHORUS", "FLANGER", "VIBRATO", "ENSEMBLE"}, 0)), only(pct("time", "TIME", 0.4f), "v:2")},
   5, 68, false, [] { return new Phaser(); }});
 
 // ---------------- TAPE: wow, flutter, saturation, a darker tone and some hiss ----------------

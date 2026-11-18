@@ -8,6 +8,7 @@
 #include "../src/ui/session.h"
 #include "../src/ui/help.h"
 #include "../src/engine/fft.h"
+namespace tb { bool euclidHit(int i, int steps, int hits, int rot); }
 #include "../src/ui/theme.h"
 #include <random>
 #include <map>
@@ -53,7 +54,7 @@ int main(int argc, char** argv) {
   }
   // every voice must follow the note it's given: its sound should repeat at the note's period (or a whole multiple of it)
   for (const ModuleDef* d : allDefs()) {
-    if (d->cat != Cat::Voice || d->type == "sample" || d->type == "click" || d->type == "grains") continue;   // noise bursts and grain clouds don't repeat cleanly
+    if (d->cat != Cat::Voice || d->type == "sample" || d->type == "click" || d->type == "grains" || d->type == "euclid") continue;   // noise bursts, grain clouds and drums don't follow a note
     bool ok = true; char msg[160] = ""; int lags[2] = {0, 0}, li = 0;
     for (float nt : {57.f, 69.f}) { Engine e2; e2.setSampleRate(RATE); Ui u2(e2); UiMod* o = u2.add("out", 0, 0); UiMod* v = u2.add(d->type, 0, 0); u2.connect(v, "OUT", o, "A");
       if (d->paramIndex("env") >= 0) u2.set(v, "env", 1);
@@ -350,17 +351,22 @@ int main(int argc, char** argv) {
   // NO ZIPPER: controls swept fast end to end (as an LFO cable would, 4 Hz) must glide, not jump once a block. A steady tone in; next to
   // nothing may appear away from its own family of frequencies
   { std::string res; bool ok = true;
-    const std::vector<std::pair<std::string, std::string>> cases = {{"filter", "cut"}, {"filter", "res"}, {"comp", "thr"}, {"comp", "ratio"}, {"master", "tilt"}, {"master", "warmth"}, {"master", "glue"}, {"tape", "tone"}, {"tape", "sat"}, {"phaser", "fb"}};
-    for (auto& [ty, key] : cases) { Module* m = eng.create(ty, 970); const ModuleDef* d = m->def; const int k = d->paramIndex(key); const float lo = d->params[k].min, hi = d->params[k].max;
+    struct ZC { std::string ty, key; int typ; float hold = -1; };   // typ: which TYPE (-1: as it starts); hold: not swept, held there (the
+    // drive amounts: sweeping how hard something distorts changes its harmonics fast by its nature, so those are checked held still, for aliasing)
+    const std::vector<ZC> cases = {{"filter", "cut", -1}, {"filter", "res", -1}, {"comp", "thr", -1}, {"comp", "ratio", -1}, {"master", "tilt", -1}, {"master", "warmth", -1}, {"master", "glue", -1}, {"tape", "tone", -1}, {"tape", "sat", -1}, {"phaser", "fb", -1},
+      {"filter", "res", 3}, {"filter", "vowel", 4}, {"filter", "cut", 4}, {"filter", "cut", 5}, {"filter", "res", 5}, {"filter", "drive", 5, 1}, {"filter", "drive", 6, 1}, {"filter", "cut", 6}, {"filter", "cut", 7}, {"filter", "shape", 7},
+      {"amp", "amt", 1, 1}, {"amp", "amt", 2, 0.3f}, {"amp", "amt", 3, 1}, {"amp", "amt", 4, 1}, {"amp", "amt", 6, 1}, {"amp", "mix", 2}, {"amp", "mix", 6}, {"phaser", "fb", 2}};
+    for (auto& [ty, key, typ, hold] : cases) { Module* m = eng.create(ty, 970); const ModuleDef* d = m->def; const int k = d->paramIndex(key); const float lo = d->params[k].min, hi = d->params[k].max;
+      if (typ >= 0) { const int tj = d->paramIndex("type"); m->e[tj] = typ; m->p[tj].store(typ); }
       m->e[k] = lo; m->p[k].store(lo); if (ty == "tape") for (const char* z : {"wow", "flutter", "hiss"}) { m->e[d->paramIndex(z)] = 0; m->p[d->paramIndex(z)].store(0); }   /* its own wobble and hiss would cloud it */
       m->prepare(); const int N = 65536; std::vector<float> rec; double ph = 0, ph2 = 0;
-      for (int b = 0; b < (int)(5 * 48000 / 64); b++) { const float t = 0.5f + 0.5f * std::sin(TAU * 4.0 * b * 64 / 48000); const float v = d->params[k].exp && lo > 0 ? lo * std::pow(hi / lo, t) : lo + (hi - lo) * t; m->e[k] = v; m->p[k].store(v);
+      for (int b = 0; b < (int)(5 * 48000 / 64); b++) { const float t = hold >= 0 ? hold : 0.5f + 0.5f * std::sin(TAU * 4.0 * b * 64 / 48000); const float v = d->params[k].exp && lo > 0 ? lo * std::pow(hi / lo, t) : lo + (hi - lo) * t; m->e[k] = v; m->p[k].store(v);
         m->blockStart(64); for (int i = 0; i < 64; i++) { const float x = 0.2f * std::sin(ph) + 0.12f * std::sin(ph2); ph += TAU * 220 / 48000; ph2 += TAU * 330 / 48000; m->in[0][0][i] = m->in[0][1][i] = x; }
         m->render(0, 64); for (int i = 0; i < 64; i++) rec.push_back(m->out[0][0][i]); }
       delete m; std::vector<float> re(N), im(N, 0); for (int i = 0; i < N; i++) re[i] = rec[rec.size() - N + i] * (0.5f - 0.5f * std::cos(TAU * i / N));
       FFT f(N); f.run(re.data(), im.data(), false); double tot = 1e-30, g = 0;
       for (int q = 1; q < N / 2; q++) { const double p = re[q] * re[q] + im[q] * im[q]; const float hz = q * 48000.f / N; tot += p; const float u = hz / 55; if (hz > 1000 && std::fabs(u - std::round(u)) * 55 > 12) g += p; }
-      const double db = 10 * std::log10(g / tot + 1e-30); char b[48]; std::snprintf(b, 48, " %s.%s %.0f", ty.c_str(), key.c_str(), db); res += b; if (db > -58) ok = false; }
+      const double db = 10 * std::log10(g / tot + 1e-30); char b[64]; if (typ >= 0) std::snprintf(b, 64, " %s%d.%s %.0f", ty.c_str(), typ, key.c_str(), db); else std::snprintf(b, 64, " %s.%s %.0f", ty.c_str(), key.c_str(), db); res += b; if (db > -58) ok = false; }
     if (!ok) fails++; std::printf("no zipper (dB):%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
   // REVERB: no grit from movement. A steady note through every type with MOTION all the way up: next to nothing above 1 kHz that isn't near the
   // note's own family (the kind of roughness a wobble moving in steps once a block makes). The pitch-shifting types are left out
@@ -429,6 +435,15 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 64; i++) { acc += m->out[0][0][i] * m->out[0][0][i]; if (++c == 480) { const bool u = 10 * std::log10(acc / 480 + 1e-30) > -30; if (k > 2 * 48000 / 64 && u && !up) rises++; up = u; acc = 0; c = 0; } } }
       delete m; if (rises < spd * 10 * 0.6f || rises > spd * 10 * 1.6f) ok = false; char b[32]; std::snprintf(b, 32, " %.0f Hz: %d", spd, rises); res += b; }
     if (!ok) fails++; std::printf("no-input pulse, pulses in 10 s at SPEED%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
+  // EUCLID DRUMS: HITS spread evenly (3 in 8 is the tresillo), each lane plays its count every cycle, its trigger output agrees
+  { bool ok = true; std::string pat; for (int k = 0; k < 8; k++) pat += euclidHit(k, 8, 3, 0) ? 'x' : '.'; if (pat != "x..x..x.") ok = false;
+    std::string p2; for (int k = 0; k < 8; k++) p2 += euclidHit(k, 8, 5, 0) ? 'x' : '.';
+    Module* m = eng.create("euclid", 995); const ModuleDef* d = m->def; auto set = [&](const char* k, float v) { m->e[d->paramIndex(k)] = v; m->p[d->paramIndex(k)].store(v); };
+    set("sync", 0); set("bpm", 120); set("div", 1); set("chance", 1); set("mutate", 0); m->prepare(); float mx = 0; double e2 = 0;
+    for (int k = 0; k < 4 * 48000 / 64; k++) { m->blockStart(64); m->render(0, 64); m->t += 64.0 / 48000; for (int i = 0; i < 64; i++) { mx = std::max(mx, std::fabs(m->out[0][0][i])); e2 += m->out[0][0][i] * m->out[0][0][i]; } }
+    const float steps = m->disp[8].load(); delete m;
+    if (steps < 30 || steps > 34 || mx > 1 || e2 < 1) ok = false;   // 120 BPM in sixteenths: 8 steps a second, 32 in 4 s
+    if (!ok) fails++; std::printf("euclid drums: 3 in 8 %s, 5 in 8 %s, %d steps in 4 s, peak %.2f%s\n", pat.c_str(), p2.c_str(), (int)steps, mx, ok ? "" : "  WRONG"); }
   // TAP: three taps in rhythm set a speed row (and a drag doesn't count as a tap)
   { UiMod* ck = ui.add("clock", 10, 10); UiMod* ec = ui.add("echo", 100, 10); bool ok = true;
     const int bi = ck->m->def->paramIndex("bpm"), ti = ec->m->def->paramIndex("time");

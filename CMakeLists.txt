@@ -31,7 +31,9 @@ set(ENGINE_SOURCES
   src/engine/modules_fx.cpp
   src/engine/modules_reverb.cpp
   src/engine/modules_echo.cpp
-  src/engine/modules_noinput.cpp)
+  src/engine/modules_noinput.cpp
+  src/engine/modules_pitch.cpp
+  src/engine/modules_euclid.cpp)
 set(UI_SOURCES src/ui/ui.cpp src/ui/session.cpp src/ui/browser.cpp src/ui/editor.cpp src/ui/help.cpp)
 
 # Mutable Instruments' Plaits (MIT licence, see third_party/mutable/LICENSE): the MI VOICES module
