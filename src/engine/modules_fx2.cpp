@@ -151,29 +151,56 @@ static Reg rPhaser(new ModuleDef{"phaser", "MOVEMENT", Cat::Proc, {{"IN", PType:
   5, 68, false, [] { return new Phaser(); }});
 
 // ---------------- TAPE: wow, flutter, saturation, a darker tone and some hiss ----------------
+// TYPE: CLASSIC is the tape it always was. CASSETTE: a quicker, scratchier flutter, more hiss, highs gone above 12 kHz and a
+// warm bump in the bass. REEL: a studio reel-to-reel: steady and full, its saturation run at twice the rate with the tape's own
+// memory (it magnetises a little differently going up than coming down), which thickens and gently squashes. DICTAPHONE: a
+// pocket recorder, only the middle of the sound (300 Hz to 3.4 kHz), wobbly and crunchy. AGE: worn tape: the sound
+// dips and dulls for a moment now and then.
 struct Tape : Module {
-  enum { WOW, FLUTTER, SAT, TONE, HISS, MIX };
-  DelayLine dry[2], wet[2]; Biquad lp, hp; Smooth base, toneS, satS; float p1 = 0, p2 = 0, ph = 0, drT = 0, satK = -1, satN = 1; int cnt = 0; DryWet dw;
+  enum { WOW, FLUTTER, SAT, TONE, HISS, MIX, TYPE, AGE };
+  enum { CLASSIC, CASSETTE, REEL, DICTA };
+  DelayLine dry[2], wet[2]; Biquad lp, hp, bump, band, band2; Smooth base, toneS, satS, dropG; float p1 = 0, p2 = 0, p3 = 0, ph = 0, drT = 0, satK = -1, satN = 1, dropT = 1, dropLp[2] = {}, mag[2] = {}, xPrev[2] = {}, scrape = 0; int cnt = 0, cur = -1; DryWet dw;
   void prepare() override { for (int c = 0; c < 2; c++) { dry[c].init(0.1f, sr); wet[c].init(0.1f, sr); } base.setTime(0.4f, sr); base.snap(0.012f); hp.set(Biquad::HP, 2500, 0.707f, sr); dw.init(sr, 1 - e[MIX], e[MIX]);
-    toneS.setTime(0.015f, sr); toneS.snap(e[TONE]); satS.setTime(0.015f, sr); satS.snap(e[SAT]); lp.set(Biquad::LP, e[TONE], 0.75f, sr); }
+    toneS.setTime(0.015f, sr); toneS.snap(e[TONE]); satS.setTime(0.015f, sr); satS.snap(e[SAT]); lp.set(Biquad::LP, e[TONE], 0.75f, sr); dropG.setTime(0.02f, sr); dropG.snap(1); cur = -1; }
+  void setType(int ty) { cur = ty; bump.reset(); band.reset(); band2.reset();
+    if (ty == CASSETTE) { bump.set(Biquad::PEAK, 90, 1.f, sr, 3); band.set(Biquad::HP, 30, 0.707f, sr); }
+    else if (ty == DICTA) { bump.set(Biquad::PEAK, 1500, 0.8f, sr, 4); band.set(Biquad::HP, 300, 0.707f, sr); band2.set(Biquad::HP, 300, 0.707f, sr); }
+    else if (ty == REEL) { bump.set(Biquad::PEAK, 55, 1.2f, sr, 2.5f); band.set(Biquad::HP, 20, 0.707f, sr); } }
   void render(int a, int b) override {
-    dw.target(1 - e[MIX], e[MIX]); toneS.t = e[TONE]; satS.t = e[SAT];
-    const float hiss = e[HISS] * e[HISS] * 0.03f, dt = 1.f / sr;
-    drT -= (b - a) * dt; if (drT <= 0) { drT = rng.range(0.4f, 1.5f); base.t = 0.012f + rng.bi() * e[WOW] * 0.0015f; }   // a slow random drift on top of the wow
+    const int ty = std::max(0, std::min(3, (int)std::lround(e[TYPE]))); if (ty != cur) setType(ty);
+    // how each kind moves: wow and flutter (how much, how fast), hiss, how far the highs reach
+    const float wowK = ty == CASSETTE ? 1.3f : ty == DICTA ? 2.f : ty == REEL ? 0.4f : 1, flK = ty == CASSETTE ? 1.6f : ty == DICTA ? 3.f : ty == REEL ? 0.3f : 1, flHz = ty == CASSETTE ? 9.f : ty == DICTA ? 12.f : ty == REEL ? 5.f : 6.3f,
+      wowHz = ty == CASSETTE ? 0.8f : ty == DICTA ? 1.4f : 0.55f, hissK = ty == CASSETTE ? 1.8f : ty == DICTA ? 2.5f : ty == REEL ? 0.4f : 1, topHz = ty == CASSETTE ? 12000.f : ty == DICTA ? 3400.f : 20000.f, satX = ty == DICTA ? 1.5f : 1;
+    dw.target(1 - e[MIX], e[MIX]); toneS.t = std::min(e[TONE], topHz); satS.t = e[SAT] * satX;
+    const float hiss = e[HISS] * e[HISS] * 0.03f * hissK, dt = 1.f / sr, age = ty == CLASSIC ? 0.f : e[AGE];
+    drT -= (b - a) * dt; if (drT <= 0) { drT = rng.range(0.4f, 1.5f); base.t = 0.012f + rng.bi() * e[WOW] * wowK * 0.0015f; }   // a slow random drift on top of the wow
+    if (age > 0) { dropT -= (b - a) * dt; if (dropT <= 0) { const bool on = dropG.t > 0.99f; dropG.t = on ? 1 - age * rng.range(0.3f, 0.8f) : 1; dropT = on ? rng.range(0.02f, 0.12f) : rng.range(0.3f, 4.f) / (0.2f + age * 2); } }   // AGE: a dip now and then
+    else dropG.t = 1;
     for (int i = a; i < b; i++) {
-      p1 += 0.55f * dt; if (p1 >= 1) p1 -= 1; p2 += 6.3f * dt; if (p2 >= 1) p2 -= 1;
-      const float dl = (base.tick() + std::sin(TAU * p1) * e[WOW] * 0.0035f + std::sin(TAU * p2) * e[FLUTTER] * 0.00035f) * sr;
-      const float h = hp.run(rng.bi(), 0) * hiss, d = dw.d.tick(), w = dw.w.tick();
+      p1 += wowHz * dt; if (p1 >= 1) p1 -= 1; p2 += flHz * dt; if (p2 >= 1) p2 -= 1;
+      if (ty == CASSETTE || ty == DICTA) scrape += 0.05f * (rng.bi() - scrape);   // scrape flutter: fast and irregular
+      const float dl = (base.tick() + std::sin(TAU * p1) * e[WOW] * wowK * 0.0035f + (std::sin(TAU * p2) + scrape * 2) * e[FLUTTER] * flK * 0.00035f) * sr;
+      const float h = hp.run(rng.bi(), 0) * hiss, d = dw.d.tick(), w = dw.w.tick(), dg = dropG.tick();
       const float tn = toneS.tick(), k = 1 + satS.tick() * 7, sN = 1.f / std::pow(k, 0.7f); if ((cnt++ & 3) == 0) lp.set(Biquad::LP, tn, 0.75f, sr);   // TONE and SATURATE glide (they jumped once a block)
-      for (int c = 0; c < 2; c++) { const float x = in[0][c][i]; dry[c].write(x); wet[c].write(std::tanh(x * k) * sN);
-        out[0][c][i] = dry[c].read(0.012f * sr) * d + (lp.run(wet[c].read(std::max(1.f, dl)), c) + h) * w; }
+      for (int c = 0; c < 2; c++) { const float x = in[0][c][i]; dry[c].write(x); float sx;
+        if (ty == REEL) { float o = 0;   // twice the rate: the tape's memory (it follows rising and falling a little differently)
+          for (int os = 0; os < 2; os++) { const float xi = os == 0 ? 0.5f * (xPrev[c] + x) : x, up = std::tanh((xi - xPrev[c]) * 150);   /* rising or falling, eased (a hard switch would alias) */ const float tgt = std::tanh(k * xi + 0.08f * up * std::min(1.f, k * 0.3f));
+            mag[c] += (tgt - mag[c]) * 0.85f; o += mag[c]; } xPrev[c] = x; sx = o * 0.5f * sN; }
+        else if (ty == CLASSIC) sx = std::tanh(x * k) * sN;
+        else sx = (std::tanh(x * k + 0.05f * k) - std::tanh(0.05f * k)) * sN;   // a little uneven, like cheap tape and heads
+        if (ty != CLASSIC) { sx = bump.run(band.run(sx, c), c); if (ty == DICTA) sx = band2.run(sx, c) * 1.5f; }
+        wet[c].write(sx);
+        float y = lp.run(wet[c].read(std::max(1.f, dl)), c);
+        if (age > 0) { dropLp[c] += (0.15f + 0.85f * dg * dg) * (y - dropLp[c]); y = dropLp[c] * dg; }   // a dip is quieter and duller
+        out[0][c][i] = dry[c].read(0.012f * sr) * d + (y + h) * w; }
     }
     ph += (b - a) * dt * 0.55f * (1 + std::cos(TAU * p1) * e[WOW] * 0.6f); ph -= std::floor(ph); disp[0].store(ph);   // the reels: wow makes them surge and lag
     disp[1].store(e[SAT]); disp[2].store(std::sin(TAU * p2) * e[FLUTTER]);
   }
 };
 static Reg rTape(new ModuleDef{"tape", "TAPE", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
-  {pct("wow", "WOW", 0.3f), pct("flutter", "FLUTTER", 0.2f), pct("sat", "SATURATE", 0.3f), prHz("tone", "TONE", 800, 16000, 6000), pct("hiss", "HISS", 0.1f), pct("mix", "MIX", 1)},
+  {pct("wow", "WOW", 0.3f), pct("flutter", "FLUTTER", 0.2f), pct("sat", "SATURATE", 0.3f), prHz("tone", "TONE", 800, 16000, 6000), pct("hiss", "HISS", 0.1f), pct("mix", "MIX", 1),
+   noMod(OP("type", "TYPE", {"CLASSIC", "CASSETTE", "REEL", "DICTAPHONE"}, 0)), only(pct("age", "AGE", 0.2f), "v:1,2,3")},
   36, 68, false, [] { return new Tape(); }});
 
 
@@ -246,28 +273,60 @@ static inline float compGain(float lev, float thr, float ratio, float knee) {
 }
 
 // COMPRESSOR: turns loud parts down. Listens to IN, or to KEY when something is plugged in there (sidechain)
+// TYPE: CLASSIC is the clean compressor it always was. VCA: listens to the average loudness (not the peaks): punchy and tight,
+// good on drums and the mix. OPTO: smooth and musical, like the old light-and-photocell kind: a gentle attack, and the longer
+// and harder it works the slower it lets go (RELEASE sets how slow at most). FET: fast and aggressive, listening to its own
+// output, with COLOUR adding its grit. Heavy: MULTIBAND splits the sound at 200 Hz and 2.5 kHz and squashes lows, mids and highs
+// each on their own, so a loud bass doesn't pump the rest.
 struct CompModule : Module {
-  enum { THR, RATIO, ATK, REL, KNEE, MAKEUP, MIX };
-  float env = -120, gr = 0, peakDisp = -120, peakR = -120; Smooth mk, dry, th, ra;   // THRESHOLD and RATIO glide too (they jumped once a block when modulated: a faint zipper)
-  void prepare() override { mk.setTime(0.02f, sr); mk.snap(dbToGain(e[MAKEUP])); dry.setTime(0.02f, sr); dry.snap(1 - e[MIX]); th.setTime(0.01f, sr); th.snap(e[THR]); ra.setTime(0.01f, sr); ra.snap(e[RATIO]); }
+  enum { THR, RATIO, ATK, REL, KNEE, MAKEUP, MIX, TYPE, COLOUR };
+  enum { CLASSIC, VCA, OPTO, FET, MULTI };
+  float env = -120, gr = 0, peakDisp = -120, peakR = -120, ms = 0, charge = 0, fbL = 0, fbR = 0, bEnv[3] = {-120, -120, -120}; Smooth mk, dry, th, ra, col;   // THRESHOLD and RATIO glide too (they jumped once a block when modulated: a faint zipper)
+  Biquad xo[3][2][2][2]; int cur = -1;   // MULTIBAND's crossovers: [which][low/high][two in a row][]
+  void prepare() override { mk.setTime(0.02f, sr); mk.snap(dbToGain(e[MAKEUP])); dry.setTime(0.02f, sr); dry.snap(1 - e[MIX]); th.setTime(0.01f, sr); th.snap(e[THR]); ra.setTime(0.01f, sr); ra.snap(e[RATIO]); col.setTime(0.02f, sr); col.snap(e[COLOUR]); cur = -1; }
+  void setType(int ty) { cur = ty; env = -120; gr = 0; ms = 0; charge = 0; fbL = fbR = 0; for (float& v : bEnv) v = -120;
+    if (ty == MULTI) { const float F[3] = {200, 2500, 2500}; for (int x = 0; x < 3; x++) for (int s2 = 0; s2 < 2; s2++) { xo[x][0][s2][0].set(Biquad::LP, F[x], 0.7071f, sr); xo[x][1][s2][0].set(Biquad::HP, F[x], 0.7071f, sr); xo[x][0][s2][0].reset(); xo[x][1][s2][0].reset(); } } }
+  // a Linkwitz-Riley split (two Butterworths in a row each way): the two halves add back up flat
+  inline void split(int x, float in, int ch, float& lo, float& hi) { lo = xo[x][0][1][0].run(xo[x][0][0][0].run(in, ch), ch); hi = xo[x][1][1][0].run(xo[x][1][0][0].run(in, ch), ch); }
   void render(int a, int b) override {
+    const int ty = std::max(0, std::min(4, (int)std::lround(e[TYPE]))); if (ty != cur) setType(ty);
     const bool key = patched(1); const float aC = std::exp(-1.f / (std::max(0.0001f, e[ATK]) * sr)), rC = std::exp(-1.f / (std::max(0.005f, e[REL]) * sr));
-    mk.t = dbToGain(e[MAKEUP]); dry.t = 1 - e[MIX]; th.t = e[THR]; ra.t = e[RATIO]; float pk = 0, pkR = 0, worst = 0;
+    mk.t = dbToGain(e[MAKEUP]); dry.t = 1 - e[MIX]; th.t = e[THR]; ra.t = e[RATIO]; col.t = e[COLOUR]; float pk = 0, pkR = 0, worst = 0;
+    const float msC = std::exp(-1.f / (0.008f * sr)), optoA = std::exp(-1.f / (0.012f * sr));
     for (int i = a; i < b; i++) {
       const float l = in[0][0][i], r = in[0][1][i], dl = key ? in[1][0][i] : l, dr = key ? in[1][1][i] : r;
-      const float lev = toDb(std::max(std::fabs(dl), std::fabs(dr)));
-      env = lev > env ? lev + aC * (env - lev) : lev + rC * (env - lev);   // the level it follows: quick up (ATTACK), slower down (RELEASE)
-      gr = compGain(env, th.tick(), ra.tick(), e[KNEE]); worst = std::min(worst, gr);
-      const float g = dbToGain(gr) * mk.tick(), d = dry.tick(), w = 1 - d;
-      out[0][0][i] = l * (d + w * g); out[0][1][i] = r * (d + w * g); pk = std::max(pk, std::fabs(out[0][0][i])); pkR = std::max(pkR, std::fabs(out[0][1][i]));
+      const float thr = th.tick(), rat = ra.tick(), d = dry.tick(), w = 1 - d, m = mk.tick(), cl = col.tick(); float ol, orr;
+      if (ty == MULTI) {   // three bands, each with its own squash (the lows a little slower, the highs a little quicker)
+        float lo[2], mid[2], hi[2]; const float xs[2] = {l, r};
+        for (int c = 0; c < 2; c++) { float L1, H1; split(0, xs[c], c, L1, H1); float M1, H2; split(1, H1, c, M1, H2); float La, Lb; split(2, L1, c, La, Lb); lo[c] = La + Lb; mid[c] = M1; hi[c] = H2; }   // (the lows go through the upper split too, so the phases line up)
+        float* bands[3] = {lo, mid, hi}; ol = orr = 0;
+        for (int k = 0; k < 3; k++) { const float lev = toDb(key ? std::max(std::fabs(dl), std::fabs(dr)) : std::max(std::fabs(bands[k][0]), std::fabs(bands[k][1]))), sl = k == 0 ? 2.f : k == 2 ? 0.5f : 1.f;
+          const float ak = std::pow(aC, 1 / sl), rk = std::pow(rC, 1 / sl);
+          bEnv[k] = lev > bEnv[k] ? lev + ak * (bEnv[k] - lev) : lev + rk * (bEnv[k] - lev); const float g2 = compGain(bEnv[k], thr, rat, e[KNEE]); worst = std::min(worst, g2);
+          const float gg = dbToGain(g2); ol += bands[k][0] * gg; orr += bands[k][1] * gg; }
+        ol *= m; orr *= m;
+      } else {
+        float lev;
+        if (ty == VCA) { ms = std::max(dl * dl, dr * dr) + msC * (ms - std::max(dl * dl, dr * dr)); lev = 10 * std::log10(std::max(ms * 2, 1e-12f)); }   // the average (RMS), lifted to a sine's peak
+        else if (ty == FET) lev = toDb(std::max(std::fabs(fbL), std::fabs(fbR)));   // it listens to what comes out of it
+        else lev = toDb(std::max(std::fabs(dl), std::fabs(dr)));
+        if (ty == OPTO) { const float rel = std::exp(-1.f / ((0.06f + charge * e[REL] * 2.5f) * sr));   // the cell remembers: the more it's worked, the slower it lets go
+          env = lev > env ? lev + optoA * (env - lev) : lev + rel * (env - lev); charge += ((gr < -3 ? 1.f : 0.f) - charge) * (gr < -3 ? 0.3f : 0.05f) / sr; }
+        else env = lev > env ? lev + aC * (env - lev) : lev + rC * (env - lev);   // the level it follows: quick up (ATTACK), slower down (RELEASE)
+        gr = ty == FET ? std::max(-40.f, compGain(env, thr, rat, e[KNEE]) * rat) : ty == OPTO ? compGain(env, thr, rat, std::max(12.f, e[KNEE])) : compGain(env, thr, rat, e[KNEE]); worst = std::min(worst, gr);
+        const float g = dbToGain(gr) * m; ol = l * g; orr = r * g;
+        if (ty == FET) { fbL = l * dbToGain(gr); fbR = r * dbToGain(gr); if (cl > 0.001f) { const float k = 1 + cl * 3; auto sat = [&](float x) { return (std::tanh(k * x + 0.1f * cl) - std::tanh(0.1f * cl)) / k * (1 + cl * 0.5f); }; ol = sat(ol); orr = sat(orr); } }
+      }
+      out[0][0][i] = l * d + ol * w; out[0][1][i] = r * d + orr * w; pk = std::max(pk, std::fabs(out[0][0][i])); pkR = std::max(pkR, std::fabs(out[0][1][i]));
     }
     disp[0].store(worst, std::memory_order_relaxed); peakDisp = std::max(toDb(pk), peakDisp - 0.5f); disp[1].store(peakDisp, std::memory_order_relaxed); this->peakR = std::max(toDb(pkR), this->peakR - 0.5f); disp[3].store(this->peakR, std::memory_order_relaxed);
   }
 };
 static Reg rComp(new ModuleDef{"comp", "COMPRESSOR", Cat::Proc, {{"IN", PType::Audio}, {"KEY", PType::Audio}}, {{"OUT", PType::Audio}},
   {fmt(pr("thr", "THRESHOLD", -48, 0, -18), dbText), noMod(fmt(prExp("ratio", "RATIO", 1, 20, 4), [](float v) { char b[16]; std::snprintf(b, 16, "%.1f:1", v); return std::string(b); })),
-   fmt(prExp("atk", "ATTACK", 0.0001f, 0.2f, 0.01f), msText), fmt(prExp("rel", "RELEASE", 0.01f, 2, 0.2f), msText),
-   noMod(fmt(pr("knee", "KNEE", 0, 18, 6), [](float v) { char b[16]; std::snprintf(b, 16, "%.0fDB", v); return std::string(b); })), noMod(fmt(pr("makeup", "MAKEUP", 0, 24, 0), dbText)), pct("mix", "MIX", 1)},
+   only(fmt(prExp("atk", "ATTACK", 0.0001f, 0.2f, 0.01f), msText), "v:0,1,3,4"), fmt(prExp("rel", "RELEASE", 0.01f, 2, 0.2f), msText),
+   noMod(fmt(pr("knee", "KNEE", 0, 18, 6), [](float v) { char b[16]; std::snprintf(b, 16, "%.0fDB", v); return std::string(b); })), noMod(fmt(pr("makeup", "MAKEUP", 0, 24, 0), dbText)), pct("mix", "MIX", 1),
+   noMod(OP("type", "TYPE", {"CLASSIC", "VCA", "OPTO", "FET", "MULTIBAND"}, 0)), only(pct("colour", "COLOUR", 0.3f), "v:3")},
   20, 68, false, [] { return new CompModule(); }});
 
 // a look-ahead peak limiter: the sound is held back a moment so the gain can come down before a peak arrives

@@ -351,7 +351,7 @@ int main(int argc, char** argv) {
   // EVERY TYPE: each kind of each module with a TYPE (or MODE) list, played for 2 s (notes for a voice, a saw with noise bursts for an
   // effect): nothing that isn't a number, nothing wildly loud, and not silent
   { std::string res; bool ok = true;
-    for (const char* ty : {"filter", "amp", "phaser", "pluck", "resonator", "pad"}) { Module* m0 = eng.create(ty, 980); const int tj = m0->def->paramIndex("type"); const int nt = (int)m0->def->params[tj].opts.size(); const bool voice = m0->def->cat == Cat::Voice; delete m0;
+    for (const char* ty : {"filter", "amp", "phaser", "pluck", "resonator", "pad", "analog", "breath", "formant", "fold", "tape", "comp"}) { Module* m0 = eng.create(ty, 980); const int tj = m0->def->paramIndex("type"); const int nt = (int)m0->def->params[tj].opts.size(); const bool voice = m0->def->cat == Cat::Voice; delete m0;
       for (int t = 0; t < nt; t++) { Module* m = eng.create(ty, 981 + t); const ModuleDef* d = m->def; m->e[tj] = t; m->p[tj].store(t); if (d->paramIndex("mix") >= 0) { m->e[d->paramIndex("mix")] = 1; m->p[d->paramIndex("mix")].store(1); } m->prepare();
         double s2 = 0, pk = 0; int bad = 0; double ph = 0; unsigned r = 7; const int B = 2 * 48000 / 64;
         for (int b = 0; b < B; b++) { if (voice && b % 150 == 0) { Event ev; ev.note = 55 + (b / 150) % 5 * 3; ev.vel = 0.9f; m->trig(0, ev); }
@@ -368,10 +368,10 @@ int main(int argc, char** argv) {
     // drive amounts: sweeping how hard something distorts changes its harmonics fast by its nature, so those are checked held still, for aliasing)
     const std::vector<ZC> cases = {{"filter", "cut", -1}, {"filter", "res", -1}, {"comp", "thr", -1}, {"comp", "ratio", -1}, {"master", "tilt", -1}, {"master", "warmth", -1}, {"master", "glue", -1}, {"tape", "tone", -1}, {"tape", "sat", -1}, {"phaser", "fb", -1},
       {"filter", "res", 3}, {"filter", "vowel", 4}, {"filter", "cut", 4}, {"filter", "cut", 5}, {"filter", "res", 5}, {"filter", "drive", 5, 1}, {"filter", "drive", 6, 1}, {"filter", "cut", 6}, {"filter", "cut", 7}, {"filter", "shape", 7},
-      {"amp", "amt", 1, 1}, {"amp", "amt", 2, 0.3f}, {"amp", "amt", 3, 1}, {"amp", "amt", 4, 1}, {"amp", "amt", 6, 1}, {"amp", "mix", 2}, {"amp", "mix", 6}, {"phaser", "fb", 2}};
+      {"amp", "amt", 1, 1}, {"amp", "amt", 2, 0.3f}, {"amp", "amt", 3, 1}, {"amp", "amt", 4, 1}, {"amp", "amt", 6, 1}, {"amp", "mix", 2}, {"amp", "mix", 6}, {"phaser", "fb", 2}, {"comp", "thr", 1}, {"comp", "thr", 2}, {"comp", "thr", 4}, {"comp", "ratio", 3}, {"tape", "tone", 1}, {"tape", "tone", 2}, {"tape", "tone", 3, 0.3f}, {"comp", "colour", 3, 1}, {"tape", "sat", 2, 1}};
     for (auto& [ty, key, typ, hold] : cases) { Module* m = eng.create(ty, 970); const ModuleDef* d = m->def; const int k = d->paramIndex(key); const float lo = d->params[k].min, hi = d->params[k].max;
       if (typ >= 0) { const int tj = d->paramIndex("type"); m->e[tj] = typ; m->p[tj].store(typ); }
-      m->e[k] = lo; m->p[k].store(lo); if (ty == "tape") for (const char* z : {"wow", "flutter", "hiss"}) { m->e[d->paramIndex(z)] = 0; m->p[d->paramIndex(z)].store(0); }   /* its own wobble and hiss would cloud it */
+      m->e[k] = lo; m->p[k].store(lo); if (ty == "tape") for (const char* z : {"wow", "flutter", "hiss", "age"}) { m->e[d->paramIndex(z)] = 0; m->p[d->paramIndex(z)].store(0); }   /* its own wobble and hiss would cloud it */
       m->prepare(); const int N = 65536; std::vector<float> rec; double ph = 0, ph2 = 0;
       for (int b = 0; b < (int)(5 * 48000 / 64); b++) { const float t = hold >= 0 ? hold : 0.5f + 0.5f * std::sin(TAU * 4.0 * b * 64 / 48000); const float v = d->params[k].exp && lo > 0 ? lo * std::pow(hi / lo, t) : lo + (hi - lo) * t; m->e[k] = v; m->p[k].store(v);
         m->blockStart(64); for (int i = 0; i < 64; i++) { const float x = 0.2f * std::sin(ph) + 0.12f * std::sin(ph2); ph += TAU * 220 / 48000; ph2 += TAU * 330 / 48000; m->in[0][0][i] = m->in[0][1][i] = x; }

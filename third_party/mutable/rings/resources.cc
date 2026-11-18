@@ -37,11 +37,13 @@ namespace rings {
 
 
 const int16_t* lookup_table_int16_table[] = {
+  nullptr,   // Timbient Modules: an empty list is not allowed by Microsoft's compiler (this one is never used)
 };
 
 
 
 const uint32_t* lookup_table_uint32_table[] = {
+  nullptr,   // Timbient Modules: an empty list is not allowed by Microsoft's compiler (this one is never used)
 };
 
 const float lut_sine[] = {

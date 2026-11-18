@@ -1,5 +1,11 @@
 // Timbient: the Rings wrapper (see rings_core.h)
 #include "rings_core.h"
+#define _USE_MATH_DEFINES   // M_PI on Windows
+#include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+#define TEST   // build Rings for a computer rather than its own chip
 #include "rings/dsp/part.h"
 #include "rings/dsp/patch.h"
 #include "rings/dsp/performance_state.h"
