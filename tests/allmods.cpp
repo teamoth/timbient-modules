@@ -272,7 +272,7 @@ int main(int argc, char** argv) {
       { if (helpOther(o).empty()) missing += std::string(" ") + o; n++; }
     ui.clearPatch(); UiMod* pd = ui.add("pad", 100, 40); UiMod* lf = ui.add("lfo", 10, 40); ui.connect(lf, 0, pd, pd->m->def->paramIndex("cut"));
     Canvas cv; cv.resize(400, 300); cv.beginFrame(); ui.draw(cv, 0.016f);
-    const std::string onTitle = ui.helpAt(110 - ui.viewX, 43 - ui.viewY), onRow = ui.helpAt(140 - ui.viewX + 0.f, (float)(pd->y + 30 - ui.viewY));
+    const std::string onTitle = ui.helpAt(110 - ui.viewX, 43 - ui.viewY); std::string onRow; for (int yy = 20; yy < 90 && onRow.find("JUMP STRAIGHT TO -24") == std::string::npos; yy++) onRow = ui.helpAt(140 - ui.viewX + 0.f, (float)(pd->y + yy - ui.viewY));   /* PITCH, a row or two down */
     std::string stepNote; { UiMod* kj = ui.add("journey", 200, 150); ui.set(kj, "steps", 2); kj->m->seq[Module::si(0, 0)].store(2); kj->m->seq[Module::si(1, 0)].store(7); cv.beginFrame(); ui.draw(cv, 0.016f);
       for (int yy = 0; yy < 120 && stepNote.find("SMOOTH") == std::string::npos; yy++) stepNote = ui.helpAt((float)(kj->x - ui.viewX + 3 + 20), (float)(kj->y - ui.viewY + yy)); }   /* step 2 (G after D): one note changes */
     ui.setAddMenu(true); cv.beginFrame(); ui.draw(cv, 0.016f); std::string inMenu; { int mx, my; if (ui.menuItemAt("reverb", mx, my)) inMenu = ui.helpAt((float)mx + 2, (float)my + 2); } ui.setAddMenu(false);
@@ -348,6 +348,19 @@ int main(int argc, char** argv) {
     const bool ok = bad == 0 && lo > 0 && hi < lo * 1.3 && wild == 0 && got >= 3000 && heard.size() == 7 && d->paramIndex("w4") >= 0;
     if (!ok) fails++;
     std::printf("tracker random note: %ld plays, %ld out of range; spread even %s; in the module %d notes, %zu different, %d wild%s\n", plays, bad, hi < lo * 1.3 ? "yes" : "NO", got, heard.size(), wild, ok ? "" : "  WRONG"); }
+  // EVERY TYPE: each kind of each module with a TYPE (or MODE) list, played for 2 s (notes for a voice, a saw with noise bursts for an
+  // effect): nothing that isn't a number, nothing wildly loud, and not silent
+  { std::string res; bool ok = true;
+    for (const char* ty : {"filter", "amp", "phaser", "pluck", "resonator", "pad"}) { Module* m0 = eng.create(ty, 980); const int tj = m0->def->paramIndex("type"); const int nt = (int)m0->def->params[tj].opts.size(); const bool voice = m0->def->cat == Cat::Voice; delete m0;
+      for (int t = 0; t < nt; t++) { Module* m = eng.create(ty, 981 + t); const ModuleDef* d = m->def; m->e[tj] = t; m->p[tj].store(t); if (d->paramIndex("mix") >= 0) { m->e[d->paramIndex("mix")] = 1; m->p[d->paramIndex("mix")].store(1); } m->prepare();
+        double s2 = 0, pk = 0; int bad = 0; double ph = 0; unsigned r = 7; const int B = 2 * 48000 / 64;
+        for (int b = 0; b < B; b++) { if (voice && b % 150 == 0) { Event ev; ev.note = 55 + (b / 150) % 5 * 3; ev.vel = 0.9f; m->trig(0, ev); }
+          for (int i = 0; i < 64; i++) { r = r * 1664525u + 1013904223u; const float nz = (r >> 8) / 8388608.f - 1; const float x = voice ? 0.f : 0.2f * (2 * (float)ph - 1) + ((b % 200) < 4 ? 0.4f * nz : 0.f); ph += 110.0 / 48000; if (ph >= 1) ph -= 1; m->in[0][0][i] = m->in[0][1][i] = x; }
+          m->blockStart(64); m->render(0, 64); m->t += 64.0 / 48000;
+          for (int i = 0; i < 64; i++) for (int c = 0; c < 2; c++) { const float y = m->out[0][c][i]; if (!std::isfinite(y)) bad++; else { s2 += y * y; pk = std::max(pk, (double)std::fabs(y)); } } }
+        const double db = 10 * std::log10(s2 / (B * 128.0) + 1e-20); if (bad || pk > 3 || db < -60) { ok = false; char b2[96]; std::snprintf(b2, 96, " [%s %s: %d bad, peak %.1f, %.0f dB]", ty, d->params[tj].opts[t].c_str(), bad, pk, db); res += b2; }
+        delete m; } }
+    if (!ok) fails++; std::printf("every type plays:%s%s\n", ok ? " all fine" : res.c_str(), ok ? "" : "  WRONG"); }
   // NO ZIPPER: controls swept fast end to end (as an LFO cable would, 4 Hz) must glide, not jump once a block. A steady tone in; next to
   // nothing may appear away from its own family of frequencies
   { std::string res; bool ok = true;

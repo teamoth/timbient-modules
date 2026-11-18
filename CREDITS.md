@@ -5,15 +5,16 @@ Timbient Modules was designed by Tim Medlicott and built with Claude, Anthropic'
 Timbient Modules is built on these open-source projects, each used as its licence allows. Thank you to their authors.
 Everything else in Timbient Modules was written for it.
 
-## Mutable Instruments Plaits (the MI VOICES module)
+## Mutable Instruments Plaits and Rings (the MI VOICES module; the RINGS types of PLUCK and RESONATOR)
 
-The MI VOICES module plays the synthesis voices of Plaits, a Eurorack module by Mutable Instruments,
-using its original open-source code by Emilie Gillet: https://github.com/pichenettes/eurorack
+The MI VOICES module plays the synthesis voices of Plaits, and the RINGS types of PLUCK STRING and RESONATOR
+play the resonators of Rings, both Eurorack modules by Mutable Instruments,
+using their original open-source code by Emilie Gillet: https://github.com/pichenettes/eurorack
 (with stmlib: https://github.com/pichenettes/stmlib). Released under the MIT licence; the full notice is
 in `third_party/mutable/LICENSE` and below.
 
-Timbient Modules is not made by or affiliated with Mutable Instruments. "Mutable Instruments" and "Plaits"
-are used here only to say where these voices come from.
+Timbient Modules is not made by or affiliated with Mutable Instruments. "Mutable Instruments", "Plaits" and "Rings"
+are used here only to say where these sounds come from.
 
 > Copyright 2012-2021 Emilie Gillet.
 >

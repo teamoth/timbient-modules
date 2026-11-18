@@ -3,7 +3,8 @@ The code in this folder is from Mutable Instruments' open-source Eurorack firmwa
 and stmlib (https://github.com/pichenettes/stmlib), by Emilie Gillet.
 Three small changes, so it builds outside the original project (each marked in its file): plaits/user_data.h
 includes <cstdio>; plaits/dsp/fm/algorithms.h hides four declarations from Microsoft's compiler; and an unused
-empty list in plaits/resources.cc has a placeholder entry.
+empty list in plaits/resources.cc has a placeholder entry. From Rings, only its sound-making code (rings/dsp and
+rings/resources), unchanged.
 
 Copyright 2012-2021 Emilie Gillet.
 
@@ -25,5 +26,5 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-"Mutable Instruments" and "Plaits" are names of Mutable Instruments' products.
+"Mutable Instruments", "Plaits" and "Rings" are names of Mutable Instruments' products.
 Timbient Modules is not made by or affiliated with Mutable Instruments.

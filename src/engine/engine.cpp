@@ -55,7 +55,7 @@ void registerDef(ModuleDef* d) {
   for (const char* k : LOWPASSED) if (d->type == k) { d->lpCut = (int)d->params.size(); d->params.push_back(prHz("cut", "CUTOFF", 40, 20000, d->type == "fold" ? 6000.f : 20000.f)); d->lpRes = (int)d->params.size(); d->params.push_back(pct("res", "RES", 0)); }
   if (d->cat == Cat::Voice && d->type != "euclid") {   // VOICES: POLY (up to 12 notes at once) or MONO (one: a new note fades the last out); GLIDE slides from note to note (MONO or POLY)
     d->params.push_back(OP("poly", "VOICES", {"POLY", "MONO"}, 0));    // TONE has a GLIDE of its own; FORMANT's "glide" is its vowel's MOVE TO, so its pitch glide has another key
-    if (d->type != "sample" && d->type != "tone") { d->params.push_back(fmt(T(d->type == "formant" ? "pglide" : "glide", "GLIDE", 0.001f, 2, 0.001f), [](float v) { return v < 0.0015f ? std::string("OFF") : fmtSecs(v); }));} }   // GLIDE all the way left: OFF (a time slider can't start at 0)
+    if (d->type != "sample" && d->type != "tone") { d->params.push_back(fmt(T(d->type == "formant" ? "pglide" : "glide", "GLIDE", 0.001f, 2, 0.001f), [](float v) { return v < 0.0015f ? std::string("OFF") : fmtSecs(v); })); if (d->type == "pluck") d->params.back().only = "v:0,1,2,3,4"; } }   // (PLUCK's RINGS has no glide)   // GLIDE all the way left: OFF (a time slider can't start at 0)
   bool audio = false; for (auto& o : d->outs) if (o.type == PType::Audio) audio = true;
   if (audio && d->type != "mixer" && d->cat != Cat::Out && d->paramIndex("pan") < 0) {
     ParamDef q = pr("pan", "PAN", -1, 1, 0); q.fmt = [](float v) { if (std::fabs(v) < 0.02f) return std::string("CENTRE"); return std::string(v < 0 ? "L " : "R ") + std::to_string((int)std::round(std::fabs(v) * 100)); };

@@ -49,7 +49,7 @@ bool Ui::tapRow(UiMod* u, int k) {
 static bool euclidHit(int i, int steps, int hits, int rot) { if (steps < 1 || hits < 1) return false; if (hits >= steps) return true; const int k = ((i - rot) % steps + steps) % steps; return (k * hits) % steps < hits; }   // as EUCLID DRUMS plays it
 // modules whose TYPE (or MODE) list has light kinds then heavier ones: the key, where the heavy ones start (past the end: none) and the help prefix
 struct TypeInfo { const char* type; const char* key; int from; const char* prefix; };
-static const TypeInfo TYPE_INFO[] = {{"reverb", "type", 8, "VERB "}, {"echo", "type", 6, "ECHO "}, {"pitchshift", "mode", 3, "PITCH "}, {"filter", "type", 5, "FILTER "}, {"amp", "type", 6, "DRIVE "}, {"phaser", "type", 4, "MOVE "}};
+static const TypeInfo TYPE_INFO[] = {{"reverb", "type", 8, "VERB "}, {"echo", "type", 6, "ECHO "}, {"pitchshift", "mode", 3, "PITCH "}, {"filter", "type", 5, "FILTER "}, {"amp", "type", 6, "DRIVE "}, {"phaser", "type", 4, "MOVE "}, {"pluck", "type", 5, "PLUCK "}, {"resonator", "type", 3, "RES "}, {"pad", "type", 2, "PAD "}};
 static const TypeInfo* typeInfo(const std::string& ty, const std::string& key) { for (const TypeInfo& t : TYPE_INFO) if (ty == t.type && key == t.key) return &t; return nullptr; }
 // REVERB: a new TYPE brings its usual DECAY (a ROOM doesn't ring for 6 seconds); INFINITE stays INFINITE
 static void verbTypeSet(UiMod* u, int k, float old, float v) {
@@ -155,7 +155,7 @@ static const Layout& layoutOf(const ModuleDef* d) {
   if (sp != SPEC.end()) { int part = 0; for (auto& k : sp->second) { if (k == "|") { part++; continue; } put(key(k.c_str()), part); } for (int j = 0; j < n; j++) put(j, part); }   // anything not named: at the end
   else {
     static const std::map<std::string, std::vector<std::string>> MODES = {
-      {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type", "cut", "res", "vowel", "shape", "drive"}}, {"amp", {"type", "gain", "amt", "rate", "tone", "mix"}}, {"phaser", {"type", "rate", "depth", "time", "centre", "stages", "fb"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
+      {"looper", {"src", "freeze"}}, {"stretch", {"src", "freeze"}}, {"filter", {"type", "cut", "res", "vowel", "shape", "drive"}}, {"amp", {"type", "gain", "amt", "rate", "tone", "mix"}}, {"phaser", {"type", "rate", "depth", "time", "centre", "stages", "fb"}}, {"pluck", {"type", "rmodel", "rstruct", "rpos", "body", "symp"}}, {"resonator", {"type", "rmodel", "rstruct", "rpos"}}, {"pad", {"type", "wave", "scan", "tilt", "even", "shim", "spread"}}, {"mi", {"voice", "env"}}, {"clock", {"sync", "bpm"}}, {"tracker", {"sync", "bpm"}},
       {"mutes", {"sync", "bpm"}}, {"lfo", {"sync"}}, {"journey", {"steps", "order", "moves"}}, {"timeline", {"run"}}, {"noinput", {"route", "pulse", "prate"}}, {"euclid", {"lane", "st1", "hi1", "ro1", "tu1", "de1", "ch1", "lv1", "st2", "hi2", "ro2", "tu2", "de2", "ch2", "lv2", "st3", "hi3", "ro3", "tu3", "de3", "ch3", "lv3", "st4", "hi4", "ro4", "tu4", "de4", "ch4", "lv4"}}, {"pitchshift", {"mode", "shift", "fine", "inkey", "sub", "sub2", "up", "detune", "h1", "h2", "h3"}}, {"echo", {"type", "wow", "drive", "age", "pattern", "shift", "bend", "sweep", "smear", "crush", "scatter", "density"}}, {"reverb", {"type", "shift", "amount", "fall", "spread", "blur", "tilt", "hold", "drive", "wow", "density", "scatter", "lowdec", "hidec", "freeze"}}};
     const bool keyed = d->keyIdx >= 0;
     put(key("poly"), 0); for (int j = 0; j < n; j++) if (recButton(d, d->params[j])) put(j, 0);

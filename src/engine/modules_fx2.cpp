@@ -2,6 +2,7 @@
 // that follow triggers or sound (trig envelope, random, follower).
 #include "params.h"
 #include "dsp2.h"
+#include "../engine_mi/rings_core.h"
 
 namespace tb {
 
@@ -33,29 +34,54 @@ static Reg rVca(new ModuleDef{"vca", "ENVELOPE VCA", Cat::Proc, {{"IN", PType::A
   {T("atk", "ATTACK", 0.002f, 4, 0.02f), T("dec", "DECAY", 0.01f, 4, 0.3f), pct("sus", "SUSTAIN", 0.6f), T("hold", "HOLD", 0.01f, 8, 0.6f), T("rel", "RELEASE", 0.01f, 8, 1.5f), pct("mix", "MIX", 1)},
   0, 68, false, [] { return new Vca(); }});
 
-// ---------------- RESONATOR: sympathetic strings. Tuned strings (feedback delays, like Karplus-Strong) that ring when the
-// incoming sound excites them, like the open strings of a sitar or a harp. They're tuned to notes of the chord on the key
+// ---------------- RESONATOR: things that ring when the incoming sound excites them, tuned to notes of the chord on the key.
+// TYPE: STRINGS (as it always was): sympathetic strings, feedback delays like Karplus-Strong, like the open strings of a sitar or
+// a harp. MODAL: struck bars and bells: a few separate ringing partials per note, INHARM moves them from in tune (a vibraphone)
+// to clangorous (a bell), DAMP makes the high ones die sooner. TUBE: pipes closed at one end, only the odd harmonics, hollow
+// and woody like a clarinet's bore or a bottle. Heavy: RINGS, Mutable Instruments' Rings with the incoming sound exciting it.
 struct Resonator : Module {
-  enum { NOTES, OCT, DECAY, DAMP, INHARM, SPREAD, MIX };
-  static constexpr int NS = 6;
+  enum { NOTES, OCT, DECAY, DAMP, INHARM, SPREAD, MIX, TYPE, RMODEL, RSTRUCT, RPOS };
+  enum { STRINGS, MODAL, TUBE, RINGST };
+  static constexpr int NS = 6, NM = 6;
   struct Str { DelayLine d; float len = 100, lp = 0, ap = 0, g = 0.99f, apc = 0; };
-  Str st[NS][2]; DryWet dw; float sig[8] = {-1}; int lastRoot = -1, lastScale = -1; Biquad hp[2];
-  void prepare() override { for (auto& sc : st) for (auto& s : sc) s.d.init(0.06f, sr); dw.init(sr, 1 - e[MIX], e[MIX]); for (auto& h : hp) h.set(Biquad::HP, 30, 0.707f, sr); }
+  struct Mode { float c1 = 0, c2 = 0, gin = 0, y1 = 0, y2 = 0; };
+  Str st[NS][2]; Mode md[NS][NM][2]; DryWet dw; float sig[9] = {-1}; int lastRoot = -1, lastScale = -1, cur = -1; Biquad hp[2]; RingsCore rings; float rin[2][64], rout[2][64];
+  void prepare() override { for (auto& sc : st) for (auto& s : sc) s.d.init(0.06f, sr); dw.init(sr, 1 - e[MIX], e[MIX]); for (auto& h : hp) h.set(Biquad::HP, 30, 0.707f, sr); rings.init(sr); cur = -1; }
+  int type() const { return std::max(0, std::min(3, (int)std::lround(e[TYPE]))); }
   void tune() {
-    const float sg[6] = {e[NOTES], e[OCT], e[DECAY], e[DAMP], e[INHARM], e[SPREAD]}; bool same = root() == lastRoot && scale() == lastScale;
-    for (int k = 0; k < 6; k++) if (sg[k] != sig[k]) same = false; if (same) return; for (int k = 0; k < 6; k++) sig[k] = sg[k]; lastRoot = root(); lastScale = scale();
+    const float sg[9] = {e[NOTES], e[OCT], e[DECAY], e[DAMP], e[INHARM], e[SPREAD], e[TYPE], 0, 0}; bool same = root() == lastRoot && scale() == lastScale;
+    for (int k = 0; k < 7; k++) if (sg[k] != sig[k]) same = false; if (same) return; for (int k = 0; k < 7; k++) sig[k] = sg[k]; lastRoot = root(); lastScale = scale();
     static const int DEG[NS] = {0, 4, 2, 7, 9, 11};   // root, fifth, third, octave, octave+third, octave+fifth (as steps along the scale)
+    const int ty = type();
     for (int k = 0; k < NS; k++) { const float f = mtof(note((int)e[OCT], DEG[k])); const float sp = 1 + e[SPREAD] * 0.004f;
-      for (int c = 0; c < 2; c++) { Str& s = st[k][c]; const float fc = f * (c ? sp : 1 / sp);
+      for (int c = 0; c < 2; c++) { const float fc = f * (c ? sp : 1 / sp);
+        if (ty == MODAL) {   // each partial a two-pole resonator: in tune at INHARM 0, a free bar's partials (1, 2.76, 5.40, 8.93...) at 1
+          static const float BAR[NM] = {1, 2.756f, 5.404f, 8.933f, 13.34f, 18.64f};
+          for (int q = 0; q < NM; q++) { Mode& m = md[k][q][c]; const float ratio = (q + 1) + (BAR[q] - (q + 1)) * e[INHARM], fq = fc * ratio;
+            if (fq > 0.45f * sr) { m.gin = 0; m.c1 = m.c2 = 0; continue; }
+            const float t60 = e[DECAY] / (1 + q * e[DAMP] * 3), r = std::pow(10.f, -3.f / (t60 * sr)), w = TAU * fq / sr;
+            m.c1 = 2 * r * std::cos(w); m.c2 = -r * r; m.gin = std::sin(w) * 0.03f / std::pow(q + 1.f, 0.6f + e[DAMP]); }   /* a strike rings at the same size whatever the DECAY */
+          continue; }
+        Str& s = st[k][c];
+        if (ty == TUBE) {   // closed at one end: the wave goes round twice, turned over at each trip, so the loop is half as long
+          s.len = std::max(2.f, std::min(0.055f * sr, sr / (2 * fc) - 0.5f)); s.g = -std::pow(10.f, -3.f / (e[DECAY] * 2 * fc)); s.apc = e[INHARM] * 0.4f; continue; }
         s.len = std::max(2.f, std::min(0.055f * sr, sr / fc - 0.5f));   // (the loop's filters add about half a sample)
         s.g = std::pow(10.f, -3.f / (e[DECAY] * fc));   // DECAY: the time to fall by 60 dB
         s.apc = e[INHARM] * 0.6f; } }   // INHARM: an allpass in the loop bends the partials out of line, string to bell
   }
   void render(int a, int b) override {
+    const int ty = type(); if (ty != cur) { cur = ty; for (auto& sc : st) for (auto& s : sc) { s.d.clear(); s.lp = s.ap = 0; } for (auto& a1 : md) for (auto& a2 : a1) for (auto& m : a2) m.y1 = m.y2 = 0; if (ty == RINGST) rings.clear(); sig[0] = -1; }
     tune(); dw.target(1 - e[MIX], e[MIX]); const int n = std::max(1, std::min(NS, (int)e[NOTES])); const float damp = 0.05f + e[DAMP] * 0.9f, gain = 0.6f / std::sqrt((float)n);
+    if (ty == RINGST) {   // RINGS: the input excites it; it rings at the key's root at OCTAVE (CHORDS: STRUCTURE picks the chord)
+      rings.note(note((int)e[OCT], 0)); rings.set((int)std::lround(e[RMODEL]), std::min(4, n), e[RSTRUCT], 1 - e[DAMP] * 0.9f, std::log(e[DECAY] / 0.2f) / std::log(60.f), e[RPOS]);
+      for (int i = a; i < b; i++) { rin[0][i] = hp[0].run(in[0][0][i], 0); rin[1][i] = hp[1].run(in[0][1][i], 0); }
+      rings.process(rin[0] + a, rin[1] + a, rout[0] + a, rout[1] + a, b - a, false);
+      for (int i = a; i < b; i++) { const float d = dw.d.tick(), w = dw.w.tick(); for (int c = 0; c < 2; c++) out[0][c][i] = in[0][c][i] * d + sane(rout[c][i]) * w * 0.3f; }
+      return; }
     for (int i = a; i < b; i++) { const float d = dw.d.tick(), w = dw.w.tick();
       for (int c = 0; c < 2; c++) { const float x = hp[c].run(in[0][c][i], 0) * 0.25f; float acc = 0;
-        for (int k = 0; k < n; k++) { Str& s = st[k][c]; float y = s.d.read(s.len - 1);
+        if (ty == MODAL) { for (int k = 0; k < n; k++) for (int q = 0; q < NM; q++) { Mode& m = md[k][q][c]; const float y = m.c1 * m.y1 + m.c2 * m.y2 + m.gin * x; m.y2 = m.y1; m.y1 = sane(y); acc += y; } acc *= 0.5f; }
+        else for (int k = 0; k < n; k++) { Str& s = st[k][c]; float y = s.d.read(s.len - 1);
           s.lp += (1 - damp) * (y - s.lp); y = s.lp;   // DAMP: darker strings lose their brightness quicker
           const float ap = s.apc * y + s.ap; s.ap = y - s.apc * ap; y = ap;
           s.d.write(sane(x + y * s.g)); acc += y; }
@@ -64,7 +90,9 @@ struct Resonator : Module {
 };
 static Reg rResonator(new ModuleDef{"resonator", "RESONATOR", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},
   {ST("notes", "STRINGS", 1, 6, 4), OCTP("oct", 1, 5, 3), fmt(prExp("decay", "DECAY", 0.2f, 12, 3), [](float v) { char b[16]; std::snprintf(b, 16, "%.1fS", v); return std::string(b); }),
-   pct("damp", "DAMP", 0.4f), pct("inharm", "INHARM", 0), pct("spread", "WIDTH", 0.4f), pct("mix", "MIX", 0.5f)}, 0, 68, false, [] { return new Resonator(); }});
+   pct("damp", "DAMP", 0.4f), only(pct("inharm", "INHARM", 0), "v:0,1,2"), pct("spread", "WIDTH", 0.4f), pct("mix", "MIX", 0.5f),
+   noMod(OP("type", "TYPE", {"STRINGS", "MODAL", "TUBE", "RINGS"}, 0)), only(noMod(OP("rmodel", "MODEL", {"MODAL", "SYMPATHY", "STRING", "FM", "CHORDS", "STR+VERB"}, 1)), "v:3"),
+   only(pct("rstruct", "STRUCTURE", 0.4f), "v:3"), only(pct("rpos", "POSITION", 0.4f), "v:3")}, 0, 68, false, [] { return new Resonator(); }});
 
 // ---------------- PHASER: two chains of allpass filters swept by one LFO; STEREO sweeps the right side the opposite way ----------------
 // MOVEMENT (it was PHASER; its key is still "phaser"). TYPE: PHASER as it always was. Light: CHORUS (a slightly late,

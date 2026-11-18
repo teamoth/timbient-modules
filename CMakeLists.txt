@@ -36,8 +36,8 @@ set(ENGINE_SOURCES
   src/engine/modules_euclid.cpp)
 set(UI_SOURCES src/ui/ui.cpp src/ui/session.cpp src/ui/browser.cpp src/ui/editor.cpp src/ui/help.cpp)
 
-# Mutable Instruments' Plaits (MIT licence, see third_party/mutable/LICENSE): the MI VOICES module
-file(GLOB_RECURSE MUTABLE_SOURCES third_party/mutable/plaits/*.cc third_party/mutable/stmlib/*.cc)
+# Mutable Instruments' Plaits and Rings (MIT licence, see third_party/mutable/LICENSE): the MI VOICES module, and the RINGS types of PLUCK and RESONATOR
+file(GLOB_RECURSE MUTABLE_SOURCES third_party/mutable/plaits/*.cc third_party/mutable/rings/*.cc third_party/mutable/stmlib/*.cc)
 add_library(mutable STATIC ${MUTABLE_SOURCES})
 target_include_directories(mutable PUBLIC third_party/mutable)
 target_compile_definitions(mutable PRIVATE TEST)   # Plaits' "computer, not its own chip" build
@@ -46,7 +46,7 @@ if(MSVC)
 else()
   target_compile_options(mutable PRIVATE -w)
 endif()
-list(APPEND ENGINE_SOURCES src/engine_mi/modules_mi.cpp)
+list(APPEND ENGINE_SOURCES src/engine_mi/modules_mi.cpp src/engine_mi/rings_core.cpp)
 
 if(TIMBIENT_TESTS)
   add_executable(timbient_render tests/render.cpp ${ENGINE_SOURCES})

@@ -44,7 +44,7 @@ SDL3 and miniaudio are downloaded automatically during the build.
 
 Designed by Tim Medlicott, built with Claude (Anthropic's AI).
 
-The MI VOICES module uses the original open-source code of Mutable Instruments' Plaits, by Emilie Gillet (MIT licence).
+The MI VOICES module, and the RINGS types of PLUCK STRING and RESONATOR, use the original open-source code of Mutable Instruments' Plaits and Rings, by Emilie Gillet (MIT licence).
 Timbient Modules also uses SDL 3 (zlib licence), miniaudio (public domain / MIT No Attribution) and RtMidi (MIT licence).
 Everything else was written for Timbient Modules. Timbient Modules is not made by or affiliated with Mutable Instruments.
 The full notices are in [CREDITS.md](CREDITS.md), which also comes inside each download.
