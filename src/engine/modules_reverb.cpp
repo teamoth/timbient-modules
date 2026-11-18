@@ -369,7 +369,7 @@ struct Reverb : Module {
         const float d = dry.tick(), w = wet.tick(), pdt = pd.tick(); const float x0 = 0.5f * (in[0][0][i] + in[0][1][i]);
         pdl[0].write(x0); const float x = pdt >= 1 ? pdl[0].read(pdt) : x0; float L, R;
         spec.tick(x, L, R, sr, T60, inf, fz, e[HOLD], e[BLUR], e[TILT], mot, aLP, aHP, S);
-        finish(i, softLimit(L * lvl), softLimit(R * lvl), d, w, wd); }   /* a ceiling: even INFINITE with sound pouring in stays in bounds */
+        finish(i, softLimit(L * lvl * 1.7f), softLimit(R * lvl * 1.7f), d, w, wd); }   /* (x1.7: nearer the other types' level) a ceiling: even INFINITE with sound pouring in stays in bounds */
       return; }
     // the dense network: GRAND CATHEDRAL and PRISM SHIMMER; the eight-line one: TAPE SPACE and SWARM
     const bool still = std::fabs(sz.t - sz.v) < 1e-4f;

@@ -131,7 +131,8 @@ struct Amp : Module {
     const float dcR = 1 - TAU * 12 / sr;
     for (int i = a; i < b; i++) { const float k = g.tick(), am = amS.tick(), to = toS.tick(), mx = mxS.tick(), rt = rtS.tick();
       const float tc = 1 - std::exp(-TAU * (400 * std::pow(45.f, to)) / sr);   // TONE: 400 Hz to 18 kHz
-      const float comp = ty == FUZZ ? 0.5f : ty == RECT ? 1.2f : ty == CRUSH ? 1.f : 1 / std::sqrt(1 + 4 * am);   // roughly the same loudness all the way up DRIVE
+      const float tk = ty == OD ? 0.52f : ty == FOLDT ? 0.66f : ty == TUBE ? 0.8f : 1.f, tr = 1 + (tk - 1) * std::min(1.f, am * 2.5f);   // eased in as DRIVE goes up (gently driven, they're barely louder)
+      const float comp = (ty == FUZZ ? 0.3f : ty == RECT ? 1.2f : ty == CRUSH ? 1.f : 1 / std::sqrt(1 + 4 * am)) * tr;   // roughly the same loudness all the way up DRIVE
       bool step = true; if (ty == CRUSH) { ph += std::pow(2.f, -rt * 6); step = ph >= 1; if (step) ph -= std::floor(ph); }
       for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i] * k; float y = x;
         if (ty != CLEAN) {

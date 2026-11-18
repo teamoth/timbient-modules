@@ -17,6 +17,9 @@ struct EGrain { bool on = false; double pos = 0; float rate = 1, t = 0, len = 1,
 
 }  // namespace
 
+// how much each TYPE is lifted on the way out (a few spread their repeats thinner: MULTI-TAP, SHIMMER, SPIRAL, DUB, CLOUD,
+// STRUM), so switching TYPE doesn't drop the level. DIGITAL, TAPE, ANALOGUE, PING-PONG, MULTI-TAP, REVERSE, SHIMMER, SPIRAL, DUB, DIFFUSE, LO-FI, CLOUD, STRUM
+static const float TRIM[13] = {1, 1, 1, 1, 1.5f, 1, 1.45f, 1.5f, 1.5f, 1.2f, 1.3f, 1.5f, 2.4f};
 struct Echo : Module {
   enum { TIME, DIV, SPREAD, FB, TONE, MIX, TYPE, WOW, DRIVE, AGE, PATTERN, SHIFT, BEND, SWEEP, SMEAR, CRUSH, SCATTER, DENSITY };
   DelayLine dl, dr; Biquad lp, lp2, bpL, bpR; Smooth tl, trr, fb, dry, wet, toneS; float lastTone = -1; int cnt = 0;
@@ -163,6 +166,7 @@ struct Echo : Module {
       if (fading) { xf -= 1.f / (0.03f * sr); if (xf <= 0) { xf = 0; fading = false; cur = want; clearAll(); } }
       else if (xf < 1) xf = std::min(1.f, xf + 1.f / (0.03f * sr));
       const float d = dry.tick(), w = wet.tick() * xf;
+      yl *= TRIM[ty]; yr *= TRIM[ty];   // each type brought to about the level of what comes in
       out[0][0][i] = in[0][0][i] * d + softLimit(sane(yl)) * w; out[0][1][i] = in[0][1][i] * d + softLimit(sane(yr)) * w;   // a gentle ceiling (the resonant types can build)
     }
   }

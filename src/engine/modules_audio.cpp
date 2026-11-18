@@ -191,8 +191,11 @@ struct Looper : Module {
     const double bsr = liveG ? (double)sr : buf->sr, inc = rate * bsr / sr, dens = 0.3 + e[DENS] * e[DENS] * 40; Grain& q = g[ng++];
     const double base = liveG ? (double)(ringW.load(std::memory_order_relaxed) - (long)(e[LEN] * sr)) : 0;   // LIVE: from LENGTH ago, in the ring's own count
     q.pos = base + (rv ? (off + span) * bsr : off * bsr); q.inc = rv ? -inc : inc; q.len = std::max(16L, (long)(e[SIZE] * sr)); q.t = 0;
-    panGains(rng.bi() * 0.4f, q.gl, q.gr); q.ex = 0.25f + e[TEX] * 3; q.gain = (float)(0.5 / std::sqrt(std::max(1.0, dens * e[SIZE]))); q.x = (float)((off + span / 2) / dur);
-    for (int k = 0; k <= 64; k++) q.win[k] = (k == 0 || k == 64) ? 0.f : std::pow(std::max(0.f, std::sin(PI * k / 64.f)), q.ex) * q.gain;   // the ends are exactly silent (sin(pi) in floats is a hair below zero, and a power of that is not a number)
+    panGains(rng.bi() * 0.4f, q.gl, q.gr); q.ex = 0.25f + e[TEX] * 3; q.x = (float)((off + span / 2) / dur);
+    float mw = 0; for (int k = 0; k <= 64; k++) { q.win[k] = (k == 0 || k == 64) ? 0.f : std::pow(std::max(0.f, std::sin(PI * k / 64.f)), q.ex); mw += q.win[k] * q.win[k]; }   // the ends are exactly silent (sin(pi) in floats is a hair below zero, and a power of that is not a number)
+    // each grain's level: as loud as what came in, once the grains overlapping, their shape (TEXTURE) and their spread across left and right are allowed for
+    q.gain = (float)(1.41 / std::sqrt(std::max(1.0, dens * e[SIZE]) * std::max(0.02f, mw / 65)));
+    for (int k = 0; k <= 64; k++) q.win[k] *= q.gain;
   }
   void render(int a, int b) override {
     // keep the last 20 seconds of the input, for CATCH
@@ -260,8 +263,9 @@ struct Stretch : Module {
     for (int k = 0; k < NS; k++) if (!ffts[k]) ffts[k] = new FFT(SIZES[k]);
     rg.assign(R, 0.f); rgR.assign(R, 0.f); iChan = pi("chan"); win.assign(NMAX, 0); re.assign(NMAX, 0); im.assign(NMAX, 0); mag.assign(NMAX / 2 + 1, 0); mag2.assign(NMAX / 2 + 1, 0); r2.assign(NMAX, 0); i2.assign(NMAX, 0);
     wl.assign(NMAX, 0); wr.assign(NMAX, 0);
+    cur = -1;   // (the window shape was just cleared: make it again, even if WINDOW hasn't changed)
     for (int c = 0; c < 2; c++) { acc[c].assign(NMAX, 0); q[c].assign(NMAX / 2, 0); qb[c].assign(NMAX / 2, 0); }
-    hp.set(Biquad::HP, 60, 0.707f, sr); dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX] * 0.9f); setSize();
+    hp.set(Biquad::HP, 60, 0.707f, sr); dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX] * 1.41f); setSize();
     if (!th.joinable()) th = std::thread([this] { while (!quit.load()) { if (state.load(std::memory_order_acquire) == 1) { compute(); state.store(2, std::memory_order_release); } else std::this_thread::sleep_for(std::chrono::milliseconds(1)); } });
   }
   void setSize() { const int k = std::max(0, std::min(6, (int)e[WIN])) + (sr > 70000 ? 1 : 0); if (k == cur) return; cur = k; N = SIZES[k]; HOP = N / 2;
@@ -317,7 +321,7 @@ struct Stretch : Module {
     qpos = 0;
   }
   void render(int a, int b) override {
-    dry.t = 1 - e[MIX]; wet.t = e[MIX] * 0.9f; const bool fz = frozen();
+    dry.t = 1 - e[MIX]; wet.t = e[MIX] * 1.41f; const bool fz = frozen();   // (x1.41: windows with random phases add up in power, not in level: 3 dB lost, given back)
     for (int i = a; i < b; i++) {
       if (!fz) { const bool st = iChan >= 0 && e[iChan] > 0.5f; rg[(size_t)(wpos & (R - 1))] = st ? in[0][0][i] : 0.5f * (in[0][0][i] + in[0][1][i]); rgR[(size_t)(wpos & (R - 1))] = in[0][1][i]; wpos++; }   // STEREO: left here, right in rgR
       if (qpos >= HOP) frame();

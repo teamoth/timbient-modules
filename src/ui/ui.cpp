@@ -782,7 +782,7 @@ void Ui::draw(Canvas& c, float dt) {
   for (auto& b : bar) { const int x0 = bx; auto fn = b.fn; btn(b.label, b.col, [fn, x0] { fn(x0); }); }
   { bool open = false; for (auto& u : mods) if (!u->m->def->fixed && !u->fold) open = true;
     btn(open ? "FOLD ALL" : "OPEN ALL", 9, [this, open] { for (auto& u : mods) if (!u->m->def->fixed) u->fold = open; changed(); }); }
-  btn("?", helpOn ? 4 : 21, [this] { helpOn = !helpOn; hoverT = -1; if (onHelpToggle) onHelpToggle(helpOn); status(helpOn ? "HELP ON: REST THE POINTER ON ANYTHING FOR A NOTE ON IT" : "HELP OFF (THE ? BRINGS IT BACK)", 3); });
+  btn("?", helpOn ? 4 : 18, [this] { helpOn = !helpOn; hoverT = -1; if (onHelpToggle) onHelpToggle(helpOn); status(helpOn ? "HELP ON: REST THE POINTER ON ANYTHING FOR A NOTE ON IT" : "HELP OFF (THE ? BRINGS IT BACK)", 3); });
   const std::string fs = isFullscreen ? "WINDOW" : "FULLSCREEN"; const int fx = c.W - Canvas::tw(fs) - 4; c.text(fs, fx, 3, 9); barHits.push_back({fx, fx + Canvas::tw(fs), [this] { wantFullscreen = !isFullscreen; }, fs});
   int ix0 = fx;
   if (onZoom) {   // zoom out / in
@@ -876,7 +876,7 @@ std::string Ui::helpAt(float sx, float sy) {
     if (d->type == "tracker" && ly >= g.vy && ly < g.vy + trHead(u->m) && lx >= 3 + 16 && lx < g.w - 3 - 8) return helpOther("TRACKER COLUMN");   // its column numbers: RANDOM NOTE
     if (!d->fixed && ly >= g.h - FOOT) { const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod;
       if (lx >= g.w - 13) return helpOther("FOLD"); if (onOff && lx >= 3 && lx < 18) return helpOther("ON"); if (!onOff && lx >= 3 && lx < 12) return helpOther("M");
-      if (lx >= 14 && lx < 23) return d->cat == Cat::Voice ? helpOther("S") : bypassable(d) ? helpOther("B") : std::string(); return {}; }
+      if (lx >= 14 && lx < 23) return d->cat == Cat::Voice ? helpOther("S") : d->type == "xfade" ? std::string("Bypass|Only A goes through, at full level, wherever the fade was: as if the crossfader weren't there. B is silent until you switch it back.") : bypassable(d) ? helpOther("B") : std::string(); return {}; }
     if (d->type == "spectrum" && d->vis && ly >= g.vy && ly < g.vy + g.vh) {   // SPECTRUM: the frequency under the pointer, how loud it is there, and what the shading means
       const int w = g.w - 6; const float k = clampf((float)(lx - 3) / std::max(1, w) * 64, 0, 63.99f); const float hz = specHz(k); const int kb = (int)k;
       const float db = u->spec.size() == 64 ? u->spec[kb] : -120; char b[48]; std::snprintf(b, 48, "%s  %s", hzText(hz).c_str(), db < -71 ? "NOTHING" : (std::to_string((int)std::lround(db)) + "DB").c_str());
@@ -1228,6 +1228,19 @@ void Ui::pointerMove(float sx, float sy) {
     else { m->p[li].store(clampf(t - S, 0.25f, 128)); status("NOTE LOOPER  LENGTH  " + valueText(u, li, m->p[li].load(), 0), 1.5f); } }
 }
 
+// drop a module into a cable (once you've said yes): the cable's sound goes into it and out on to where the cable went
+void Ui::insertInto(const UiCable& c0, int mid) { UiMod *a = byId(c0.from), *b = byId(c0.to), *m = byId(mid); bool still = false; for (auto& cb : cables) if (sameCable(cb, c0)) still = true;
+      if (!a || !b || !m || !still) { status("THAT CABLE HAS GONE", 3); return; }
+      // its IN (or, with none, its first sound input: CROSSFADER's A, MIXER's 1) and its OUT (or its first sound output)
+      const ModuleDef* md = m->m->def; int ii = md->inIndex("IN"), oi = md->outIndex("OUT");
+      if (ii < 0) for (int k = 0; k < (int)md->ins.size() && ii < 0; k++) if (md->ins[k].type == PType::Audio) ii = k;
+      if (oi < 0) for (int k = 0; k < (int)md->outs.size() && oi < 0; k++) if (md->outs[k].type == PType::Audio) oi = k;
+      if (ii < 0 || oi < 0) { status(md->name + " HAS NO SOUND IN AND OUT TO INSERT", 3); return; }
+      unplug(c0); connect(a, c0.fromPort, m, ii); connect(m, oi, b, c0.toPort);
+      const int mi = md->paramIndex("mix"); if (mi >= 0) m->m->p[mi].store(0);   // fully dry, as the web version does, so nothing jumps out
+      if (md->type == "xfade") { m->m->p[md->paramIndex("fade")].store(0); m->m->p[md->paramIndex("move")].store(0); }   // CROSSFADER: all A and still, so nothing changes until B is plugged in
+      status("INSERTED " + md->name + (mi >= 0 ? " (FULLY DRY: RAISE ITS MIX)" : md->type == "xfade" ? " (ALL A: PLUG SOMETHING INTO B)" : ""), 4); changed(); }
+
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
   if (d.kind == D_TEMPO) { changed(); return; }
@@ -1239,11 +1252,7 @@ void Ui::pointerUp(float sx, float sy) {
     // only if you say so: dropping a module on a cable asks first. Then the cable crossfades over to the new route
     const UiCable c0 = cables[d.splice]; const int mid = d.m->m->id; changed();
     Dropdown q; q.items = {"INSERT INTO THIS CABLE?", "YES, INSERT IT", "NO, JUST PUT IT HERE"}; q.title = 0; q.x = (int)sx + 4; q.y = (int)sy + 4;
-    q.pick = [this, c0, mid](int i) { if (i != 1) return; UiMod *a = byId(c0.from), *b = byId(c0.to), *m = byId(mid); bool still = false; for (auto& cb : cables) if (sameCable(cb, c0)) still = true;
-      if (!a || !b || !m || !still) { status("THAT CABLE HAS GONE", 3); return; }
-      unplug(c0); connect(a, c0.fromPort, m, m->m->def->inIndex("IN")); connect(m, m->m->def->outIndex("OUT"), b, c0.toPort);
-      const int mi = m->m->def->paramIndex("mix"); if (mi >= 0) m->m->p[mi].store(0);   // fully dry, as the web version does, so nothing jumps out
-      status("INSERTED " + m->m->def->name + (mi >= 0 ? " (FULLY DRY: RAISE ITS MIX)" : ""), 4); changed(); };
+    q.pick = [this, c0, mid](int i) { if (i == 1) insertInto(c0, mid); };
     openDropdown(q); return; }
   if (d.kind == D_PARAM && !d.moved && !d.held && (d.m->m->def->params[d.k].key == "pitch" || ((d.m->m->def->type == "midiout" || d.m->m->def->type == "nloop") && d.m->m->def->params[d.k].key == "trans"))) {
     // a tap on PITCH: jump by octaves (on Sample, pitch is speed, so the speeds are named too)

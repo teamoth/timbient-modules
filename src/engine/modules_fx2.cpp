@@ -85,7 +85,7 @@ struct Resonator : Module {
           s.lp += (1 - damp) * (y - s.lp); y = s.lp;   // DAMP: darker strings lose their brightness quicker
           const float ap = s.apc * y + s.ap; s.ap = y - s.apc * ap; y = ap;
           s.d.write(sane(x + y * s.g)); acc += y; }
-        out[0][c][i] = in[0][c][i] * d + std::tanh(acc * gain) * w; } }
+        out[0][c][i] = in[0][c][i] * d + std::tanh(acc * gain * 1.6f) * w; } }   // (x1.6: it only passes what rings, so it was quiet)
   }
 };
 static Reg rResonator(new ModuleDef{"resonator", "RESONATOR", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}},

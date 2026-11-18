@@ -369,6 +369,19 @@ int main(int argc, char** argv) {
     const bool ok = lvOk && fadeOk && moveOk && specOk && oldOk; if (!ok) fails++;
     std::printf("level x%.2f; crossfader A %.2f %.2f %.2f, B %.2f %.2f %.2f, square swaps %d in 4 s, random jumps %d; spectrum loudest %.0f Hz at %.1f dB, below 20 Hz %.0f dB, passes %s; old session %d cable(s), into IN %d, note \"%s\"%s\n",
       r1 / (0.1 / std::sqrt(2.0)), rA[0], rA[1], rA[2], rB[0], rB[1], rB[2], swaps, jumps, topHz, topDb, low, diff == 0 ? "untouched" : "CHANGED", nc, intoIn, note.c_str(), ok ? "" : "  WRONG"); }
+  // dropping a module into a cable: CROSSFADER goes in through A, all A and still (the sound is as it was); MIXER through 1; an
+  // effect through IN, fully dry. In each case the sound arrives at OUTPUT about as loud as before
+  { std::string res; bool ok = true;
+    for (const char* ty : {"xfade", "mixer", "echo"}) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 20); UiMod* v = ui.add("pad", 0, 20); ui.set(v, "sus", 1); ui.set(v, "hold", 30); ui.connect(v, "OUT", o, "IN");
+      Event ev; ev.note = 57; ev.vel = 1; eng.trigger(v->m->id, 0, ev); run(eng, 3.f); const float before = std::max(o->m->disp[0].load(), 1e-6f);   // OUTPUT's meter (as linear peak)
+      UiMod* m = ui.add(ty, 150, 20); if (std::string(ty) == "xfade") { ui.set(m, "fade", 0.5f); ui.set(m, "move", 1); }   // (it was left moving, in the middle: the insert should settle it)
+      UiCable c0 = ui.cables[0]; ui.insertInto(c0, m->m->id); run(eng, 2.f); const float after = o->m->disp[0].load();
+      int intoPort = -1, fromPort = -1; for (auto& cb : ui.cables) { if (cb.to == m->m->id) intoPort = cb.toPort; if (cb.from == m->m->id && cb.to == o->m->id) fromPort = cb.fromPort; }
+      const ModuleDef* d = m->m->def; const int want = d->inIndex("IN") >= 0 ? d->inIndex("IN") : 0; const float db = 20 * std::log10(std::max(after, 1e-9f) / before);
+      bool good = intoPort == want && fromPort >= 0 && std::fabs(db) < 1.5f;
+      if (std::string(ty) == "xfade") good = good && m->m->p[d->paramIndex("fade")].load() == 0 && m->m->p[d->paramIndex("move")].load() == 0;
+      if (!good) ok = false; char b[96]; std::snprintf(b, 96, " %s: in port %d, out %s, %+.1f dB%s;", ty, intoPort, fromPort >= 0 ? "on" : "MISSING", db, good ? "" : " (WRONG)"); res += b; }
+    ui.clearPatch(); if (!ok) fails++; std::printf("insert into a cable:%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
   // EVERY TYPE: each kind of each module with a TYPE (or MODE) list, played for 2 s (notes for a voice, a saw with noise bursts for an
   // effect): nothing that isn't a number, nothing wildly loud, and not silent
   { std::string res; bool ok = true;
@@ -433,6 +446,7 @@ int main(int argc, char** argv) {
     for (auto& pr : presets()) {
       Ui u2(eng); int x = 6, y = 14; std::vector<UiMod*> made;
       for (const ModuleDef* d : allDefs()) { made.push_back(u2.add(d->type, x, y)); x += d->width + 8; if (x > 1400) { x = 6; y += 260; } }
+      u2.helpOn = false;   // (the top bar's ? is quieter when help is off: check it that way)
       Canvas c; c.fine = true; c.resize(1500, y + 300); applyTheme(c, pr.second, 0); c.beginFrame(); u2.draw(c, 0.016f);
       for (auto& r : c.runs) { if ((r.c & 127) == 15) continue; std::map<uint8_t, int> cnt; const int tw = Canvas::tw(r.s);
         for (int yy = r.y; yy < r.y + 6; yy++) for (int xx = r.x; xx < r.x + tw; xx++) if (xx >= 0 && yy >= 0 && xx < c.W && yy < c.H) cnt[c.buf[(size_t)yy * c.W + xx]]++;
@@ -440,6 +454,8 @@ int main(int argc, char** argv) {
         float a = lumOf(c.pal[r.c & 127]), b = lumOf(c.pal[bg]); if (a < b) std::swap(a, b);
         if ((a + 0.05f) / (b + 0.05f) < 2.5f) { poor++; if (ex.size() < 120) ex += std::string(" [") + pr.first + ": " + r.s.substr(0, 16) + "]"; } }
       for (UiMod* m : made) u2.remove(m); }
+    for (auto& pr : presets()) for (int mn = 0; mn < 3; mn++) { Canvas c; applyTheme(c, pr.second, mn); float a = lumOf(c.pal[MENU_MID]), b = lumOf(c.pal[MENU_BG]); if (a < b) std::swap(a, b);   // the top bar's quiet text (the ? when off), with each MENUS setting
+      if ((a + 0.05f) / (b + 0.05f) < 2.5f) { poor++; if (ex.size() < 160) ex += std::string(" [") + pr.first + " menus " + std::to_string(mn) + ": top bar quiet text]"; } }
     if (poor) fails++; std::printf("theme text: %d hard to read%s%s\n", poor, ex.c_str(), poor ? "  WRONG" : ""); }
   // ECHO: every TYPE repeats (a burst comes back), fades with FEEDBACK at 0.6, and stays in bounds at 0.95 with sound pouring in
   { std::string res; bool ok = true;

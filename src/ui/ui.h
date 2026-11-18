@@ -58,6 +58,7 @@ public:
   UiMod* add(const std::string& type, int x, int y, int id = 0);   // id: put back with the number it had (undo)
   void remove(UiMod* u);
   bool tapRow(UiMod* u, int k);   // a tap on a speed row (three or more in rhythm set it); true when it did
+  void insertInto(const UiCable& c, int moduleId);   // put a module into a cable (as dropping it on one does, once you say yes)
   void removeGently(UiMod* u);   // the × button: bridges an effect's chain, lets its sound ring out
   bool connect(UiMod* a, int outPort, UiMod* b, int inPort);
   bool connect(UiMod* a, const std::string& outPort, UiMod* b, const std::string& inPort);
