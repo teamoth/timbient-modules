@@ -382,6 +382,48 @@ int main(int argc, char** argv) {
       if (std::string(ty) == "xfade") good = good && m->m->p[d->paramIndex("fade")].load() == 0 && m->m->p[d->paramIndex("move")].load() == 0;
       if (!good) ok = false; char b[96]; std::snprintf(b, 96, " %s: in port %d, out %s, %+.1f dB%s;", ty, intoPort, fromPort >= 0 ? "on" : "MISSING", db, good ? "" : " (WRONG)"); res += b; }
     ui.clearPatch(); if (!ok) fails++; std::printf("insert into a cable:%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
+  // MIDI LEARN: learning a knob (a position), an encoder (turns), a fine 14-bit pair, NRPN and a button; pickup; values going back
+  // to the device; mappings kept with the session (onto the new module numbers) and EVERY SESSION ones kept through a new session
+  { ui.clearPatch(); std::string res; bool ok = true; auto chk = [&](bool c, const char* what) { if (!c) { ok = false; res += std::string(" [") + what + "]"; } };
+    std::vector<std::vector<unsigned char>> sent; bool hasOut = false;
+    ui.midiDevNames = {"FADERFOX EC4"}; ui.onMidiSend = [&](const std::string&, const unsigned char* b, int n) { if (!hasOut) return false; sent.push_back(std::vector<unsigned char>(b, b + n)); return true; };
+    UiMod* o = ui.add("out", 300, 20); UiMod* mx = ui.add("mixer", 0, 20); UiMod* rv = ui.add("reverb", 100, 20); UiMod* xf = ui.add("xfade", 200, 20); (void)o;
+    auto cc = [&](int ch, int n, int v) { ui.midiIn(0, (unsigned char)(0xB0 | ch), (unsigned char)n, (unsigned char)v); };
+    auto learn = [&](UiMod* u, const char* key, std::function<void()> send) { ui.startLearn(u, key); send(); ui.midiFrame(0.7f); };
+    auto P = [&](UiMod* u, const char* k) { return u->m->p[u->m->def->paramIndex(k)].load(); };
+    // a knob (positions): learnt; then it only takes over once it reaches where LEVEL 1 is (0.8)
+    learn(mx, "l1", [&] { cc(0, 20, 10); cc(0, 20, 11); cc(0, 20, 12); });
+    const Ui::MidiMap* m1 = ui.mapFor(*mx, "l1"); chk(m1 && m1->kind == 0 && m1->num == 20 && m1->mode == 0, "learn cc");
+    cc(0, 20, 30); chk(std::fabs(P(mx, "l1") - 0.8f) < 0.001f, "pickup holds"); cc(0, 20, 120); chk(std::fabs(P(mx, "l1") - 120 / 127.f) < 0.01f, "pickup takes over"); cc(0, 20, 64); chk(std::fabs(P(mx, "l1") - 64 / 127.f) < 0.01f, "follows");
+    // an encoder sending turns (1 up, 127 down): ten turns up raise MIX by about 10/128
+    learn(rv, "mix", [&] { for (int i = 0; i < 4; i++) cc(1, 21, 1); }); const Ui::MidiMap* m2 = ui.mapFor(*rv, "mix"); chk(m2 && m2->mode == 2, "learn relative");
+    const float mix0 = P(rv, "mix"); for (int i = 0; i < 10; i++) cc(1, 21, 1); chk(std::fabs(P(rv, "mix") - std::min(1.f, mix0 + 10 / 128.f)) < 0.02f, "turns up"); for (int i = 0; i < 10; i++) cc(1, 21, 127); chk(std::fabs(P(rv, "mix") - mix0) < 0.02f, "turns down");
+    // 14-bit (CC 1 then 33) and NRPN (99, 98, 6, 38): fine positions
+    learn(mx, "l2", [&] { cc(2, 1, 40); cc(2, 33, 5); cc(2, 1, 41); cc(2, 33, 9); }); const Ui::MidiMap* m3 = ui.mapFor(*mx, "l2"); chk(m3 && m3->mode == 4 && m3->num == 1, "learn 14-bit");
+    ui.mapFor(*mx, "l2"); for (auto& m : ui.midiMaps) if (m.num == 1 && m.kind == 0) m.engaged = true; cc(2, 1, 64); cc(2, 33, 0); chk(std::fabs(P(mx, "l2") - 8192 / 16383.f) < 0.002f, "14-bit value");
+    learn(mx, "l3", [&] { cc(3, 99, 2); cc(3, 98, 5); cc(3, 6, 10); cc(3, 38, 0); }); const Ui::MidiMap* m4 = ui.mapFor(*mx, "l3"); chk(m4 && m4->kind == 2 && m4->num == 2 * 128 + 5 && m4->lsbSeen, "learn nrpn");
+    for (auto& m : ui.midiMaps) if (m.kind == 2) m.engaged = true; cc(3, 99, 2); cc(3, 98, 5); cc(3, 6, 32); cc(3, 38, 0); chk(std::fabs(P(mx, "l3") - 4096 / 16383.f) < 0.002f, "nrpn value");
+    // a button (a note): BYPASS turns over on each press
+    learn(rv, "#bypass", [&] { ui.midiIn(0, 0x94, 36, 100); ui.midiIn(0, 0x84, 36, 0); }); const Ui::MidiMap* m5 = ui.mapFor(*rv, "#bypass"); chk(m5 && m5->kind == 1 && m5->num == 36, "learn note");
+    ui.midiIn(0, 0x94, 36, 100); ui.midiIn(0, 0x84, 36, 0); chk(rv->m->bypass.load(), "press bypasses"); ui.midiIn(0, 0x94, 36, 100); chk(!rv->m->bypass.load(), "press again");
+    // a choice (CROSSFADER MOVE) from a knob, with values going back: no pickup; the device is told where it is
+    hasOut = true; learn(xf, "move", [&] { cc(4, 22, 0); cc(4, 22, 1); }); ui.midiFrame(0.05f); sent.clear();
+    cc(4, 22, 127); chk((int)std::lround(P(xf, "move")) == 5, "choice from a knob");
+    ui.set(xf, "move", 2); ui.midiFrame(0.05f); bool told = false; for (auto& m : sent) if (m.size() == 3 && m[0] == 0xB4 && m[1] == 22 && m[2] == (int)std::lround(2 / 5.f * 127)) told = true; chk(told, "value sent back");
+    // saved with the session; loaded onto new module numbers. EVERY SESSION ones stay through a new, empty session
+    for (auto& m : ui.midiMaps) if (m.key == "l1") { m.global = true; m.gType = "mixer"; m.gNth = 0; }
+    const std::string S = serializePatch(ui).dump(); Json j; Json::parse(S, j); const int nBefore = (int)ui.midiMaps.size();
+    for (int i = 0; i < 5; i++) ui.add("lfo", 0, 400);   // (so the loaded modules get different numbers)
+    loadPatch(ui, j); UiMod* mx2 = nullptr; UiMod* rv2 = nullptr; for (auto& up : ui.mods) { if (up->m->def->type == "mixer") mx2 = up.get(); if (up->m->def->type == "reverb") rv2 = up.get(); }
+    chk(mx2 && rv2 && ui.mapFor(*rv2, "mix") && ui.mapFor(*mx2, "l3") && ui.mapFor(*mx2, "l1") && (int)ui.midiMaps.size() == nBefore, "kept with the session");
+    ui.clearPatch(); chk(ui.midiMaps.size() == 1 && ui.midiMaps[0].global, "a new session keeps only EVERY SESSION ones");
+    UiMod* mx3 = ui.add("mixer", 0, 20); chk(ui.mapFor(*mx3, "l1") != nullptr, "EVERY SESSION finds its module");
+    ui.midiMaps.clear(); ui.onMidiSend = nullptr; ui.midiDevNames.clear(); ui.clearPatch();
+    if (!ok) fails++; std::printf("midi learn:%s%s\n", ok ? " all fine" : res.c_str(), ok ? "" : "  WRONG"); }
+  // an old session whose cable went to SWELL (an input since renamed TRIG) still connects
+  { const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"out","x":300,"y":20,"p":{}},{"id":2,"type":"clock","x":0,"y":20,"p":{}},{"id":3,"type":"pad","x":100,"y":20,"p":{}}],"cables":[{"f":2,"fp":"PULSE","t":3,"tp":"SWELL","ty":"trig"}]})";
+    Json j; Json::parse(old, j); loadPatch(ui, j); bool in = false; for (auto& cb : ui.cables) if (cb.toPort == 0) in = true; ui.clearPatch();
+    if (!in) fails++; std::printf("old SWELL cable: %s\n", in ? "connected" : "LOST  WRONG"); }
   // EVERY TYPE: each kind of each module with a TYPE (or MODE) list, played for 2 s (notes for a voice, a saw with noise bursts for an
   // effect): nothing that isn't a number, nothing wildly loud, and not silent
   { std::string res; bool ok = true;

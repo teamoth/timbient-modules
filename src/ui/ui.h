@@ -4,10 +4,12 @@
 #include "../engine/engine.h"
 #include "../engine/analyse.h"
 #include "canvas.h"
+#include "json.h"
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+#include <map>
 
 namespace tb {
 
@@ -58,7 +60,41 @@ public:
   UiMod* add(const std::string& type, int x, int y, int id = 0);   // id: put back with the number it had (undo)
   void remove(UiMod* u);
   bool tapRow(UiMod* u, int k);   // a tap on a speed row (three or more in rhythm set it); true when it did
-  void insertInto(const UiCable& c, int moduleId);   // put a module into a cable (as dropping it on one does, once you say yes)
+  void insertInto(const UiCable& c, int moduleId);
+  // ---- MIDI LEARN: a knob, fader, encoder or button on a MIDI controller moves a control (right-click a control: MIDI LEARN) ----
+  // kind: 0 CC, 1 NOTE, 2 NRPN, 3 PITCH BEND. mode (CC): 0 absolute, 1 relative round 64, 2 relative two's complement (1 up,
+  // 127 down), 3 relative sign and size (1 up, 65 down), 4 absolute 14-bit (CC n then n+32). key: a row's key, or #bypass, #mute, #solo.
+  // A global mapping (EVERY SESSION) names its module by type and which of that type (gNth), as ids change from session to session
+  struct MidiMap { std::string dev; int ch = 0, kind = 0, num = 0, mode = 0, mod = 0; std::string key; bool global = false; std::string gType; int gNth = 0;
+    float hw = -1; bool engaged = false; int fb = -1; float acc = 0, keep = 0; int msb = -1; bool down = false, lsbSeen = false; };
+  std::vector<MidiMap> midiMaps;
+  std::vector<std::string> midiDevNames;   // the MIDI inputs, by number (the app keeps this up to date)
+  bool midiFeedback = true;                // send each mapped control's value back to the device (when it has an output of the same name)
+  std::function<bool(const std::string& dev, const unsigned char* b, int n)> onMidiSend;   // the app sends these to the device's output (false: it has none)
+  std::function<void()> onGlobalMaps;      // the EVERY SESSION mappings changed: the app keeps them in its settings
+  void midiIn(int dev, unsigned char st, unsigned char d1, unsigned char d2);   // a message from a device (on the screen's thread)
+  void midiFrame(float dt);                 // each frame: learning, and values going back to the devices
+  void startLearn(UiMod* u, const std::string& key);
+  void cancelLearn() { learnMod = 0; learnSeen.clear(); }
+  bool learning() const { return learnMod != 0; }
+  bool learningRow(const UiMod& u, const std::string& key) const { return learnMod == u.m->id && learnKey == key; }
+  const MidiMap* mapFor(const UiMod& u, const std::string& key) const;
+  void forgetMap(const UiMod& u, const std::string& key);
+  void openMidiMap(int x, int y);           // the list: every mapping, its kind, EVERY SESSION, forget; values back on or off
+  Json midiMapsJson(bool global) const;
+  void midiMapsLoad(const Json& a, bool global, const std::map<int, UiMod*>* idmap);
+  std::string mapSource(const MidiMap& m) const;
+  std::string mapTarget(const MidiMap& m) const;
+ private:
+  int learnMod = 0; std::string learnKey; float learnT = 0, learnWait = -1, midiQuiet = 0, fbT = 0; struct Seen { int dev; unsigned char st, d1, d2; }; std::vector<Seen> learnSeen;
+  struct Nrpn { int pm = -1, pl = -1, dm = -1; } nrpn[8][16];
+  void learnDecide();
+  UiMod* mapMod(MidiMap& m);
+  void mapApply(MidiMap& m, float v, int delta, int press);   // v: an absolute value 0..1 (-1: none); delta: relative steps; press: 1 down, 0 up, -1 none
+  float mapValue(MidiMap& m);               // the control's value now, 0..1
+  void mapSend(MidiMap& m, float v);
+ public:
+   // put a module into a cable (as dropping it on one does, once you say yes)
   void removeGently(UiMod* u);   // the × button: bridges an effect's chain, lets its sound ring out
   bool connect(UiMod* a, int outPort, UiMod* b, int inPort);
   bool connect(UiMod* a, const std::string& outPort, UiMod* b, const std::string& inPort);

@@ -23,7 +23,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.46.0";
+static const char* VERSION = "0.47.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -439,6 +439,10 @@ int main(int argc, char** argv) {
   static const int FPS[3] = {60, 30, 20};
   int fpsIdx = std::max(0, std::min(2, (int)settings.num("fps", 1)));
   ui.cableMotion = settings.num("cableMotion", 1) > 0.5;
+  // MIDI LEARN: values go back to the devices (on unless turned off); the EVERY SESSION mappings live in the settings
+  ui.midiFeedback = settings.num("midiFeedback", 1) > 0.5; if (const Json* g = settings.get("midiGlobal")) ui.midiMapsLoad(*g, true, nullptr);
+  ui.onMidiSend = [&](const std::string& dev, const unsigned char* b, int n) { return midi.sendTo(dev, b, n); };
+  ui.onGlobalMaps = [&] { settings.set("midiGlobal", ui.midiMapsJson(true)); settings.set("midiFeedback", Json::number(ui.midiFeedback ? 1 : 0)); saveSettings(); };
   ui.helpOn = settings.num("help", 1) > 0.5;   // HELP starts on; switched off, it stays off
   ui.onHelpToggle = [&](bool on) { settings.set("help", Json::number(on ? 1 : 0)); saveSettings(); };
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
@@ -446,7 +450,7 @@ int main(int argc, char** argv) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + KEY_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS"};
+    d.items = {std::string("KEY  ") + KEY_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS", "MIDI MAP"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -484,6 +488,7 @@ int main(int argc, char** argv) {
       else if (i == 8) { ui.cableMotion = !ui.cableMotion; settings.set("cableMotion", Json::number(ui.cableMotion ? 1 : 0)); saveSettings();
         ui.status(ui.cableMotion ? "CABLE MOTION ON: PULSES AND FLOW ALONG THE CABLES" : "CABLE MOTION OFF: A LITTLE LIGHTER ON OLDER COMPUTERS", 4); return; }
       else if (i == 9) { openTheme(x0); return; }
+      else if (i == 11) { ui.openMidiMap(x0, 11); return; }   // MIDI LEARN's mappings
       else if (i == 10) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "DESIGNED BY TIM MEDLICOTT,", "  BUILT WITH CLAUDE, ANTHROPIC'S AI", "BUILT ON THESE OPEN-SOURCE PROJECTS,", "  EACH USED AS ITS LICENCE ALLOWS:",
           "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "RINGS (PLUCK, RESONATOR): MUTABLE INSTRUMENTS' RINGS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "SDL 3: WINDOW AND DRAWING", "  BY SAM LANTINGA (ZLIB LICENCE)", "MINIAUDIO: SOUND IN AND OUT", "  BY DAVID REID (PUBLIC DOMAIN / MIT-0)",
@@ -564,6 +569,7 @@ int main(int argc, char** argv) {
           if (!ui.ask && !ui.br.open && !ui.ed.open) {   // the Tracker last touched: arrows move its cursor, Delete empties the step
             const int tk = ev.key.key == SDLK_UP ? 1 : ev.key.key == SDLK_DOWN ? 2 : ev.key.key == SDLK_LEFT ? 3 : ev.key.key == SDLK_RIGHT ? 4 : (ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) ? 5 : 0;
             if (tk && ui.trackerKey(tk)) break; }
+          if (ui.learning() && ev.key.key == SDLK_ESCAPE) { ui.cancelLearn(); ui.status("MIDI LEARN CANCELLED", 2); break; }
           if (ui.ed.open && (ev.key.key == SDLK_ESCAPE || ev.key.key == SDLK_SPACE)) { ui.editorKey(ev.key.key == SDLK_ESCAPE ? 27 : ' '); break; }
           if (ui.br.open) {   // the sound browser: arrows step through, Enter loads, Escape closes
             if (ev.key.key == SDLK_DOWN) { ui.browserKey(1); break; } if (ev.key.key == SDLK_UP) { ui.browserKey(-1); break; }
@@ -647,6 +653,7 @@ int main(int argc, char** argv) {
     pumpInfo();
     if (rec.on()) { rec.pump(engine); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }
     // MIDI: notice devices coming and going; give MIDI OUT modules their device
+    { int dv; MidiMsg mm; ui.midiDevNames = midi.inputNames(); while (midi.popUi(dv, mm)) ui.midiIn(dv, mm.st, mm.d1, mm.d2); ui.midiFrame(ldt); }   // MIDI LEARN
     { static float mt = 0; midi.poll(ldt); ui.midiState = midi.state(); mt -= ldt;
       if (mt <= 0) { mt = 2; std::vector<std::string> names; bool listed = false;
         for (auto& up : ui.mods) if (up->m->def->type == "midiout" && up->m->devSlot.load() < 0) { if (!listed) { names = midi.outputs(); listed = true; }

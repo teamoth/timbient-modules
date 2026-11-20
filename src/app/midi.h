@@ -22,6 +22,10 @@ public:
   std::vector<std::string> outputs();             // the names of the devices notes can be sent to
   int openOutput(const std::string& name);        // a slot number for MIDI OUT modules (-1 if not there)
   bool ok() const { return inCount > 0; }
+  // MIDI LEARN: every message also goes to the screen's side; and values go back to a device's output (found by the input's name)
+  bool popUi(int& dev, MidiMsg& m);
+  const std::vector<std::string>& inputNames() const { return openNames; }
+  bool sendTo(const std::string& inName, const unsigned char* b, int n);
 
 private:
   Engine& eng;
@@ -29,6 +33,8 @@ private:
   static constexpr int SLOTS = 16;
   std::atomic<RtMidiOut*> outs[SLOTS]; std::string outNames[SLOTS];
   std::thread sender; std::atomic<bool> running{false};
+  std::vector<std::string> openNames; std::vector<std::string> outCache; float outCacheT = 0; std::vector<std::pair<std::string, int>> outFor;
+  SpscQueue<MidiOutMsg, 4096> uiOutQ;   // the screen's messages (values going back), sent by the same thread
   std::string stateText = "MIDI OFF"; int inCount = 0; float rescan = 0; bool scanned = false;
   void openInputs();
   void sendLoop();

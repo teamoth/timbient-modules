@@ -26,6 +26,14 @@ https://github.com/teamoth/timbient-modules/releases/tag/latest
 - **Windows**: unzip and run *Timbient Modules.exe*. If Windows warns, click *More info*, then *Run anyway*.
 - **Linux**: unpack and run `timbient-modules`.
 
+## MIDI controllers
+
+Right-click (or Ctrl-click) any control and choose **MIDI LEARN**, then move a knob, fader or encoder, or press a button,
+on your controller. Knobs take over once they reach the control's current value (so nothing jumps), encoders sending
+turns are recognised, as are fine 14-bit controls and NRPN, and values go back to the controller so encoders and
+displays match the screen. **SETTINGS > MIDI MAP** lists every mapping. Mappings are saved with the session, or can be
+kept for every session.
+
 ## Building it yourself
 
     cmake -B build -DCMAKE_BUILD_TYPE=Release

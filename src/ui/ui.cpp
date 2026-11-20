@@ -112,7 +112,8 @@ void Ui::removeGently(UiMod* u) {
   drag = Drag(); selOn = false;
 }
 void Ui::set(UiMod* m, const std::string& k, float v) { const int i = m->m->def->paramIndex(k); if (i >= 0) m->m->p[i].store(v); }
-void Ui::clearPatch() { for (auto& u : mods) eng.remove(u->m->id); mods.clear(); cables.clear(); drag = Drag(); dd.reset(); menuOpen = false; }
+void Ui::clearPatch() { for (auto& u : mods) eng.remove(u->m->id); mods.clear(); cables.clear(); drag = Drag(); dd.reset(); menuOpen = false;
+  midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [](const MidiMap& m) { return !m.global; }), midiMaps.end()); for (auto& m : midiMaps) { m.mod = 0; m.engaged = false; m.fb = -1; } cancelLearn(); }   // (EVERY SESSION mappings stay)
 
 // a patch in the spirit of your session, so there's something to listen to straight away
 void Ui::demoPatch() {
@@ -661,6 +662,8 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
   for (size_t r = 0; r < ord.size(); r++) { const size_t j = (size_t)ord[r];
     const ParamDef& q = d->params[j]; const int ry = y + g.py + rowTopOf(u, ord, (int)r); const float v = u.m->p[j].load(); const bool active = drag.kind == D_PARAM && drag.m == &u && drag.k == (int)j;
     if (lineAbove(u, ord, (int)r)) for (int i = x + 3; i < x + w - 3; i += 2) c.px(i, ry - 2, 21);   // where one part gives way to the next
+    if (learningRow(u, q.key) && std::fmod(blink, 0.6f) < 0.35f) c.frame(x + 2, ry - 1, w - 4, 9, 12);   // MIDI LEARN: waiting for a knob or button
+    if (mapFor(u, q.key)) { c.px(x + 1, ry + 1, 4); c.px(x + 1, ry + 2, 4); c.px(x + 1, ry + 3, 4); c.px(x + 1, ry + 4, 4); }   // moved by MIDI: a mark at the left edge
     if (recButton(d, q)) {   // RECORD: a big red button (filled while it records)
       const bool outMod = d->type == "out"; const float st = d->type == "sample" ? u.m->disp[40].load() : 0; const bool waiting = st > 0.5f && st < 1.5f;
       const bool on = outMod ? u.m->disp[1].load() > 0.5f : (v > 0.5f || st > 0.5f); const bool lit = on && !(waiting && std::fmod(blink, 1.f) > 0.5f);
@@ -1007,9 +1010,20 @@ bool Ui::tempoDown(float sx, float sy) {   // true if the tap was inside the pan
 void Ui::contextAt(float sx, float sy) {
   if (ask || br.open || ed.open || sy < TOP) return;
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; int lx, ly; UiMod* u = hit(wx, wy, lx, ly); dd.reset(); menuOpen = false;
-  if (!u || u->m->def->fixed) return; lastTouched = u->m->id; const int id = u->m->id;
-  Dropdown q; q.items = {"DUPLICATE"}; q.x = (int)sx + 2; q.y = (int)sy + 2;
-  q.pick = [this, id](int) { if (UiMod* m = byId(id)) if (onDuplicate) onDuplicate(m); }; openDropdown(q);
+  if (!u) return; lastTouched = u->m->id; const int id = u->m->id;
+  // what it offers: MIDI LEARN for the row under the pointer (or, on the title or the foot, for M, B and S), FORGET MIDI if it has one, and DUPLICATE
+  std::vector<std::pair<std::string, std::function<void()>>> it; const ModuleDef* d = u->m->def; const Geom g = geom(*u);
+  std::vector<std::pair<std::string, std::string>> rows; const int pj = paramAt(u, ly);
+  if (pj >= 0) rows.push_back({d->params[pj].key, d->params[pj].label});
+  else if (!d->fixed && (ly < HEAD || ly >= g.h - FOOT)) { const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod; rows.push_back({"#mute", onOff ? "ON/OFF" : "MUTE"});
+    if (bypassable(d)) rows.push_back({"#bypass", "BYPASS"}); if (d->cat == Cat::Voice) rows.push_back({"#solo", "SOLO"}); }
+  for (auto& r : rows) { const std::string key = r.first, lab = r.second;
+    it.push_back({"MIDI LEARN: " + lab, [this, id, key] { if (UiMod* m = byId(id)) startLearn(m, key); }});
+    if (mapFor(*u, key)) it.push_back({"FORGET MIDI: " + lab, [this, id, key, lab] { if (UiMod* m = byId(id)) { forgetMap(*m, key); status("MIDI: " + lab + " LET GO", 2); } }}); }
+  if (!d->fixed) it.push_back({"DUPLICATE", [this, id] { if (UiMod* m = byId(id)) if (onDuplicate) onDuplicate(m); }});
+  if (it.empty()) return;
+  Dropdown q; for (auto& e : it) q.items.push_back(e.first); q.x = (int)sx + 2; q.y = (int)sy + 2;
+  q.pick = [it](int i) { if (i >= 0 && i < (int)it.size()) it[i].second(); }; openDropdown(q);
 }
 void Ui::pointerDown(float sx, float sy) {
   hoverT = -1;   // a tap hides the note until the pointer moves on
@@ -1293,6 +1307,222 @@ void Ui::pointerUp(float sx, float sy) {
   }();
   if (made) { if (d.hasOrig) { unplug(d.orig); status("MOVED THE CABLE", 2); } changed(); }
   else if (d.hasOrig) status("NOT MOVED. TO TAKE A CABLE OUT: TAP IT, THEN UNPLUG", 3);
+}
+
+}  // namespace tb
+
+namespace tb {
+// ---------------- MIDI LEARN ----------------
+// A message from a device, on the screen's thread. While learning, messages are only gathered (learnDecide reads them); otherwise
+// each mapping that listens for it moves its control. NRPN arrives in parts (99 and 98 name the parameter, 6 and 38 carry the value)
+static bool relMode(int mode) { return mode >= 1 && mode <= 3; }
+static int relDelta(int mode, int v) { return mode == 1 ? v - 64 : mode == 2 ? (v < 64 ? v : v - 128) : (v < 64 ? v : -(v - 64)); }
+static std::string devShort(const std::string& n) { std::string s = n; for (auto& ch : s) ch = (char)std::toupper((unsigned char)ch); if (s.size() > 14) s = s.substr(0, 14); return s; }
+
+void Ui::midiIn(int dev, unsigned char st, unsigned char d1, unsigned char d2) {
+  if (st >= 0xF0) return;   // clock and the like: not for mapping
+  const int ty = st & 0xF0, ch = st & 15;
+  if (ty != 0xB0 && ty != 0x90 && ty != 0x80 && ty != 0xE0) return;
+  if (learnMod) { if (learnSeen.empty() && ty == 0x80) return; learnSeen.push_back({dev, st, d1, d2}); if (learnWait < 0) learnWait = 0.6f; return; }   // gather for a moment, then decide
+  const std::string dn = dev >= 0 && dev < (int)midiDevNames.size() ? midiDevNames[dev] : std::string();
+  auto devOk = [&](const MidiMap& m) {   // the same device; or the mapped one isn't here (another computer, say): any
+    if (m.dev.empty() || m.dev == dn) return true; return std::find(midiDevNames.begin(), midiDevNames.end(), m.dev) == midiDevNames.end(); };
+  // NRPN: keep track of which parameter each device and channel is talking about
+  int nrpnNum = -1; int nrpnPart = 0; int nrpnDelta = 0;
+  if (ty == 0xB0 && dev >= 0 && dev < 8) { Nrpn& n = nrpn[dev][ch];
+    if (d1 == 99) { n.pm = d2; return; } if (d1 == 98) { n.pl = d2; return; }
+    if (n.pm >= 0 && n.pl >= 0 && (d1 == 6 || d1 == 38 || d1 == 96 || d1 == 97)) { nrpnNum = n.pm * 128 + n.pl; nrpnPart = d1 == 6 ? 1 : d1 == 38 ? 2 : 0; if (d1 == 96) nrpnDelta = 1; if (d1 == 97) nrpnDelta = -1; if (d1 == 6) n.dm = d2; } }
+  for (auto& m : midiMaps) { if (m.ch != ch || !devOk(m)) continue;
+    switch (m.kind) {
+      case 0: if (ty != 0xB0) break;
+        if (m.mode == 4) { if (d1 == m.num) { m.msb = d2; mapApply(m, d2 / 127.f, 0, -1); } else if (d1 == m.num + 32 && m.msb >= 0) mapApply(m, (m.msb * 128 + d2) / 16383.f, 0, -1); break; }
+        if (d1 != m.num) break;
+        if (relMode(m.mode)) mapApply(m, -1, relDelta(m.mode, d2), -1); else mapApply(m, d2 / 127.f, 0, -1);
+        break;
+      case 1: if ((ty == 0x90 || ty == 0x80) && d1 == m.num) mapApply(m, -1, 0, ty == 0x90 && d2 > 0 ? 1 : 0); break;
+      case 2: if (nrpnNum != m.num) break;
+        if (nrpnDelta) { mapApply(m, -1, nrpnDelta, -1); break; }
+        if (nrpnPart == 1) { m.msb = d2; mapApply(m, m.lsbSeen ? d2 * 128 / 16383.f : d2 / 127.f, 0, -1); }
+        else if (nrpnPart == 2 && m.msb >= 0) { m.lsbSeen = true; mapApply(m, (m.msb * 128 + d2) / 16383.f, 0, -1); }
+        break;
+      case 3: if (ty == 0xE0) mapApply(m, (d2 * 128 + d1) / 16383.f, 0, -1); break; }
+  }
+}
+
+UiMod* Ui::mapMod(MidiMap& m) {
+  if (!m.global) return byId(m.mod);
+  if (m.mod) if (UiMod* u = byId(m.mod)) if (u->m->def->type == m.gType) return u;
+  int n = 0; for (auto& up : mods) if (up->m->def->type == m.gType) { if (n == m.gNth) { m.mod = up->m->id; return up.get(); } n++; }   // EVERY SESSION: the nth of its type here
+  return nullptr; }
+
+float Ui::mapValue(MidiMap& m) {
+  UiMod* u = mapMod(m); if (!u) return 0;
+  if (m.key == "#bypass") return u->m->bypass.load() ? 1.f : 0.f; if (m.key == "#mute") return u->m->mute.load() ? 1.f : 0.f; if (m.key == "#solo") return u->m->solo.load() ? 1.f : 0.f;
+  const int k = u->m->def->paramIndex(m.key); if (k < 0) return 0; const ParamDef& q = u->m->def->params[k]; const float v = u->m->p[k].load();
+  if (q.act) return 0; if (!q.opts.empty()) return q.opts.size() > 1 ? clampf(v / (float)(q.opts.size() - 1), 0, 1) : 0.f;
+  return clampf(q.toNorm(v), 0, 1); }
+
+// move the control: v an absolute 0..1 (or -1), delta relative steps, press a button going down (1) or up (0) (or -1)
+void Ui::mapApply(MidiMap& m, float v, int delta, int press) {
+  UiMod* u = mapMod(m); if (!u) return; const ModuleDef* d = u->m->def;
+  if (press < 0 && v >= 0 && !relMode(m.mode)) { const bool on = v >= 0.5f; press = on != m.down ? (on ? 1 : 0) : -1; m.down = on; }   // a value as a button: crossing the middle presses and lets go
+  else if (press >= 0) m.down = press == 1;
+  const int res = m.mode == 4 || m.kind >= 2 ? 16383 : 127;
+  auto done = [&] { m.fb = (int)std::lround(mapValue(m) * res); midiQuiet = 0.5f; };   // (what it was set to needn't go back to the device)
+  if (m.key[0] == '#') {   // M, B and S: a button press turns it over; a value or a turn sets it
+    std::atomic<bool>& f = m.key == "#bypass" ? u->m->bypass : m.key == "#mute" ? u->m->mute : u->m->solo; bool want = f.load();
+    if (m.kind == 1 || (press == 1 && v < 0)) { if (press != 1) return; want = !want; }
+    else if (delta) want = delta > 0; else if (press == 1) want = !want; else return;
+    f.store(want); status(d->name + (m.key == "#bypass" ? (want ? "  BYPASS" : "  BACK IN") : m.key == "#mute" ? (want ? "  MUTED" : "  ON") : (want ? "  SOLO" : "  SOLO OFF")), 1.2f); done(); return; }
+  const int k = d->paramIndex(m.key); if (k < 0) return; const ParamDef& q = d->params[k]; const float v0 = u->m->p[k].load();
+  auto set = [&](float nv) { if (nv == v0) return; takeOwnTempo(u, k, eng); verbTypeSet(u, k, v0, nv); u->m->p[k].store(nv); clockToTempo(u, k, eng); u->valK = k; u->valT = 1.2f;
+    status(d->name + "  " + statusLabel(*u, q) + "  " + valueText(*u, k, nv, eng.key.root.load()), 1.2f); };
+  if (q.act) {   // a button (RECORD, CLEAR...): on the press, as a tap would
+    if (press != 1 && !(delta > 0)) return;
+    if (q.key == "clear" && u->clearAsk <= 0) { u->clearAsk = 2.5f; status(d->name + ": PRESS AGAIN TO CLEAR", 2.5f); return; }
+    if (q.key == "clear") u->clearAsk = 0;
+    if (d->type == "tracker" && q.key == "clear") return;   // (that one only from the screen: it wipes every step)
+    if (onAction && onAction(u, q.key)) { done(); return; } eng.action(u->m->id, q.key); status(d->name + "  " + q.label, 1.2f); done(); return; }
+  if (!q.opts.empty()) { const int n = (int)q.opts.size(); int i = (int)std::lround(v0);
+    if (m.kind == 1 || (press == 1 && v < 0)) { if (press != 1) return; i = n == 2 ? 1 - i : (i + 1) % n; }   // a button: on/off, or the next one round
+    else if (delta) { m.acc += delta; while (m.acc >= 2) { i++; m.acc -= 2; } while (m.acc <= -2) { i--; m.acc += 2; } i = std::max(0, std::min(n - 1, i)); }   // a turn: two clicks a step
+    else if (v >= 0) { const int want = std::min(n - 1, (int)(v * n)); if (!m.engaged) { if (want == i) m.engaged = true; else { status(d->name + "  " + q.label + ": TURN TO " + q.opts[i] + " TO PICK IT UP", 1.2f); return; } } i = want; }
+    else return;
+    set((float)i); done(); return; }
+  // a level
+  if (m.kind == 1) {   // a button on a level: a speed row takes taps; others go to their lowest and back
+    if (press != 1) return; if (tapRow(u, k)) { done(); return; } if (tapKind(d, q)) { status(d->name + "  " + q.label + ": KEEP TAPPING", 1); return; }
+    if (q.toNorm(v0) > 0.001f) { m.keep = v0; set(q.fromNorm(0)); } else set(m.keep > 0 ? m.keep : q.def); done(); return; }
+  float nv;
+  if (delta) { const float n0 = q.toNorm(v0); nv = q.step > 0 ? clampf(v0 + delta * q.step * (q.rev ? -1 : 1), std::min(q.min, q.max), std::max(q.min, q.max)) : q.fromNorm(clampf(n0 + delta / 128.f, 0, 1)); }
+  else if (v >= 0) {
+    const float cur = q.toNorm(v0);
+    if (!m.engaged) {   // PICKUP: the knob takes over once it reaches where the control is (so nothing jumps)
+      if (std::fabs(v - cur) < 0.02f || (m.hw >= 0 && (m.hw - cur) * (v - cur) <= 0)) m.engaged = true;
+      m.hw = v; if (!m.engaged) { status(d->name + "  " + q.label + ": TURN " + (v < cur ? "UP" : "DOWN") + " TO PICK IT UP", 1.2f); return; } }
+    m.hw = v; nv = q.fromNorm(v); }
+  else return;
+  if (q.step > 0) nv = std::round(nv / q.step) * q.step;
+  set(nv); done();
+}
+
+// the control's value back to the device, so its encoders and display match the screen
+void Ui::mapSend(MidiMap& m, float v) {
+  if (!onMidiSend || m.dev.empty()) return; unsigned char b[12]; int n = 0; const int ch = m.ch & 15;
+  if (m.kind == 0 && m.mode == 0) { b[0] = (unsigned char)(0xB0 | ch); b[1] = (unsigned char)m.num; b[2] = (unsigned char)std::lround(v * 127); n = 3; }
+  else if (m.kind == 0 && m.mode == 4) { const int x = (int)std::lround(v * 16383); b[0] = (unsigned char)(0xB0 | ch); b[1] = (unsigned char)m.num; b[2] = (unsigned char)(x >> 7); b[3] = (unsigned char)(0xB0 | ch); b[4] = (unsigned char)(m.num + 32); b[5] = (unsigned char)(x & 127); n = 6; }
+  else if (m.kind == 2) { const int x = m.lsbSeen ? (int)std::lround(v * 16383) : (int)std::lround(v * 127) * 128; const unsigned char c = (unsigned char)(0xB0 | ch);
+    unsigned char t[12] = {c, 99, (unsigned char)(m.num >> 7), c, 98, (unsigned char)(m.num & 127), c, 6, (unsigned char)(x >> 7), c, 38, (unsigned char)(x & 127)}; std::copy(t, t + 12, b); n = m.lsbSeen ? 12 : 9; }
+  else if (m.kind == 3) { const int x = (int)std::lround(v * 16383); b[0] = (unsigned char)(0xE0 | ch); b[1] = (unsigned char)(x & 127); b[2] = (unsigned char)(x >> 7); n = 3; }
+  else return;   // relative turns and buttons: nothing to show back
+  if (onMidiSend(m.dev, b, n)) m.engaged = true;   // the device now shows where the control is: no need to pick it up
+}
+
+void Ui::midiFrame(float dt) {
+  if (learnMod) { learnT -= dt; if (learnWait >= 0 && (learnWait -= dt) < 0) learnDecide(); else if (learnT <= 0) { cancelLearn(); status("MIDI LEARN: NOTHING CAME, SO NOTHING CHANGED", 3); } }
+  if (midiQuiet > 0 && (midiQuiet -= dt) <= 0) changed();   // a run of knob turns: saved (and one step to undo) once it settles
+  fbT -= dt; if (fbT > 0) return; fbT = 0.03f;
+  if (!midiFeedback) return;
+  for (auto& m : midiMaps) { if (!mapMod(m)) continue; const int res = m.mode == 4 || m.kind >= 2 ? 16383 : 127; const float v = mapValue(m); const int qv = (int)std::lround(v * res);
+    if (qv != m.fb) { m.fb = qv; mapSend(m, v); } }
+}
+
+void Ui::startLearn(UiMod* u, const std::string& key) {
+  learnMod = u->m->id; learnKey = key; learnT = 12; learnWait = -1; learnSeen.clear();
+  std::string lab = key == "#bypass" ? "BYPASS" : key == "#mute" ? "MUTE" : key == "#solo" ? "SOLO" : u->m->def->params[u->m->def->paramIndex(key)].label;
+  status("MIDI LEARN " + u->m->def->name + "  " + lab + ": MOVE A KNOB OR PRESS A BUTTON (ESCAPE: CANCEL)", 12); }
+
+// what came in while learning: which control, and how it sends
+void Ui::learnDecide() {
+  learnWait = -1; UiMod* u = byId(learnMod); std::vector<Seen> seen; seen.swap(learnSeen); const std::string key = learnKey; learnMod = 0;
+  if (!u || seen.empty()) return;
+  const int dev = seen[0].dev, ch = seen[0].st & 15; MidiMap m; m.dev = dev >= 0 && dev < (int)midiDevNames.size() ? midiDevNames[dev] : std::string(); m.ch = ch;
+  std::vector<Seen> s; for (auto& x : seen) if (x.dev == dev && (x.st & 15) == ch) s.push_back(x);
+  int pm = -1, pl = -1; bool nrpnSeen = false, lsb38 = false, note = false, pb = false;
+  for (auto& x : s) { const int ty = x.st & 0xF0; if (ty == 0xB0 && x.d1 == 99) { pm = x.d2; nrpnSeen = true; } if (ty == 0xB0 && x.d1 == 98) { pl = x.d2; nrpnSeen = true; } if (ty == 0xB0 && x.d1 == 38) lsb38 = true;
+    if (ty == 0x90 && x.d2 > 0) note = true; if (ty == 0xE0) pb = true; }
+  if (nrpnSeen && pm >= 0 && pl >= 0) { m.kind = 2; m.num = pm * 128 + pl; m.lsbSeen = lsb38; }
+  else if (note) { m.kind = 1; for (auto& x : s) if ((x.st & 0xF0) == 0x90 && x.d2 > 0) { m.num = x.d1; break; } }
+  else if (pb) m.kind = 3;
+  else { int cc = -1; for (auto& x : s) if ((x.st & 0xF0) == 0xB0) { cc = x.d1; break; } if (cc < 0) return; m.kind = 0; m.num = cc;
+    bool pair = false; if (cc < 32) for (auto& x : s) if ((x.st & 0xF0) == 0xB0 && x.d1 == cc + 32) pair = true;
+    if (pair) m.mode = 4;
+    else { std::vector<int> v; for (auto& x : s) if ((x.st & 0xF0) == 0xB0 && x.d1 == cc) v.push_back(x.d2);
+      int same = 0; for (size_t i = 1; i < v.size(); i++) if (v[i] == v[i - 1]) same++;
+      auto all = [&](auto f) { for (int x : v) if (!f(x)) return false; return true; };
+      if (v.size() >= 3 && same * 2 >= (int)v.size() - 1) {   // the same few values again and again: an encoder sending turns, not a position
+        if (all([](int x) { return x >= 49 && x <= 79 && x != 64; })) m.mode = 1;
+        else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 113 && x <= 127); })) m.mode = 2;
+        else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 65 && x <= 79); })) m.mode = 3; } } }
+  m.mod = u->m->id; m.key = key; m.engaged = relMode(m.mode) || m.kind == 1;
+  // one source can move several controls; a control has one source
+  for (size_t i = 0; i < midiMaps.size(); i++) if (mapMod(midiMaps[i]) == u && midiMaps[i].key == key) { const bool g = midiMaps[i].global; if (g) { m.global = true; m.gType = midiMaps[i].gType; m.gNth = midiMaps[i].gNth; } midiMaps.erase(midiMaps.begin() + i); break; }
+  std::string also; for (auto& o : midiMaps) if (o.dev == m.dev && o.ch == m.ch && o.kind == m.kind && o.num == m.num) { also = mapTarget(o); break; }
+  midiMaps.push_back(m); MidiMap& mm = midiMaps.back(); mm.fb = -1;   // (its value goes to the device on the next frame)
+  static const char* MODE[5] = {"", "  (TURNS, ROUND 64)", "  (TURNS)", "  (TURNS, SIGN AND SIZE)", "  (FINE: 14-BIT)"};
+  status("MIDI: " + mapSource(mm) + " NOW MOVES " + mapTarget(mm) + (mm.kind == 0 ? MODE[mm.mode] : "") + (also.empty() ? "" : "  (IT ALSO MOVES " + also + ")"), 5);
+  changed(); if (mm.global && onGlobalMaps) onGlobalMaps();
+}
+
+const Ui::MidiMap* Ui::mapFor(const UiMod& u, const std::string& key) const {
+  for (auto& m : midiMaps) if (m.key == key && (m.mod == u.m->id || (!m.global && false))) return &m;
+  for (auto& m : midiMaps) if (m.global && m.key == key && m.gType == u.m->def->type) { int n = 0; for (auto& up : mods) if (up->m->def->type == m.gType) { if (up.get() == &u) { if (n == m.gNth) return &m; break; } n++; } }
+  return nullptr; }
+
+void Ui::forgetMap(const UiMod& u, const std::string& key) {
+  const MidiMap* f = mapFor(u, key); if (!f) return; const bool g = f->global; midiMaps.erase(midiMaps.begin() + (f - midiMaps.data())); changed(); if (g && onGlobalMaps) onGlobalMaps(); }
+
+std::string Ui::mapSource(const MidiMap& m) const {
+  char b[48]; if (m.kind == 0) std::snprintf(b, 48, "CC %d", m.num); else if (m.kind == 1) std::snprintf(b, 48, "NOTE %d", m.num); else if (m.kind == 2) std::snprintf(b, 48, "NRPN %d", m.num); else std::snprintf(b, 48, "PITCH BEND");
+  return std::string(b) + " CH " + std::to_string(m.ch + 1) + (m.dev.empty() ? "" : " " + devShort(m.dev)); }
+
+std::string Ui::mapTarget(const MidiMap& m) const {
+  UiMod* u = const_cast<Ui*>(this)->mapMod(const_cast<MidiMap&>(m)); if (!u) return m.global ? m.gType + " (NOT IN THIS SESSION)" : "(GONE)";
+  std::string lab = m.key == "#bypass" ? "BYPASS" : m.key == "#mute" ? "MUTE" : m.key == "#solo" ? "SOLO" : m.key;
+  if (m.key[0] != '#') { const int k = u->m->def->paramIndex(m.key); if (k >= 0) lab = u->m->def->params[k].label; }
+  return u->m->def->name + " " + lab; }
+
+Json Ui::midiMapsJson(bool global) const {
+  Json a = Json::array();
+  for (auto& m : midiMaps) { if (m.global != global) continue; if (!global && !const_cast<Ui*>(this)->byId(m.mod)) continue;
+    Json e = Json::object(); e.set("dev", Json::string(m.dev)); e.set("ch", Json::number(m.ch)); e.set("kind", Json::number(m.kind)); e.set("num", Json::number(m.num)); e.set("mode", Json::number(m.mode)); e.set("key", Json::string(m.key));
+    if (m.lsbSeen) e.set("fine", Json::number(1));
+    if (global) { e.set("type", Json::string(m.gType)); e.set("nth", Json::number(m.gNth)); } else e.set("mod", Json::number(m.mod));
+    a.push(e); }
+  return a; }
+
+void Ui::midiMapsLoad(const Json& a, bool global, const std::map<int, UiMod*>* idmap) {
+  if (a.t != Json::ARR) return;
+  for (auto& e : a.a) { MidiMap m; m.dev = e.str("dev"); m.ch = (int)e.num("ch", 0) & 15; m.kind = (int)e.num("kind", 0); m.num = (int)e.num("num", 0); m.mode = (int)e.num("mode", 0); m.key = e.str("key"); m.lsbSeen = e.num("fine", 0) > 0;
+    if (m.key.empty()) continue; m.global = global;
+    if (global) { m.gType = e.str("type"); m.gNth = (int)e.num("nth", 0); if (m.gType.empty()) continue;
+      bool dup = false; for (auto& o : midiMaps) if (o.global && o.gType == m.gType && o.gNth == m.gNth && o.key == m.key) dup = true; if (dup) continue; }
+    else { const int old = (int)e.num("mod", 0); if (idmap) { auto it = idmap->find(old); if (it == idmap->end()) continue; m.mod = it->second->m->id; } else m.mod = old; if (!byId(m.mod)) continue;
+      midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [&](const MidiMap& o) { return !o.global && o.mod == m.mod && o.key == m.key; }), midiMaps.end()); }
+    m.engaged = relMode(m.mode) || m.kind == 1; midiMaps.push_back(m); }
+}
+
+// SETTINGS, MIDI MAP: every mapping (tap one: its kind, EVERY SESSION, forget it), values back to the devices, clear all
+void Ui::openMidiMap(int x, int y) {
+  Dropdown d; d.x = x; d.y = y; std::vector<std::function<void()>> act;
+  d.items.push_back(midiMaps.empty() ? "NO MAPPINGS YET: RIGHT-CLICK A CONTROL, MIDI LEARN" : "MIDI MAP"); d.title = 0; act.push_back([] {});
+  for (size_t i = 0; i < midiMaps.size(); i++) { const MidiMap& m = midiMaps[i];
+    static const char* MODE[5] = {"", "  TURNS 64", "  TURNS", "  TURNS SIGN", "  14-BIT"};
+    d.items.push_back(mapSource(m) + (m.kind == 0 ? MODE[m.mode] : "") + "  >  " + mapTarget(m) + (m.global ? "  (EVERY SESSION)" : ""));
+    act.push_back([this, i, x, y] { if (i >= midiMaps.size()) return; MidiMap& m = midiMaps[i];
+      Dropdown q; q.x = x + 8; q.y = y + 8; std::vector<std::function<void()>> a2;
+      if (m.kind == 0) for (int md = 0; md < 5; md++) { static const char* MN[5] = {"KIND: A POSITION (ABSOLUTE)", "KIND: TURNS, ROUND 64 (RELATIVE)", "KIND: TURNS, 1 UP / 127 DOWN (RELATIVE)", "KIND: TURNS, 1 UP / 65 DOWN (RELATIVE)", "KIND: A FINE POSITION (14-BIT)"};
+        q.items.push_back(std::string(MN[md]) + (m.mode == md ? "  *" : "")); a2.push_back([this, i, md] { if (i < midiMaps.size()) { midiMaps[i].mode = md; midiMaps[i].engaged = relMode(md); midiMaps[i].fb = -1; changed(); if (midiMaps[i].global && onGlobalMaps) onGlobalMaps(); } }); }
+      q.items.push_back(m.global ? "EVERY SESSION: ON (TAP: THIS SESSION ONLY)" : "EVERY SESSION: OFF (TAP: KEEP IT IN EVERY SESSION)");
+      a2.push_back([this, i] { if (i >= midiMaps.size()) return; MidiMap& m = midiMaps[i]; UiMod* u = mapMod(m); if (!u) return;
+        if (!m.global) { m.global = true; m.gType = u->m->def->type; m.gNth = 0; for (auto& up : mods) { if (up.get() == u) break; if (up->m->def->type == m.gType) m.gNth++; } status("MIDI: " + mapTarget(m) + " IN EVERY SESSION", 3); }
+        else { m.global = false; m.mod = u->m->id; status("MIDI: " + mapTarget(m) + " IN THIS SESSION ONLY", 3); }
+        changed(); if (onGlobalMaps) onGlobalMaps(); });
+      q.items.push_back("FORGET IT"); a2.push_back([this, i] { if (i >= midiMaps.size()) return; const bool g = midiMaps[i].global; status("MIDI: " + mapTarget(midiMaps[i]) + " LET GO", 2); midiMaps.erase(midiMaps.begin() + i); changed(); if (g && onGlobalMaps) onGlobalMaps(); });
+      q.pick = [a2](int j) { if (j >= 0 && j < (int)a2.size()) a2[j](); }; openDropdown(q); }); }
+  d.items.push_back(std::string("VALUES BACK TO THE DEVICES: ") + (midiFeedback ? "ON" : "OFF")); act.push_back([this, x, y] { midiFeedback = !midiFeedback; for (auto& m : midiMaps) m.fb = -1; if (onGlobalMaps) onGlobalMaps(); status(midiFeedback ? "MIDI: VALUES GO BACK TO THE DEVICES (ENCODERS AND DISPLAYS MATCH THE SCREEN)" : "MIDI: NOTHING SENT BACK", 3); openMidiMap(x, y); });
+  if (!midiMaps.empty()) { d.items.push_back("FORGET EVERY MAPPING IN THIS SESSION"); act.push_back([this] { const size_t n0 = midiMaps.size(); midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [](const MidiMap& m) { return !m.global; }), midiMaps.end()); status("MIDI: " + std::to_string(n0 - midiMaps.size()) + " LET GO (EVERY-SESSION ONES KEPT)", 3); changed(); }); }
+  d.pick = [act](int i) { if (i >= 0 && i < (int)act.size()) act[i](); }; openDropdown(d);
 }
 
 }  // namespace tb
