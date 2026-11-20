@@ -34,7 +34,7 @@ struct UiMod {
 struct UiCable { int from, fromPort, to, toPort, toParam; PType type; unsigned seen = 0; std::vector<float> pulses; float flow = 0, lastV = 0, rate = 0; };   // flow: how far its moving pattern has gone   // pulses: triggers on their way along it (0 at the output, 1 at the input)
 
 // a list that drops down from a button: pick one item (an optional title row can't be picked)
-struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; int rows = 1, colW = 60; bool stay = false; };   // stay: picking doesn't close it (trying colours)   // sw: a palette colour shown beside each item
+struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur = -1, title = -1, title2 = -1, danger = -1; std::function<void(int)> pick; std::vector<int> sw; std::function<void(Dropdown&)> live; int rows = 1, colW = 60; bool stay = false; };   // stay: picking doesn't close it (trying colours); live: brings its items up to date each frame (the MIDI DEVICES lights)   // sw: a palette colour shown beside each item
 
 class Ui {
 public:
@@ -81,7 +81,17 @@ public:
   bool learningRow(const UiMod& u, const std::string& key) const { return learnMod == u.m->id && learnKey == key; }
   const MidiMap* mapFor(const UiMod& u, const std::string& key) const;
   void forgetMap(const UiMod& u, const std::string& key);
-  void openMidiMap(int x, int y);           // the list: every mapping, its kind, EVERY SESSION, forget; values back on or off
+  void openMidiMap(int x, int y);
+  // SETTINGS > MIDI: DEVICES (every input and output, a light while it sends, on/off), MONITOR (what has just arrived), MIDI MAP
+  struct MidiDev { std::string name; bool input = true, on = true, open = false, inUse = false, clock = false; float seen = 99; };
+  std::vector<MidiDev> midiDevs;            // the app keeps this up to date
+  std::vector<std::string> midiLog;         // the latest messages, in words, newest last
+  std::function<void(const std::string& name)> onMidiDevToggle;
+  void openMidiMenu(int x, int y);
+  void openMidiDevices(int x, int y);
+  void openMidiMonitor(int x, int y);
+  const Dropdown* openList() const { return dd.get(); }   // the list that's open (for the tests)
+  void closeList() { dd.reset(); }           // the list: every mapping, its kind, EVERY SESSION, forget; values back on or off
   Json midiMapsJson(bool global) const;
   void midiMapsLoad(const Json& a, bool global, const std::map<int, UiMod*>* idmap);
   std::string mapSource(const MidiMap& m) const;

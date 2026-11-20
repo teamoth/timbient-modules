@@ -796,7 +796,8 @@ void Ui::draw(Canvas& c, float dt) {
     const int zx = fx - 24; for (int i = 0; i < 5; i++) c.px(zx + i, 5, 9); for (int i = 0; i < 5; i++) { c.px(zx + 10 + i, 5, 9); c.px(zx + 12, 3 + i, 9); }
     barHits.push_back({zx - 1, zx + 5, [this] { onZoom(-1); }, "ZOOM"}); barHits.push_back({zx + 9, zx + 15, [this] { onZoom(1); }, "ZOOM"}); ix0 = zx;
   }
-  char info[64]; std::snprintf(info, sizeof info, "AUDIO %d%%", (int)std::lround(eng.cpuLoad.load() * 100));
+  int nIn = 0; for (auto& d : midiDevs) if (d.input && d.open) nIn++;
+  char info[64]; std::snprintf(info, sizeof info, "MIDI %d  AUDIO %d%%", nIn, (int)std::lround(eng.cpuLoad.load() * 100));   // (how many MIDI inputs are listened to: SETTINGS > MIDI > DEVICES)
   const int ix = ix0 - Canvas::tw(info) - 10; infoX0 = ix; infoX1 = ix + Canvas::tw(info);
   if (statusT > 0) { statusT -= dt; std::string s = statusMsg; const int room = (ix - bx - 4) / 4; if ((int)s.size() > room) s = s.substr(0, std::max(0, room)); c.text(s, bx + 4, 3, 17); }
   else if (ix > bx) c.text(info, ix, 3, 18);
@@ -816,6 +817,7 @@ void Ui::draw(Canvas& c, float dt) {
   }
   // a dropdown list
   if (dd) {
+    if (dd->live) dd->live(*dd);
     // a long list wraps into columns so it always fits on screen
     int cw = 0; for (auto& it : dd->items) cw = std::max(cw, Canvas::tw(it)); cw += dd->sw.empty() ? 8 : 16;
     const int n = (int)dd->items.size(), rowsFit = std::max(1, (c.H - TOP - 8) / 8), cols = (n + rowsFit - 1) / rowsFit, rows = (n + cols - 1) / cols;
@@ -825,7 +827,7 @@ void Ui::draw(Canvas& c, float dt) {
     for (int i = 0; i < n; i++) { const int cx = dd->x + (i / rows) * cw, y = dd->y + 2 + (i % rows) * 8; if (i == dd->cur) c.rect(cx - 1, y - 1, cw - 2, 7, 21);
       const int sw = i < (int)dd->sw.size() ? dd->sw[i] : -1, tx = dd->sw.empty() ? cx + 1 : cx + 9;   // a colour swatch in front, in the theme menus
       if (sw >= 0) { c.rect(cx + 1, y, 6, 5, sw); c.frame(cx + 1, y, 6, 5, 21); }
-      c.text(dd->items[i], tx, y, i == dd->title ? 18 : i == dd->danger ? 14 : i == dd->cur ? 4 : 9); }
+      c.text(dd->items[i], tx, y, i == dd->title || i == dd->title2 ? 18 : i == dd->danger ? 14 : i == dd->cur ? 4 : 9); }
   }
   // the tempo panel
   if (tp.open) {
@@ -1321,10 +1323,21 @@ namespace tb {
 // each mapping that listens for it moves its control. NRPN arrives in parts (99 and 98 name the parameter, 6 and 38 carry the value)
 static bool relMode(int mode) { return mode >= 1 && mode <= 3; }
 static int relDelta(int mode, int v) { return mode == 1 ? v - 64 : mode == 2 ? (v < 64 ? v : v - 128) : (v < 64 ? v : -(v - 64)); }
-static std::string devShort(const std::string& n) { std::string s = n; for (auto& ch : s) ch = (char)std::toupper((unsigned char)ch); if (s.size() > 14) s = s.substr(0, 14); return s; }
+static std::string devShort(const std::string& n, size_t len = 14) { std::string s = n; for (auto& ch : s) ch = (char)std::toupper((unsigned char)ch); if (s.size() > len) s = s.substr(0, len); return s; }
 
 void Ui::midiIn(int dev, unsigned char st, unsigned char d1, unsigned char d2) {
-  if (st >= 0xF0) return;   // clock and the like: not for mapping
+  { // the MONITOR: what arrived, in words
+    const std::string dn = dev >= 0 && dev < (int)midiDevNames.size() ? devShort(midiDevNames[dev], 24) : std::string("?"); const int ty = st & 0xF0, ch = (st & 15) + 1; char b[64] = "";
+    if (st == 0xFA) std::snprintf(b, 64, "START"); else if (st == 0xFB) std::snprintf(b, 64, "CONTINUE"); else if (st == 0xFC) std::snprintf(b, 64, "STOP");
+    else if (ty == 0x90 && d2 > 0) std::snprintf(b, 64, "NOTE %s (%d) VEL %d, CH %d", noteName(d1).c_str(), d1, d2, ch);
+    else if (ty == 0x80 || ty == 0x90) std::snprintf(b, 64, "NOTE OFF %s, CH %d", noteName(d1).c_str(), ch);
+    else if (ty == 0xB0) std::snprintf(b, 64, "CC %d = %d, CH %d", d1, d2, ch);
+    else if (ty == 0xE0) std::snprintf(b, 64, "PITCH BEND %d, CH %d", d2 * 128 + d1, ch);
+    else if (ty == 0xC0) std::snprintf(b, 64, "PROGRAM %d, CH %d", d1 + 1, ch);
+    else if (ty == 0xD0) std::snprintf(b, 64, "PRESSURE %d, CH %d", d1, ch);
+    else if (ty == 0xA0) std::snprintf(b, 64, "KEY PRESSURE %s %d, CH %d", noteName(d1).c_str(), d2, ch);
+    if (b[0]) { midiLog.push_back(std::string(b) + "  " + dn); if (midiLog.size() > 14) midiLog.erase(midiLog.begin()); } }
+  if (st >= 0xF0) return;   // start, stop and the like: not for mapping
   const int ty = st & 0xF0, ch = st & 15;
   if (ty != 0xB0 && ty != 0x90 && ty != 0x80 && ty != 0xE0) return;
   if (learnMod) { if (learnSeen.empty() && ty == 0x80) return; learnSeen.push_back({dev, st, d1, d2}); if (learnWait < 0) learnWait = 0.6f; return; }   // gather for a moment, then decide
@@ -1528,5 +1541,40 @@ void Ui::openMidiMap(int x, int y) {
   if (!midiMaps.empty()) { d.items.push_back("FORGET EVERY MAPPING IN THIS SESSION"); act.push_back([this] { const size_t n0 = midiMaps.size(); midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [](const MidiMap& m) { return !m.global; }), midiMaps.end()); status("MIDI: " + std::to_string(n0 - midiMaps.size()) + " LET GO (EVERY-SESSION ONES KEPT)", 3); changed(); }); }
   d.pick = [act](int i) { if (i >= 0 && i < (int)act.size()) act[i](); }; openDropdown(d);
 }
+
+// SETTINGS > MIDI
+void Ui::openMidiMenu(int x, int y) {
+  Dropdown d; d.x = x; d.y = y; d.items = {"MIDI", "DEVICES", "MONITOR", "MIDI MAP"}; d.title = 0;
+  d.pick = [this, x, y](int i) { if (i == 1) openMidiDevices(x, y); else if (i == 2) openMidiMonitor(x, y); else if (i == 3) openMidiMap(x, y); }; openDropdown(d); }
+
+// every input and output: a light (lit while it's sending, steady while clock is arriving), and tap an input to switch it on or off
+void Ui::openMidiDevices(int x, int y) {
+  Dropdown d; d.x = x; d.y = y; d.stay = true;
+  auto fill = [this](Dropdown& q) {
+    std::vector<std::string> it; std::vector<int> sw; std::vector<std::string> names; int title = 0;
+    it.push_back("INPUTS (TAP: ON OR OFF)"); sw.push_back(-1); names.push_back("");
+    bool anyIn = false;
+    for (auto& m : midiDevs) if (m.input) { anyIn = true;
+      std::string t = m.name.substr(0, 24); for (auto& ch : t) ch = (char)std::toupper((unsigned char)ch);
+      t += !m.on ? "  OFF" : !m.open ? "  (CAN'T OPEN)" : m.seen < 0.3f ? "  SENDING" : m.clock ? "  CLOCK" : "  ON";
+      it.push_back(t); sw.push_back(!m.on || !m.open ? 26 : m.seen < 0.3f ? 4 : m.clock ? 12 : 21); names.push_back(m.name); }
+    if (!anyIn) { it.push_back("NONE FOUND: PLUG ONE IN (IT'S NOTICED IN A MOMENT)"); sw.push_back(-1); names.push_back(""); }
+    it.push_back("OUTPUTS (FOR MIDI OUT, AND VALUES GOING BACK)"); sw.push_back(-1); names.push_back(""); const int title2 = (int)it.size() - 1;
+    bool anyOut = false;
+    for (auto& m : midiDevs) if (!m.input) { anyOut = true; std::string t = m.name.substr(0, 24); for (auto& ch : t) ch = (char)std::toupper((unsigned char)ch); t += m.inUse ? "  IN USE" : ""; it.push_back(t); sw.push_back(m.inUse ? 4 : 21); names.push_back(""); }
+    if (!anyOut) { it.push_back("NONE FOUND"); sw.push_back(-1); names.push_back(""); }
+    q.items = it; q.sw = sw; q.title = title; q.title2 = title2;
+    q.pick = [this, names](int i) { if (i > 0 && i < (int)names.size() && !names[i].empty() && onMidiDevToggle) onMidiDevToggle(names[i]); };
+  };
+  d.live = fill; fill(d); openDropdown(d); }
+
+// what has just arrived, newest at the top
+void Ui::openMidiMonitor(int x, int y) {
+  Dropdown d; d.x = x; d.y = y; d.stay = true;
+  auto fill = [this](Dropdown& q) { std::vector<std::string> it = {"MIDI MONITOR: THE LATEST MESSAGES (CLOCK TICKS ARE IN DEVICES)"};
+    if (midiLog.empty()) it.push_back("NOTHING YET: PLAY A NOTE OR TURN A KNOB ON A DEVICE");
+    for (int i = (int)midiLog.size() - 1; i >= 0; i--) it.push_back(midiLog[i]);
+    q.items = it; q.title = 0; q.pick = [](int) {}; };
+  d.live = fill; fill(d); openDropdown(d); }
 
 }  // namespace tb

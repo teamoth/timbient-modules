@@ -203,7 +203,7 @@ public:
   std::atomic<double> prevA{0}, prevE{-1}; std::atomic<bool> prevLoop{false};   // playing from now (so the screen doesn't think it's already finished)
   std::atomic<float> previewAt{-1};   // how far through the preview is (0..1), or -1 when nothing is playing
   // recording the master output: the audio thread writes here, the screen thread drains it to a file
-  static constexpr int MIDI_INS = 8;
+  static constexpr int MIDI_INS = 32;   // (Macs can list a good many: IAC, network, Bluetooth, other apps' ports...)
   SpscQueue<MidiMsg, 1024> midiInQ[MIDI_INS];
   SpscQueue<MidiOutMsg, 4096> midiOutQ;
   MidiMsg midiNow[256]; int midiN = 0; bool midiClock = false; float midiPer = 0.25f; int midiTick = -1; double midiLastT = -1, now = 0;

@@ -12,10 +12,12 @@ namespace tb {
 namespace {
 struct InCtx { Engine* eng; int q; };
 InCtx inCtx[Engine::MIDI_INS];
-SpscQueue<MidiMsg, 1024> uiQ[Engine::MIDI_INS];   // the same messages, for MIDI LEARN on the screen's thread
+SpscQueue<MidiMsg, 1024> uiQ[Engine::MIDI_INS];   // the same messages, for MIDI LEARN and the MONITOR on the screen's thread
+std::atomic<uint32_t> msgN[Engine::MIDI_INS], clkN[Engine::MIDI_INS];   // how much each open input has sent (the DEVICES list's lights)
 void onIn(double, std::vector<unsigned char>* msg, void* ud) {   // runs on the device's own thread: just queue the bytes
   if (!msg || msg->empty()) return; InCtx* c = (InCtx*)ud; MidiMsg m; m.st = (*msg)[0]; if (msg->size() > 1) m.d1 = (*msg)[1]; if (msg->size() > 2) m.d2 = (*msg)[2];
-  c->eng->midiInQ[c->q].push(m); if (m.st < 0xF0) uiQ[c->q].push(m);
+  c->eng->midiInQ[c->q].push(m); if (m.st < 0xF0 || m.st == 0xFA || m.st == 0xFB || m.st == 0xFC) uiQ[c->q].push(m);   // (not clock ticks: counted instead)
+  if (m.st == 0xF8) clkN[c->q].fetch_add(1, std::memory_order_relaxed); else msgN[c->q].fetch_add(1, std::memory_order_relaxed);
 }
 }
 
@@ -39,8 +41,11 @@ void Midi::openInputs() {
   catch (...) { stateText = "NO MIDI HERE"; return; }
   if (scanned && names == inNames) return; scanned = true;
   for (auto& i : ins) { try { i->closePort(); } catch (...) {} } ins.clear(); inNames = names; openNames.clear();
+  for (auto& n : msgN) n.store(0); for (auto& n : clkN) n.store(0);
   int k = 0;
   for (unsigned i = 0; i < names.size() && k < Engine::MIDI_INS; i++) {
+    if (std::find(off.begin(), off.end(), names[i]) != off.end()) continue;                 // switched off in SETTINGS > MIDI > DEVICES
+    if (names[i].find("Timbient Modules") != std::string::npos) continue;                   // (never our own: it would hear itself)
     try { auto in = std::make_unique<RtMidiIn>(); inCtx[k] = {&eng, k}; in->openPort(i, "Timbient Modules"); in->ignoreTypes(true, false, true);   // keep clock; skip sysex and active sensing
       in->setCallback(onIn, &inCtx[k]); ins.push_back(std::move(in)); openNames.push_back(names[i]); k++; } catch (...) {}
   }
@@ -63,6 +68,8 @@ int Midi::openOutput(const std::string& name) {
   return -1;
 }
 
+uint32_t Midi::messagesFrom(const std::string& name) const { for (size_t k = 0; k < openNames.size(); k++) if (openNames[k] == name) return msgN[k].load(std::memory_order_relaxed); return 0; }
+uint32_t Midi::clockFrom(const std::string& name) const { for (size_t k = 0; k < openNames.size(); k++) if (openNames[k] == name) return clkN[k].load(std::memory_order_relaxed); return 0; }
 bool Midi::popUi(int& dev, MidiMsg& m) { for (int k = 0; k < inCount && k < Engine::MIDI_INS; k++) if (uiQ[k].pop(m)) { dev = k; return true; } return false; }
 
 // a device's output, from its input's name: the same name, or the same once "MIDIIN2" / "MIDIOUT2" (Windows) and the like are taken away

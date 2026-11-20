@@ -420,6 +420,20 @@ int main(int argc, char** argv) {
     UiMod* mx3 = ui.add("mixer", 0, 20); chk(ui.mapFor(*mx3, "l1") != nullptr, "EVERY SESSION finds its module");
     ui.midiMaps.clear(); ui.onMidiSend = nullptr; ui.midiDevNames.clear(); ui.clearPatch();
     if (!ok) fails++; std::printf("midi learn:%s%s\n", ok ? " all fine" : res.c_str(), ok ? "" : "  WRONG"); }
+  // SETTINGS > MIDI: the MONITOR puts what arrives into words; DEVICES lists inputs and outputs, lights the one sending, and a tap
+  // switches an input off (through the app); the top bar counts the inputs being listened to
+  { std::string res; bool ok = true; auto chk = [&](bool c, const char* what) { if (!c) { ok = false; res += std::string(" [") + what + "]"; } };
+    ui.midiDevNames = {"Elektron Model:Cycles"}; ui.midiLog.clear();
+    ui.midiIn(0, 0x91, 60, 100); ui.midiIn(0, 0xB0, 21, 64); ui.midiIn(0, 0xFA, 0, 0);
+    chk(ui.midiLog.size() == 3 && ui.midiLog[0].find("NOTE C4 (60) VEL 100, CH 2") == 0 && ui.midiLog[1].find("CC 21 = 64, CH 1") == 0 && ui.midiLog[2].find("START") == 0 && ui.midiLog[0].find("MODEL:CYCLES") != std::string::npos, "monitor words");
+    Ui::MidiDev a; a.name = "Elektron Model:Cycles"; a.open = true; a.seen = 0.1f; Ui::MidiDev b; b.name = "IAC Driver Bus 1"; b.open = false; b.on = false; Ui::MidiDev o; o.name = "Elektron Model:Cycles"; o.input = false; o.inUse = true;
+    ui.midiDevs = {a, b, o}; std::string toggled; ui.onMidiDevToggle = [&](const std::string& n) { toggled = n; };
+    ui.statusT = 0; ui.openMidiDevices(10, 20); Canvas c; c.fine = true; c.resize(1200, 600); c.beginFrame(); ui.draw(c, 0.016f);
+    const Dropdown* d = ui.openList(); chk(d && d->items.size() == 5 && d->items[1].find("SENDING") != std::string::npos && d->items[2].find("OFF") != std::string::npos && d->items[4].find("IN USE") != std::string::npos && d->sw[1] == 4 && d->title2 == 3, "devices list");
+    if (d) d->pick(1); chk(toggled == "Elektron Model:Cycles", "tap switches");
+    bool count = false; for (auto& r : c.runs) if (r.s.find("MIDI 1") != std::string::npos) count = true; chk(count, "bar count"); if (!ok) for (auto& l : ui.midiLog) std::printf("  log: %s\n", l.c_str());
+    ui.closeList(); ui.midiDevs.clear(); ui.midiDevNames.clear(); ui.onMidiDevToggle = nullptr; ui.midiLog.clear();
+    if (!ok) fails++; std::printf("midi settings:%s%s\n", ok ? " all fine" : res.c_str(), ok ? "" : "  WRONG"); }
   // an old session whose cable went to SWELL (an input since renamed TRIG) still connects
   { const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"out","x":300,"y":20,"p":{}},{"id":2,"type":"clock","x":0,"y":20,"p":{}},{"id":3,"type":"pad","x":100,"y":20,"p":{}}],"cables":[{"f":2,"fp":"PULSE","t":3,"tp":"SWELL","ty":"trig"}]})";
     Json j; Json::parse(old, j); loadPatch(ui, j); bool in = false; for (auto& cb : ui.cables) if (cb.toPort == 0) in = true; ui.clearPatch();

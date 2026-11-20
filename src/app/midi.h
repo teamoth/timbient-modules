@@ -26,6 +26,13 @@ public:
   bool popUi(int& dev, MidiMsg& m);
   const std::vector<std::string>& inputNames() const { return openNames; }
   bool sendTo(const std::string& inName, const unsigned char* b, int n);
+  // SETTINGS > MIDI > DEVICES: every input the computer has (open or not), the ones switched off, and how much each has sent
+  const std::vector<std::string>& allInputs() const { return inNames; }
+  std::vector<std::string> outputsInUse() const { std::vector<std::string> v; for (int s = 0; s < SLOTS; s++) if (outs[s].load()) v.push_back(outNames[s]); return v; }
+  void setOff(const std::vector<std::string>& names) { if (names != off) { off = names; scanned = false; rescan = 0; } }
+  const std::vector<std::string>& offList() const { return off; }
+  uint32_t messagesFrom(const std::string& name) const;   // how many messages (and clock ticks) each open input has sent so far
+  uint32_t clockFrom(const std::string& name) const;
 
 private:
   Engine& eng;
@@ -35,6 +42,7 @@ private:
   std::thread sender; std::atomic<bool> running{false};
   std::vector<std::string> openNames; std::vector<std::string> outCache; float outCacheT = 0; std::vector<std::pair<std::string, int>> outFor;
   SpscQueue<MidiOutMsg, 4096> uiOutQ;   // the screen's messages (values going back), sent by the same thread
+  std::vector<std::string> off;   // inputs switched off (by name)
   std::string stateText = "MIDI OFF"; int inCount = 0; float rescan = 0; bool scanned = false;
   void openInputs();
   void sendLoop();
