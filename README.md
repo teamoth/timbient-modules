@@ -26,6 +26,12 @@ https://github.com/teamoth/timbient-modules/releases/tag/latest
 - **Windows**: unzip and run *Timbient Modules.exe*. If Windows warns, click *More info*, then *Run anyway*.
 - **Linux**: unpack and run `timbient-modules`.
 
+## Web player
+
+To listen to a session on a phone, a tablet or any computer without installing anything, open
+**https://teamoth.github.io/timbient-modules/** and open a session file (.tmbnt, saved from the app with SAVE or SAVE AS:
+its sounds go inside it). It plays sessions only; it doesn't change them. Sessions up to 50 MB open there.
+
 ## MIDI controllers
 
 Right-click (or Ctrl-click) any control and choose **MIDI LEARN**, then move a knob, fader or encoder, or press a button,

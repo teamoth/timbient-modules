@@ -23,7 +23,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.47.0";
+static const char* VERSION = "0.48.0";
 static Engine* gEngine = nullptr;
 
 // ---------------- sound ----------------
@@ -493,7 +493,7 @@ int main(int argc, char** argv) {
           "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "RINGS (PLUCK, RESONATOR): MUTABLE INSTRUMENTS' RINGS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "SDL 3: WINDOW AND DRAWING", "  BY SAM LANTINGA (ZLIB LICENCE)", "MINIAUDIO: SOUND IN AND OUT", "  BY DAVID REID (PUBLIC DOMAIN / MIT-0)",
           "RTMIDI: MIDI DEVICES", "  BY GARY P. SCAVONE (MIT LICENCE)", "EVERYTHING ELSE WAS WRITTEN FOR TIMBIENT MODULES",
-          "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP"}; q.title = 0; q.pick = [](int) {}; }
+          "THE FULL NOTICES ARE IN CREDITS.MD,", "  WHICH COMES WITH THE APP", "WEB PLAYER (PLAYS SAVED SESSIONS):", "  TEAMOTH.GITHUB.IO/TIMBIENT-MODULES"}; q.title = 0; q.pick = [](int) {}; }
       else return;
       ui.openDropdown(q);
     };

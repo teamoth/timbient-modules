@@ -39,6 +39,7 @@ struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur =
 class Ui {
 public:
   explicit Ui(Engine& e) : eng(e) {}
+  bool viewOnly = false; std::string viewTitle;   // the web player: the patch to look at, nothing to change (no bar buttons, menus or help)
   Engine& eng;
   std::vector<std::unique_ptr<UiMod>> mods; std::vector<UiCable> cables;
   int viewX = 0, viewY = 0, nextId = 1;

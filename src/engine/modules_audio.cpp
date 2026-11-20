@@ -266,7 +266,9 @@ struct Stretch : Module {
     cur = -1;   // (the window shape was just cleared: make it again, even if WINDOW hasn't changed)
     for (int c = 0; c < 2; c++) { acc[c].assign(NMAX, 0); q[c].assign(NMAX / 2, 0); qb[c].assign(NMAX / 2, 0); }
     hp.set(Biquad::HP, 60, 0.707f, sr); dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX] * 1.41f); setSize();
+#ifndef TB_NO_THREADS   // (the web player has no threads: there each window is worked out as it's asked for, below)
     if (!th.joinable()) th = std::thread([this] { while (!quit.load()) { if (state.load(std::memory_order_acquire) == 1) { compute(); state.store(2, std::memory_order_release); } else std::this_thread::sleep_for(std::chrono::milliseconds(1)); } });
+#endif
   }
   void setSize() { const int k = std::max(0, std::min(6, (int)e[WIN])) + (sr > 70000 ? 1 : 0); if (k == cur) return; cur = k; N = SIZES[k]; HOP = N / 2;
     for (int i = 0; i < N; i++) win[i] = std::sin(PI * (i + 0.5f) / N); for (int c = 0; c < 2; c++) std::fill(acc[c].begin(), acc[c].end(), 0.f); }
@@ -316,7 +318,11 @@ struct Stretch : Module {
   void frame() {   // a hop's worth played: the worker's window comes in, and the next is asked for
     const int st = state.load(std::memory_order_acquire);
     if (st == 0) { ask(); compute(); }   // the very first: worked out here
-    if (st != 1) { std::swap(q[0], qb[0]); std::swap(q[1], qb[1]); std::copy(bandsB, bandsB + 32, bands); ask(); state.store(1, std::memory_order_release); }   // the worker is free: take its window, ask for the next
+    if (st != 1) { std::swap(q[0], qb[0]); std::swap(q[1], qb[1]); std::copy(bandsB, bandsB + 32, bands); ask(); state.store(1, std::memory_order_release);
+#ifdef TB_NO_THREADS
+      compute(); state.store(2, std::memory_order_release);
+#endif
+    }   // the worker is free: take its window, ask for the next
     // still being worked out (it never should be): the last hop again, rather than wait
     qpos = 0;
   }

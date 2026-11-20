@@ -781,6 +781,10 @@ void Ui::draw(Canvas& c, float dt) {
   c.rect(0, 0, c.W, TOP, MENU_BG); for (int x = 0; x < c.W; x += 2) c.px(x, TOP, 21);
   int bx = 3;
   auto btn = [&](const std::string& l, int col, std::function<void()> fn) { c.text(l, bx, 3, col); barHits.push_back({bx, bx + Canvas::tw(l), fn, l}); bx += Canvas::tw(l) + 8; };
+  if (viewOnly) {   // the web player: the session's name, and how hard the sound is working
+    std::string t = viewTitle; const std::string info = "AUDIO " + std::to_string((int)std::lround(eng.cpuLoad.load() * 100)) + "%"; const int room = (c.W - Canvas::tw(info) - 16) / 4;
+    if ((int)t.size() > room) t = t.substr(0, std::max(0, room)); c.text(t, 3, 3, 9); c.text(info, c.W - Canvas::tw(info) - 4, 3, 18);
+    if (statusT > 0) statusT -= dt; c.ink = nullptr; c.textInk = nullptr; return; }
   btn("+ ADD", 4, [this] { menuOpen = !menuOpen; dd.reset(); });
   for (auto& b : bar) { const int x0 = bx; auto fn = b.fn; btn(b.label, b.col, [fn, x0] { fn(x0); }); }
   { bool open = false; for (auto& u : mods) if (!u->m->def->fixed && !u->fold) open = true;

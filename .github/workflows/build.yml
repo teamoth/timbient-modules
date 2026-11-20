@@ -1,5 +1,6 @@
 # Builds Timbient Modules for Mac, Windows and Linux on every push to main,
 # and puts the results on the "latest" release so they can be downloaded directly.
+# The web player is built too (Emscripten), checked in Node, and published to GitHub Pages.
 name: build
 on:
   push:
@@ -55,9 +56,10 @@ jobs:
         if: matrix.name == 'linux'
         run: |
           cmake -B build-tests -DCMAKE_BUILD_TYPE=Release -DTIMBIENT_APP=OFF -DTIMBIENT_TESTS=ON
-          cmake --build build-tests --parallel --target timbient_micost timbient_allmods
+          cmake --build build-tests --parallel --target timbient_micost timbient_allmods timbient_webcore
           ./build-tests/timbient_micost
           ./build-tests/timbient_allmods
+          ./build-tests/timbient_webcore "$RUNNER_TEMP/web_test.tmbnt"
       - name: Package (Mac)
         if: matrix.name == 'mac'
         run: |
@@ -89,6 +91,37 @@ jobs:
         with:
           name: timbient-${{ matrix.name }}
           path: Timbient-Modules-*
+  web:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - name: Build the web player
+        run: |
+          emcmake cmake -B build-web -DTIMBIENT_WEB=ON -DTIMBIENT_APP=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-web --parallel --target timbient_web
+          mkdir -p site && cp web/index.html web/player.js build-web/timbient.js build-web/timbient.wasm CREDITS.md site/
+          touch site/.nojekyll
+      - name: "Test: the web player opens and plays a session with a sound inside it"
+        run: node tests/web_test.mjs site/timbient.js tests/fixtures/web_test.tmbnt
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  pages:
+    needs: web
+    runs-on: ubuntu-latest
+    continue-on-error: true   # (until GitHub Pages is switched on for the repository: Settings > Pages > Source: GitHub Actions)
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
   release:
     needs: build
     runs-on: ubuntu-latest
