@@ -396,6 +396,40 @@ int main(int argc, char** argv) {
     e1.blendRelease(); e1.recOn.store(false); e2.recOn.store(false); run(e2, 0.05f); run(e1, 0.1f); u1.clearPatch(); run(e1, 0.2f); if (!ok) fails++;
     std::printf("blend: level within %.2f dB of equal loudness, done %.2f, then %.1f dB from the new one alone; recording %s; cancel at %.2f: %.1f dB jump, back %.2f; screen %s%s%s\n",
       worst, done, 20 * std::log10(after / alone), handed ? "handed over" : "LOST", p, 20 * std::log10(r2 / r1), back, emptied ? "set aside" : "NOT", ok ? "" : "  WRONG", res.c_str()); }
+  // BLEND TO, the moment it starts: a loud session (well into the master compressor) sounds exactly as it did alone; it isn't
+  // put through a second compressor that has to catch up (that was a click)
+  { Engine e1, e2, ea; for (Engine* e : {&e1, &e2, &ea}) e->setSampleRate(RATE); Ui u1(e1), u2(e2), ua(ea);
+    auto loud = [&](Ui& u, Engine& e, float note) { UiMod* o = u.add("out", 300, 20); UiMod* v = u.add("pad", 0, 20); u.set(v, "sus", 1); u.set(v, "hold", 30); u.set(v, "level", 1); u.set(o, "level", 1.5f); u.connect(v, "OUT", o, "IN");
+      for (int k = 0; k < 3; k++) { run(e, 0.05f); Event ev; ev.note = note + 4 * k; ev.vel = 1; e.trigger(v->m->id, 0, ev); } run(e, 1.5f); };
+    loud(u1, e1, 50); loud(ua, ea, 50); loud(u2, e2, 62);
+    e2.blendFrom(&e1, 30.0); e2.blendGo(); float worst = 0, pk = 0; std::vector<float> L(256), R(256), L2(256), R2(256);
+    for (int b = 0; b < 40; b++) { e2.render(L.data(), R.data(), 256); ea.render(L2.data(), R2.data(), 256);   // (30 s: the first quarter second is still all the old one)
+      for (int i = 0; i < 256; i++) { worst = std::max(worst, std::fabs(L[i] - L2[i]) * (b < 4 ? 1.f : 0.f)); pk = std::max(pk, std::fabs(L2[i])); } }
+    const bool ok = worst < 0.01f * std::max(pk, 0.01f) + 0.002f; if (!ok) fails++;
+    std::printf("blend's first moment: off by %.4f at most (peak %.2f)%s\n", worst, pk, ok ? "" : "  WRONG"); e2.blendRelease(); }
+  // BLEND by hand: PAUSE holds it; a position set by hand glides there (no jump) and stays; on the screen, dragging the bar sets it,
+  // right-click learns a MIDI knob for it, and the knob picks the blend up where it is; the top bar shows the session's name and a dot
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    Engine e1, e2; e1.setSampleRate(RATE); e2.setSampleRate(RATE);
+    e2.blendFrom(&e1, 2.0); e2.blendGo(); run(e2, 0.5f); const float a0 = e2.blendAt.load(); e2.blendPause(); run(e2, 0.5f); const float a1 = e2.blendAt.load();
+    e2.blendSet(0.8f); run(e2, 0.05f); const float mid = e2.blendAt.load(); run(e2, 0.3f); const float a2 = e2.blendAt.load(); run(e2, 0.5f); const float a3 = e2.blendAt.load();
+    chk(std::fabs(a0 - 0.25f) < 0.03f && std::fabs(a1 - a0) < 0.001f, "pause"); chk(mid > a1 + 0.05f && mid < 0.75f && std::fabs(a2 - 0.8f) < 0.001f && std::fabs(a3 - 0.8f) < 0.001f, "set by hand glides, then stays");
+    e2.blendRelease(); run(e2, 0.05f);
+    // the screen
+    float set = -1; int pauses = 0; ui.onBlendSet = [&](float u) { set = u; }; ui.onBlendPause = [&] { pauses++; };
+    ui.blendAt = 0.3f; ui.sessionTitle = "moss diner"; ui.sessionChanged = true; ui.statusT = 0; Canvas c; c.fine = true; c.resize(800, 300); c.beginFrame(); ui.draw(c, 0.016f);
+    bool named = false; for (auto& r : c.runs) if (r.s.find("MOSS DINER") != std::string::npos) named = true; chk(named, "session name");
+    const int bx0 = ui.blendBarX0, bx1 = ui.blendBarX1; chk(bx1 - bx0 == 60, "the bar");
+    ui.pointerDown((float)(bx0 + 15), 5); ui.pointerMove((float)(bx0 + 45), 5); ui.pointerUp((float)(bx0 + 45), 5); chk(std::fabs(set - 0.75f) < 0.02f, "drag the bar");
+    { const int px = bx1 + 6 + 2; ui.pointerDown((float)px, 5); ui.pointerUp((float)px, 5); } chk(pauses == 1, "pause button");
+    ui.midiDevNames = {"EC4"}; ui.contextAt((float)(bx0 + 10), 5); const Dropdown* d = ui.openList(); chk(d && d->items.size() == 1 && d->items[0] == "MIDI LEARN: BLEND", "right-click");
+    if (d) d->pick(0); ui.closeList(); ui.midiIn(0, 0xB0, 20, 10); ui.midiIn(0, 0xB0, 20, 12); ui.midiFrame(0.7f);
+    bool mapped = false; for (auto& m : ui.midiMaps) if (m.gType == "#app" && m.key == "#blend" && m.kind == 0 && m.num == 20) mapped = true; chk(mapped, "learned");
+    ui.blendAt = 0.3f; ui.blendWas = false; ui.midiFrame(0.016f); set = -1; ui.midiIn(0, 0xB0, 20, 13);   // (a new blend: the knob, at 0.1, must come up to 0.3 first)
+    const bool held = set < 0; ui.midiIn(0, 0xB0, 20, 45); ui.midiIn(0, 0xB0, 20, 64); chk(held && std::fabs(set - 64 / 127.f) < 0.01f, "pickup");
+    ui.midiMaps.erase(std::remove_if(ui.midiMaps.begin(), ui.midiMaps.end(), [](const Ui::MidiMap& m) { return m.gType == "#app"; }), ui.midiMaps.end());
+    ui.blendAt = -1; ui.onBlendSet = nullptr; ui.onBlendPause = nullptr; ui.sessionTitle.clear(); ui.midiDevNames.clear(); if (!ok) fails++;
+    std::printf("blend by hand: paused at %.2f (still %.2f), set to 0.8: %.2f a moment on, then %.2f, %.2f%s%s\n", a0, a1, mid, a2, a3, ok ? "" : "  WRONG", res.c_str()); }
   // dragging a module over a sound cable offers to insert it, CROSSFADER and MIXER included (they have no IN/OUT by those names)
   { std::string res; bool ok = true;
     for (const char* ty : {"xfade", "mixer", "echo"}) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 30); UiMod* v = ui.add("pad", 0, 30); ui.connect(v, "OUT", o, "IN");

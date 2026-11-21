@@ -119,9 +119,15 @@ public:
   struct Stash { std::vector<std::unique_ptr<UiMod>> mods; std::vector<UiCable> cables; int viewX = 0, viewY = 0, nextId = 1; std::vector<MidiMap> maps; Engine* eng = nullptr; bool held = false; };
   void stashPatch(Stash& s);     // the patch moves into s; the screen is left empty (the engine still has it all)
   void unstashPatch(Stash& s);   // and back (the screen's patch, if any, should be stashed or cleared first)
+  std::string sessionTitle;      // the top bar's middle: the session's name (or NEW SESSION), with a • if it has changes not yet saved
+  bool sessionChanged = false;
   float blendAt = -1;            // how far a blend has got (0..1), or -1: none. The top bar shows it, with NOW and CANCEL
   std::string blendName;         // the session being blended to
-  std::function<void()> onBlendNow, onBlendCancel;
+  std::function<void()> onBlendNow, onBlendCancel, onBlendPause;
+  std::function<void(float)> onBlendSet;   // dragging the bar, a MIDI knob (0..1): the blend goes there and waits
+  bool blendPaused = false, blendWas = false;
+  int blendBarX0 = 0, blendBarX1 = 0;      // where the bar is (for dragging, and right-click: MIDI LEARN)
+  void startLearnBlend();                  // MIDI LEARN for the blend: an EVERY SESSION mapping of its own (no module)
   void demoPatch();
   UiMod* byId(int id) { for (auto& u : mods) if (u->m->id == id) return u.get(); return nullptr; }
 
@@ -238,7 +244,7 @@ private:
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND };
   UiMod* tapM = nullptr; int tapK = -1; std::vector<double> tapTimes;   // TAP on speed rows
   float wanderTapT = -9; int wanderTapK = -1; UiMod* wanderTapM = nullptr;   // the Tracker's column numbers: a second tap soon after sets RANDOM NOTE back to 0
   // cables as curves you can touch

@@ -809,14 +809,24 @@ void Ui::draw(Canvas& c, float dt) {
   int nIn = 0; for (auto& d : midiDevs) if (d.input && d.open) nIn++;
   char info[64]; std::snprintf(info, sizeof info, "MIDI %d  AUDIO %d%%", nIn, (int)std::lround(eng->cpuLoad.load() * 100));   // (how many MIDI inputs are listened to: SETTINGS > MIDI > DEVICES)
   int ix = ix0 - Canvas::tw(info) - 10; infoX0 = ix; infoX1 = ix + Canvas::tw(info);
+  blendBarX0 = blendBarX1 = 0;
   if (blendAt >= 0) {   // BLEND TO: how far it has got, and NOW (finish it in a few seconds) or CANCEL (back to where it came from)
-    const std::string a = "BLEND", n = "NOW", k = "CANCEL"; const int bw = 40, w = Canvas::tw(a) + 4 + bw + 6 + Canvas::tw(n) + 6 + Canvas::tw(k);
+    const std::string a = "BLEND", ps = blendPaused ? "GO" : "PAUSE", n = "NOW", k = "CANCEL"; const int bw = 60, w = Canvas::tw(a) + 4 + bw + 6 + Canvas::tw(ps) + 6 + Canvas::tw(n) + 6 + Canvas::tw(k);
     int x = ix - w - 12; if (x > bx + 20) {
       c.text(a, x, 3, 4); barHits.push_back({x, x + Canvas::tw(a), [] {}, "BLEND"}); x += Canvas::tw(a) + 4;
-      for (int i = 0; i < bw; i += 2) c.px(x + i, 6, 21); const int f = (int)std::lround(clampf(blendAt, 0, 1) * bw); c.rect(x, 5, f, 3, 4); x += bw + 6;
+      for (int i = 0; i < bw; i += 2) c.px(x + i, 6, 21); const int f = (int)std::lround(clampf(blendAt, 0, 1) * bw); c.rect(x, 5, f, 3, 4);
+      c.rect(x + std::min(bw - 1, f), 3, 1, 7, 9);   // the handle: drag it
+      if (learnMod == -1 && std::fmod(blink, 0.6f) < 0.35f) c.frame(x - 2, 1, bw + 4, 10, 12);   // MIDI LEARN: waiting for a knob
+      blendBarX0 = x; blendBarX1 = x + bw; barHits.push_back({x, x + bw, [] {}, "BLEND BAR"}); x += bw + 6;
+      c.text(ps, x, 3, 9); barHits.push_back({x, x + Canvas::tw(ps), [this] { if (onBlendPause) onBlendPause(); }, "BLEND PAUSE"}); x += Canvas::tw(ps) + 6;
       c.text(n, x, 3, 9); barHits.push_back({x, x + Canvas::tw(n), [this] { if (onBlendNow) onBlendNow(); }, "BLEND NOW"}); x += Canvas::tw(n) + 6;
       c.text(k, x, 3, 9); barHits.push_back({x, x + Canvas::tw(k), [this] { if (onBlendCancel) onBlendCancel(); }, "BLEND CANCEL"});
       ix -= w + 12; } }
+  if (statusT <= 0 && !sessionTitle.empty()) {   // the session's name, in the middle (shortened if the bar is crowded), a • for unsaved changes
+    std::string t = sessionTitle; for (auto& ch : t) ch = (char)std::toupper((unsigned char)ch); const std::string dot = sessionChanged ? "  " : "";   // (room for the dot)
+    const int room = ix - bx - 16; while (!t.empty() && Canvas::tw(t + dot) > room) t.pop_back(); if (t.size() < sessionTitle.size() && t.size() > 2) { t.resize(t.size() - 2); t += ".."; }
+    if (t.size() >= 3) { const int w = Canvas::tw(t + dot); int x = c.W / 2 - w / 2; x = std::max(bx + 8, std::min(x, ix - 8 - w)); c.text(t, x, 3, 4);
+      if (sessionChanged) c.rect(x + Canvas::tw(t) + 3, 5, 2, 2, 9); barHits.push_back({x, x + w, [] {}, "SESSION NAME"}); } }
   if (statusT > 0) { statusT -= dt; std::string s = statusMsg; const int room = (ix - bx - 4) / 4; if ((int)s.size() > room) s = s.substr(0, std::max(0, room)); c.text(s, bx + 4, 3, 17); }
   else if (infoX0 > bx) c.text(info, infoX0, 3, 18);
   // the ADD menu
@@ -1032,6 +1042,11 @@ bool Ui::tempoDown(float sx, float sy) {   // true if the tap was inside the pan
 }
 
 void Ui::contextAt(float sx, float sy) {
+  if (!ask && !br.open && !ed.open && sy < TOP && blendBarX1 > blendBarX0 && sx >= blendBarX0 - 3 && sx <= blendBarX1 + 3) {   // the blend's bar
+    dd.reset(); menuOpen = false; Dropdown q; q.items = {"MIDI LEARN: BLEND"}; bool has = false; for (auto& m : midiMaps) if (m.gType == "#app" && m.key == "#blend") has = true;
+    if (has) q.items.push_back("FORGET MIDI: BLEND"); q.x = (int)sx + 2; q.y = (int)sy + 4;
+    q.pick = [this](int i) { if (i == 0) startLearnBlend(); else if (i == 1) { midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [](const MidiMap& m) { return m.gType == "#app" && m.key == "#blend"; }), midiMaps.end());
+      if (onGlobalMaps) onGlobalMaps(); status("MIDI: THE BLEND LET GO", 2); } }; openDropdown(q); return; }
   if (ask || br.open || ed.open || sy < TOP) return;
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; int lx, ly; UiMod* u = hit(wx, wy, lx, ly); dd.reset(); menuOpen = false;
   if (!u) return; lastTouched = u->m->id; const int id = u->m->id;
@@ -1076,6 +1091,8 @@ void Ui::pointerDown(float sx, float sy) {
   if (menuOpen) { for (auto& it : menuItems) if (sx >= it.x - 1 && sx < it.x + it.w && sy >= it.y - 1 && sy < it.y + 7) {
       UiMod* u = add(it.type, viewX + 120 + (int)(std::rand() % 40), viewY + TOP + 20 + (int)(std::rand() % 30)); if (u) status("ADDED " + u->m->def->name); changed(); break; }
     menuOpen = false; return; }
+  if (sy < TOP && blendBarX1 > blendBarX0 && sx >= blendBarX0 - 3 && sx <= blendBarX1 + 3) {   // the blend's bar: drag it (the blend goes there, and waits)
+    drag.kind = D_BLEND; if (onBlendSet) onBlendSet(clampf((sx - blendBarX0) / (float)(blendBarX1 - blendBarX0), 0, 1)); return; }
   if (sy < TOP) { for (auto& b : barHits) if (sx >= b.x0 - 2 && sx <= b.x1 + 2) { b.fn(); return; } return; }
   // jacks: drag a cable out of an output. A plugged input or socket: tap to pick its cable (then UNPLUG), or drag the cable to another jack.
   // Nothing comes out by accident: a cable dropped anywhere else springs back to where it was
@@ -1238,6 +1255,7 @@ void Ui::pointerMove(float sx, float sy) {
   if (std::fabs(sx - hoverX) + std::fabs(sy - hoverY) > 1.5f) { hoverX = sx; hoverY = sy; hoverT = 0; }   // the pointer moved: the note goes, and the wait starts again
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; drag.wx = wx; drag.wy = wy;
   if (drag.kind == D_PAN) { viewX = drag.vx0 - (int)(sx - drag.sx); viewY = drag.vy0 - (int)(sy - drag.sy); }
+  else if (drag.kind == D_BLEND) { if (onBlendSet && blendBarX1 > blendBarX0) onBlendSet(clampf((sx - blendBarX0) / (float)(blendBarX1 - blendBarX0), 0, 1)); }
   else if (drag.kind == D_MOVE) { drag.m->x = wx - drag.ox; drag.m->y = std::max(viewY + TOP + 1, wy - drag.oy);
     // an unpatched effect dragged over an audio cable can be dropped into it
     int ii, oi; bool free = soundThrough(drag.m->m->def, ii, oi);
@@ -1407,6 +1425,14 @@ float Ui::mapValue(MidiMap& m) {
 
 // move the control: v an absolute 0..1 (or -1), delta relative steps, press a button going down (1) or up (0) (or -1)
 void Ui::mapApply(MidiMap& m, float v, int delta, int press) {
+  if (m.gType == "#app") { if (m.key != "#blend" || blendAt < 0) return;
+    if (m.kind == 1) { if (press == 1 && onBlendPause) onBlendPause(); return; }
+    float nv; if (delta) nv = clampf(blendAt + delta / 128.f, 0, 1);
+    else if (v >= 0) { if (!m.engaged) { if (std::fabs(v - blendAt) < 0.02f || (m.hw >= 0 && (m.hw - blendAt) * (v - blendAt) <= 0)) m.engaged = true;
+        m.hw = v; if (!m.engaged) { status(std::string("BLEND: TURN ") + (v < blendAt ? "UP" : "DOWN") + " TO PICK IT UP", 1.2f); return; } }
+      m.hw = v; nv = v; }
+    else return;
+    if (onBlendSet) onBlendSet(nv); blendAt = nv; return; }
   UiMod* u = mapMod(m); if (!u) return; const ModuleDef* d = u->m->def;
   if (press < 0 && v >= 0 && !relMode(m.mode)) { const bool on = v >= 0.5f; press = on != m.down ? (on ? 1 : 0) : -1; m.down = on; }   // a value as a button: crossing the middle presses and lets go
   else if (press >= 0) m.down = press == 1;
@@ -1465,11 +1491,15 @@ void Ui::midiFrame(float dt) {
   if (learnMod) { learnT -= dt; if (learnWait >= 0 && (learnWait -= dt) < 0) learnDecide(); else if (learnT <= 0) { cancelLearn(); status("MIDI LEARN: NOTHING CAME, SO NOTHING CHANGED", 3); } }
   if (midiQuiet > 0 && (midiQuiet -= dt) <= 0) changed();   // a run of knob turns: saved (and one step to undo) once it settles
   fbT -= dt; if (fbT > 0) return; fbT = 0.03f;
+  if (blendAt >= 0 && !blendWas) for (auto& m : midiMaps) if (m.gType == "#app") { m.engaged = relMode(m.mode); m.hw = -1; m.fb = -1; }
+  blendWas = blendAt >= 0;
   if (!midiFeedback) return;
+  for (auto& m : midiMaps) if (m.gType == "#app" && blendAt >= 0) { const int res = m.mode == 4 || m.kind >= 2 ? 16383 : 127; const int qv = (int)std::lround(blendAt * res); if (qv != m.fb) { m.fb = qv; mapSend(m, blendAt); } }
   for (auto& m : midiMaps) { if (!mapMod(m)) continue; const int res = m.mode == 4 || m.kind >= 2 ? 16383 : 127; const float v = mapValue(m); const int qv = (int)std::lround(v * res);
     if (qv != m.fb) { m.fb = qv; mapSend(m, v); } }
 }
 
+void Ui::startLearnBlend() { learnMod = -1; learnKey = "#blend"; learnT = 12; learnWait = -1; learnSeen.clear(); status("MIDI LEARN  THE BLEND: MOVE A KNOB OR SLIDER (ESCAPE: CANCEL)", 12); }
 void Ui::startLearn(UiMod* u, const std::string& key) {
   learnMod = u->m->id; learnKey = key; learnT = 12; learnWait = -1; learnSeen.clear();
   std::string lab = key == "#bypass" ? "BYPASS" : key == "#mute" ? "MUTE" : key == "#solo" ? "SOLO" : u->m->def->params[u->m->def->paramIndex(key)].label;
@@ -1477,8 +1507,8 @@ void Ui::startLearn(UiMod* u, const std::string& key) {
 
 // what came in while learning: which control, and how it sends
 void Ui::learnDecide() {
-  learnWait = -1; UiMod* u = byId(learnMod); std::vector<Seen> seen; seen.swap(learnSeen); const std::string key = learnKey; learnMod = 0;
-  if (!u || seen.empty()) return;
+  const bool app = learnMod == -1; learnWait = -1; UiMod* u = app ? nullptr : byId(learnMod); std::vector<Seen> seen; seen.swap(learnSeen); const std::string key = learnKey; learnMod = 0;
+  if ((!u && !app) || seen.empty()) return;
   const int dev = seen[0].dev, ch = seen[0].st & 15; MidiMap m; m.dev = dev >= 0 && dev < (int)midiDevNames.size() ? midiDevNames[dev] : std::string(); m.ch = ch;
   std::vector<Seen> s; for (auto& x : seen) if (x.dev == dev && (x.st & 15) == ch) s.push_back(x);
   int pm = -1, pl = -1; bool nrpnSeen = false, lsb38 = false, note = false, pb = false;
@@ -1497,9 +1527,10 @@ void Ui::learnDecide() {
         if (all([](int x) { return x >= 49 && x <= 79 && x != 64; })) m.mode = 1;
         else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 113 && x <= 127); })) m.mode = 2;
         else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 65 && x <= 79); })) m.mode = 3; } } }
-  m.mod = u->m->id; m.key = key; m.engaged = relMode(m.mode) || m.kind == 1;
+  m.mod = app ? 0 : u->m->id; m.key = key; m.engaged = relMode(m.mode) || m.kind == 1;
+  if (app) { m.global = true; m.gType = "#app"; m.engaged = relMode(m.mode); midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [](const MidiMap& o) { return o.gType == "#app" && o.key == "#blend"; }), midiMaps.end()); }
   // one source can move several controls; a control has one source
-  for (size_t i = 0; i < midiMaps.size(); i++) if (mapMod(midiMaps[i]) == u && midiMaps[i].key == key) { const bool g = midiMaps[i].global; if (g) { m.global = true; m.gType = midiMaps[i].gType; m.gNth = midiMaps[i].gNth; } midiMaps.erase(midiMaps.begin() + i); break; }
+  for (size_t i = 0; i < midiMaps.size() && !app; i++) if (mapMod(midiMaps[i]) == u && midiMaps[i].key == key) { const bool g = midiMaps[i].global; if (g) { m.global = true; m.gType = midiMaps[i].gType; m.gNth = midiMaps[i].gNth; } midiMaps.erase(midiMaps.begin() + i); break; }
   std::string also; for (auto& o : midiMaps) if (o.dev == m.dev && o.ch == m.ch && o.kind == m.kind && o.num == m.num) { also = mapTarget(o); break; }
   midiMaps.push_back(m); MidiMap& mm = midiMaps.back(); mm.fb = -1;   // (its value goes to the device on the next frame)
   static const char* MODE[5] = {"", "  (TURNS, ROUND 64)", "  (TURNS)", "  (TURNS, SIGN AND SIZE)", "  (FINE: 14-BIT)"};
@@ -1520,6 +1551,7 @@ std::string Ui::mapSource(const MidiMap& m) const {
   return std::string(b) + " CH " + std::to_string(m.ch + 1) + (m.dev.empty() ? "" : " " + devShort(m.dev)); }
 
 std::string Ui::mapTarget(const MidiMap& m) const {
+  if (m.gType == "#app") return "THE BLEND";
   UiMod* u = const_cast<Ui*>(this)->mapMod(const_cast<MidiMap&>(m)); if (!u) return m.global ? m.gType + " (NOT IN THIS SESSION)" : "(GONE)";
   std::string lab = m.key == "#bypass" ? "BYPASS" : m.key == "#mute" ? "MUTE" : m.key == "#solo" ? "SOLO" : m.key;
   if (m.key[0] != '#') { const int k = u->m->def->paramIndex(m.key); if (k >= 0) lab = u->m->def->params[k].label; }

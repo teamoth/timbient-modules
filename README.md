@@ -44,6 +44,14 @@ straight away, so it can be adjusted as it rises; its tempo glides from the old 
 finishes the blend in a few seconds, **CANCEL** fades back to the session you came from, just as it was. A recording carries
 straight on through a blend.
 
+**PAUSE** holds a blend where it is (**GO** carries on). Drag the bar to move the blend by hand; it waits wherever you leave it,
+and resting at the far end for 2 seconds finishes it. Right-click the bar for **MIDI LEARN**, to move it with a knob or slider
+(it picks up where the blend is). **BLEND LENGTH > MANUAL** makes blends move only by hand. On a Mac with a Touch Bar, the
+Touch Bar becomes the blend's crossfader, with PAUSE, NOW and CANCEL.
+
+The middle of the top bar shows the session's name (**NEW SESSION** until it's first saved), with a dot when it has changes
+not yet saved.
+
 ## MIDI controllers
 
 Right-click (or Ctrl-click) any control and choose **MIDI LEARN**, then move a knob, fader or encoder, or press a button,

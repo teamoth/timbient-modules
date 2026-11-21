@@ -13,6 +13,7 @@
 #include "audio_files.h"
 #include "../engine/analyse.h"
 #include "midi.h"
+#include "touchbar.h"
 #include <cstdio>
 #include <fstream>
 #include <ctime>
@@ -23,7 +24,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.51.0";
+static const char* VERSION = "0.52.0";
 static std::atomic<Engine*> gEngine{nullptr};   // the engine the sound card renders: the session on the screen (while blending, it plays the last one too)
 
 // ---------------- sound ----------------
@@ -154,7 +155,8 @@ int main(int argc, char** argv) {
   bool dirty = false; float saveT = 0;
   // UNDO / REDO: the patch as it was after each change (settled for a moment), up to 60 steps back
   std::vector<std::string> hist; int hpos = -1; bool restoring = false, histDirty = false; float histT = 0;
-  auto snapshot = [&] { std::string sn = serializePatch(ui).dump(); if (hpos >= 0 && hist[hpos] == sn) return;
+  std::string savedSnap; bool markSaved = true, neverSaved = true;   // the session as last opened or saved (so the top bar can show a • for changes since)
+  auto snapshot = [&] { std::string sn = serializePatch(ui).dump(); if (markSaved) { savedSnap = sn; markSaved = false; } if (hpos >= 0 && hist[hpos] == sn) return;
     hist.resize(hpos + 1); hist.push_back(sn); if (hist.size() > 60) hist.erase(hist.begin()); hpos = (int)hist.size() - 1; };
   ui.onChange = [&] { dirty = true; saveT = 1.0f; if (!restoring) { histDirty = true; histT = 0.4f; } };
   snapshot();   // the empty session is the first step
@@ -182,11 +184,12 @@ int main(int argc, char** argv) {
     for (auto& v : b->d) v *= 0.8f / mx; for (auto& v : b->r) v *= 0.8f / mx;
     giveSound(u, b, true); ui.status("CAUGHT " + std::to_string((int)std::lround(n / (*curEng).sr)) + "S");
   };
+  auto savedNow = [&] { savedSnap = serializePatch(ui).dump(); markSaved = false; neverSaved = false; dirty = true; saveT = 0.5f; };
   auto loadData = [&](const Json& data, const std::string& what) {
     const std::string note = loadPatch(ui, data); ui.centrePending = true; dirty = true; saveT = 0.5f;   // the view: to the middle of the session
     ui.status(note.empty() ? "LOADED " + what : note, note.empty() ? 3 : 8);
     for (auto& up : ui.mods) restoreSound(up.get());
-    histDirty = true; histT = 0.1f;
+    histDirty = true; histT = 0.1f; markSaved = true;   // (opened as it was saved: no changes yet)
   };
   auto restoreStep = [&](int to) {   // go back (or forward) to a remembered step, keeping the view where it is
     if (histDirty) { snapshot(); histDirty = false; }
@@ -346,6 +349,8 @@ int main(int argc, char** argv) {
   // ---- sessions are files: a .tmbnt holds the patch and every sound it uses (inside it's the web version's
   // session format, so a .json session renamed to .tmbnt opens too, and the web version can open a .tmbnt) ----
   std::string curFile;   // the file this session was opened from or last saved to: SAVE writes there
+  auto sessionChanged = [&] { return !markSaved && (savedSnap.empty() || (hpos >= 0 && hist[hpos] != savedSnap)); };   // (changed since it was opened, saved or started)
+  auto autosaveData = [&] { Json j = serializePatch(ui); j.set("file", Json::string(curFile)); j.set("changed", Json::number(sessionChanged() ? 1 : 0)); return j; };
   auto sessionFile = [&](const Json& data) {
     Json f = Json::object(); f.set("timbient", Json::string("patch")); f.set("data", data);
     std::vector<std::string> ids; auto want = [&](const std::string& id) { if (!id.empty() && std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id); };
@@ -368,11 +373,11 @@ int main(int argc, char** argv) {
   // ---- BLEND TO: the next session loads into the other engine, then fades in as this one fades out (equal loudness) ----
   // The session being left keeps playing in its own engine (the new one plays it inside itself), and its screen is set aside,
   // so CANCEL can fade back to it just as it was. The new one's tempo glides from the old one's to its own over the blend
-  static const int BLEND_SECS[5] = {10, 30, 60, 120, 240};
-  int blendIdx = std::max(0, std::min(4, (int)settings.num("blendLength", 1)));
+  static const int BLEND_SECS[6] = {10, 30, 60, 120, 240, 8};   // the last: MANUAL (it moves only by hand; 8 s is how its NOW and CANCEL are timed)
+  int blendIdx = std::max(0, std::min(5, (int)settings.num("blendLength", 1))); const int MANUAL = 5; float blendRest = 0;
   struct BlendLoad { std::thread th; std::atomic<int> state{0}; std::string path, err; Json data; };   // state: 0 none, 1 reading, 2 ready, 3 failed
-  static BlendLoad bl; Ui::Stash blendStash; std::string blendOldFile; float blendBpm0 = 0, blendBpm1 = 0, blendClearT = -1; bool blendGlide = false;
-  auto blendLabel = [](int k) { const int v = BLEND_SECS[k]; return v < 60 ? std::to_string(v) + " S" : std::to_string(v / 60) + " MIN"; };
+  static BlendLoad bl; Ui::Stash blendStash; std::string blendOldFile, blendOldSnap; bool blendOldNever = true; float blendBpm0 = 0, blendBpm1 = 0, blendClearT = -1; bool blendGlide = false;
+  auto blendLabel = [&](int k) { if (k == MANUAL) return std::string("MANUAL"); const int v = BLEND_SECS[k]; return v < 60 ? std::to_string(v) + " S" : std::to_string(v / 60) + " MIN"; };
   auto otherEng = [&]() -> Engine& { return curEng == &engA ? engB : engA; };
   auto blendBusy = [&](bool say) { const bool b = curEng->blending() != nullptr || bl.state.load() == 1 || bl.state.load() == 2;
     if (b && say) ui.status("WAIT FOR THE BLEND TO FINISH (OR NOW, OR CANCEL)", 4); return b; };
@@ -393,11 +398,13 @@ int main(int argc, char** argv) {
     blendOldFile = curFile; blendBpm0 = from.tempo.bpm.load(); ui.stashPatch(blendStash);
     handRecording(from, to); to.blendFrom(&from, BLEND_SECS[blendIdx]); curEng = &to; ui.setEngine(to); gEngine.store(&to, std::memory_order_release); midi.setTarget(to);
     if (capture.open) capture.start(to, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);
-    loadData(bl.data, fileName(bl.path)); curFile = bl.path; bl.data = Json();
+    blendOldSnap = savedSnap; blendOldNever = neverSaved; loadData(bl.data, fileName(bl.path)); curFile = bl.path; neverSaved = false; bl.data = Json();
     blendBpm1 = to.tempo.bpm.load(); to.tempo.bpm.store(blendBpm0); blendGlide = std::fabs(blendBpm1 - blendBpm0) > 0.01f;
-    to.blendGo(); ui.blendAt = 0; ui.blendName = fileName(bl.path); blendClearT = -1;
-    ui.status("BLENDING TO " + fileName(bl.path) + " OVER " + blendLabel(blendIdx), 4); };
-  ui.onBlendNow = [&] { if (curEng->blending() && ui.blendAt >= 0 && ui.blendAt < 1) { curEng->blendFinish(3); ui.status("FINISHING THE BLEND", 2); } };
+    if (blendIdx != MANUAL) to.blendGo(); ui.blendAt = 0; ui.blendName = fileName(bl.path); blendClearT = -1; blendRest = 0;
+    ui.status(blendIdx == MANUAL ? "BLEND BY HAND TO " + fileName(bl.path) + ": DRAG THE BAR (OR A MIDI KNOB)" : "BLENDING TO " + fileName(bl.path) + " OVER " + blendLabel(blendIdx), 5); };
+  ui.onBlendSet = [&](float u) { if (!curEng->blending() || blendClearT >= 0) return; curEng->blendPause(); curEng->blendSet(u); };
+  ui.onBlendPause = [&] { if (!curEng->blending() || blendClearT >= 0) return; if (curEng->blendRunning()) { curEng->blendPause(); ui.status("BLEND PAUSED", 1.5f); } else { curEng->blendGo(); ui.status("BLEND GOING ON", 1.5f); } };
+  ui.onBlendNow = [&] { if (curEng->blending() && ui.blendAt >= 0 && ui.blendAt < 1) { curEng->blendFinish(3); curEng->blendGo(); ui.status("FINISHING THE BLEND", 2); } };
   ui.onBlendCancel = [&] {   // back the way it came: the session being left fades back in, as it was; the new one fades out (as long as it took to get here, at most 4 s)
     Engine* back = curEng->blending(); if (!back || ui.blendAt < 0 || ui.blendAt >= 1 || !blendStash.held) return;
     Engine& now = *curEng; const float p = std::max(0.02f, now.blendAt.load()); const double rest = std::min(4.0, (double)p * BLEND_SECS[blendIdx]);
@@ -405,7 +412,7 @@ int main(int argc, char** argv) {
     ui.unstashPatch(blendStash); handRecording(now, *back);
     back->blendFrom(&now, rest / p, 1 - p); back->blendGo(); curEng = back; gEngine.store(back, std::memory_order_release); now.blendRelease(); midi.setTarget(*back);
     if (capture.open) capture.start(*back, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);
-    curFile = blendOldFile; blendGlide = false; ui.blendName = fileName(blendOldFile); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.1f; ui.status("BACK TO " + (blendOldFile.empty() ? std::string("THE LAST SESSION") : fileName(blendOldFile)), 3); };
+    curFile = blendOldFile; savedSnap = blendOldSnap; neverSaved = blendOldNever; markSaved = false; blendGlide = false; ui.blendName = fileName(blendOldFile); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.1f; ui.status("BACK TO " + (blendOldFile.empty() ? std::string("THE LAST SESSION") : fileName(blendOldFile)), 3); };
   auto blendFrame = [&] {   // each frame: start a blend that's ready, follow one that's going, and tidy up after one that's done
     const int st = bl.state.load(); if (st == 3) { bl.state.store(0); ui.status(bl.err, 5); } else if (st == 2) { bl.state.store(0); blendStart(); }
     Engine* src = curEng->blending(); if (!src) { ui.blendAt = -1; return; }
@@ -413,7 +420,9 @@ int main(int argc, char** argv) {
     if (blendClearT < 0) {
       ui.blendAt = std::max(0.f, p); if (blendGlide) curEng->tempo.bpm.store(blendBpm0 + (blendBpm1 - blendBpm0) * std::max(0.f, p));
       if (curEng->cpuLoad.load() > 0.92f) ui.status("THE TWO SESSIONS TOGETHER ARE A LOT FOR THIS COMPUTER", 2);
-      if (p >= 1) { if (blendGlide) curEng->tempo.bpm.store(blendBpm1); src->clear(); blendClearT = 0.4f; blendStash = Ui::Stash(); ui.blendAt = -1; ui.status("BLENDED: " + ui.blendName, 3); } }
+      ui.blendPaused = !curEng->blendRunning();
+      blendRest = p >= 0.999f && !curEng->blendRunning() ? blendRest + 1.f / 60 : 0;   // by hand at the far end: it finishes once it has rested there 2 s
+      if ((p >= 1 && curEng->blendRunning()) || blendRest >= 2) { if (blendGlide) curEng->tempo.bpm.store(blendBpm1); src->clear(); blendClearT = 0.4f; blendStash = Ui::Stash(); ui.blendAt = -1; ui.status("BLENDED: " + ui.blendName, 3); } }
     else if ((blendClearT -= 1.f / 60) <= 0) { curEng->blendRelease(); blendClearT = -1; } };
 
   std::function<void(int)> openSessions = [&](int x0) {
@@ -423,14 +432,14 @@ int main(int argc, char** argv) {
     d.pick = [&, x0](int i) {
       if (i <= 2 && blendBusy(true)) return;   // (a new session can't come in halfway through a blend)
       if (i == 3) { SDL_ShowOpenFileDialog(onBlendDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
-      if (i == 4) { Dropdown q; q.x = x0; q.y = 11 + 4 * 8; q.title = 0; q.items = {"BLEND LENGTH"}; for (int k = 0; k < 5; k++) q.items.push_back(blendLabel(k)); q.cur = blendIdx + 1;
-        q.pick = [&](int j) { if (j < 1) return; blendIdx = j - 1; settings.set("blendLength", Json::number(blendIdx)); saveSettings(); ui.status("BLENDS TAKE " + blendLabel(blendIdx), 2); }; ui.openDropdown(q); return; }
+      if (i == 4) { Dropdown q; q.x = x0; q.y = 11 + 4 * 8; q.title = 0; q.items = {"BLEND LENGTH"}; for (int k = 0; k < 6; k++) q.items.push_back(blendLabel(k)); q.cur = blendIdx + 1;
+        q.pick = [&](int j) { if (j < 1) return; blendIdx = j - 1; settings.set("blendLength", Json::number(blendIdx)); saveSettings(); ui.status(blendIdx == MANUAL ? std::string("BLENDS MOVE ONLY BY HAND") : "BLENDS TAKE " + blendLabel(blendIdx), 2); }; ui.openDropdown(q); return; }
       if (i >= 5) i -= 2;
       if (i == 0) { Dropdown q; q.x = x0; q.y = 11; q.items = {"CLEAR EVERYTHING?", "YES, START EMPTY", "NO, KEEP IT"}; q.title = 0; q.danger = 1;
-        q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); curFile.clear(); dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
-      if (i == 1) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) loadData(prev, "YOUR LAST WORK"); else ui.status("NOTHING TO RESTORE"); return; }
+        q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); curFile.clear(); neverSaved = true; markSaved = true; dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
+      if (i == 1) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) { loadData(prev, "YOUR LAST WORK"); curFile = prev.str("file"); neverSaved = curFile.empty(); if (prev.num("changed", 1) > 0.5) { markSaved = false; savedSnap.clear(); } } else ui.status("NOTHING TO RESTORE"); return; }
       if (i == 2) { SDL_ShowOpenFileDialog(onOpenDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
-      if (i == 3) { if (curFile.empty()) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); return; }
+      if (i == 3) { if (curFile.empty()) saveAs(); else if (writeFile(curFile, sessionFile(serializePatch(ui)))) { savedNow(); ui.status("SAVED " + fileName(curFile), 4); } else ui.status("COULD NOT SAVE THE FILE", 4); return; }
       if (i == 4) { saveAs(); return; }
       if (i == 5) { SDL_ShowOpenFolderDialog(onFolderDialog, (void*)1, win, nullptr, false); ui.status("PICK A FOLDER FOR THEM", 4); return; }
       if (i == 6) { Dropdown z; z.x = x0; z.y = 11 + (i + 2) * 8; z.items = {"REMOVE THEM FROM THE APP?", "YES (I SAVED THEM AS FILES)", "NO, KEEP THEM"}; z.title = 0; z.danger = 1;
@@ -577,6 +586,12 @@ int main(int argc, char** argv) {
       winW = std::min(winW, std::max(480, ub.w - 40)); winH = std::min(winH, std::max(320, ub.h - 60)); } }
   win = SDL_CreateWindow("Timbient Modules", winW, winH, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (small ? SDL_WINDOW_MAXIMIZED : 0));
   SDL_SetWindowMinimumSize(win, 480, 320);
+  { TouchBarHooks th;   // the Touch Bar (on Macs that have one): the blend as a crossfader, or BLEND TO... and the OUTPUT's LEVEL
+    th.blendSet = [&](float u) { if (ui.onBlendSet) ui.onBlendSet(u); }; th.pause = [&] { if (ui.onBlendPause) ui.onBlendPause(); };
+    th.now = [&] { if (ui.onBlendNow) ui.onBlendNow(); }; th.cancel = [&] { if (ui.onBlendCancel) ui.onBlendCancel(); };
+    th.blendTo = [&] { if (!blendBusy(true)) SDL_ShowOpenFileDialog(onBlendDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); };
+    th.levelSet = [&](float v) { if (Module* o = outMod()) { const int k = o->def->paramIndex("level"); if (k >= 0) { o->p[k].store(o->def->params[k].fromNorm(v)); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.6f; } } };
+    touchBarInstall(win, th); }
   SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
   SDL_SetRenderVSync(ren, 1);
   SDL_Texture* tex = nullptr; int texW = 0, texH = 0; float scale = 3;
@@ -643,7 +658,7 @@ int main(int argc, char** argv) {
           if (ev.key.key == SDLK_F11 || (ev.key.key == SDLK_F && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)))) ui.wantFullscreen = !ui.isFullscreen;
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
           if (ev.key.key == SDLK_S && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) {   // Cmd/Ctrl+S saves to the session's file (Shift: SAVE AS)
-            if (curFile.empty() || (ev.key.mod & SDL_KMOD_SHIFT)) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); break; }
+            if (curFile.empty() || (ev.key.mod & SDL_KMOD_SHIFT)) saveAs(); else if (writeFile(curFile, sessionFile(serializePatch(ui)))) { savedNow(); ui.status("SAVED " + fileName(curFile), 4); } else ui.status("COULD NOT SAVE THE FILE", 4); break; }
           if (ev.key.key == SDLK_D && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) { if (UiMod* u = ui.byId(ui.lastTouched)) if (!u->m->def->fixed) ui.onDuplicate(u); break; }   // Cmd/Ctrl+D: duplicate
           if (ui.ed.open && ((ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) || (ev.key.key == SDLK_Y && (ev.key.mod & SDL_KMOD_CTRL)))) {   // the editor open: its own undo
             ui.editorUndo(ev.key.key == SDLK_Y || (ev.key.mod & SDL_KMOD_SHIFT) ? 1 : -1); break; }
@@ -709,12 +724,16 @@ int main(int argc, char** argv) {
             const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
             AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000), (int)kv.second.num("ch", 1)); if (b) { writeWavMono16(fn, *b); delete b; } }
           const Json* data = patchIn(f); if (!data) { ui.status("THAT IS NOT A TIMBIENT SESSION", 5); continue; }
-          loadData(*data, fileName(r.path)); curFile = r.path;
+          loadData(*data, fileName(r.path)); curFile = r.path; neverSaved = false;
           if (f.str("timbient") == "sessions") ui.status("THAT FILE HOLDS " + std::to_string(f.get("sessions")->a.size()) + " SESSIONS: THIS IS THE FIRST", 6); }
         else { std::string p = r.path; const size_t sl = p.find_last_of("/\\"); if (p.find('.', sl == std::string::npos ? 0 : sl) == std::string::npos) p += ".tmbnt";
-          if (writeFile(p, sessionFile(serializePatch(ui)))) { curFile = p; ui.status("SAVED " + fileName(p), 4); } else ui.status("COULD NOT SAVE THE FILE", 5); }
+          if (writeFile(p, sessionFile(serializePatch(ui)))) { curFile = p; savedNow(); ui.status("SAVED " + fileName(p), 4); } else ui.status("COULD NOT SAVE THE FILE", 5); }
       } }
     engA.collectGarbage(); engB.collectGarbage(); blendFrame();
+    { TouchBarState ts; ts.blending = ui.blendAt >= 0; ts.paused = ui.blendPaused; ts.at = std::max(0.f, ui.blendAt);
+      if (Module* o = outMod()) { const int k = o->def->paramIndex("level"); if (k >= 0) ts.level = o->def->params[k].toNorm(o->p[k].load()); } touchBarUpdate(ts); }
+    { std::string t = curFile.empty() ? std::string("NEW SESSION") : fileName(curFile); const size_t dot = t.rfind('.'); if (!curFile.empty() && dot != std::string::npos && dot > 0) t = t.substr(0, dot);
+      ui.sessionTitle = t; ui.sessionChanged = sessionChanged(); }
     pumpInfo();
     if (rec.on()) { if (Engine* src = curEng->blending()) rec.pump(*src); rec.pump(*curEng); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }
     // MIDI: notice devices coming and going; give MIDI OUT modules their device
@@ -757,7 +776,7 @@ int main(int argc, char** argv) {
       if ((int)loop != u->fbSent) { u->fbSent = loop; (*curEng).action(m->id, loop ? "fb:1" : "fb:0"); if (loop) ui.status("SAMPLER: ITS OWN OUT LEADS BACK INTO ITS IN (THROUGH THE CABLES), SO IT WON'T MONITOR. IT STILL RECORDS", 6); } }
     { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->m->p[0].load() > 0.5f && up->snd[0].peaks.empty() && up->snd[0].id.empty()) catchSound(up.get(), true); } }   // HELD with nothing held yet: what came in
 
-    if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
+    if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(autosaveData()); dirty = false; } }
     if (histDirty) { histT -= ldt; if (histT <= 0) { snapshot(); histDirty = false; } }
     // draw only when it's time: never while the window can't be seen; at the chosen rate when idle; at full speed while you work
     { const float every = hidden ? 1e9f : (busyT > 0 || held || ui.ask) ? 0.f : 1.f / FPS[fpsIdx], since = (SDL_GetTicksNS() - last) / 1e9f;
@@ -782,7 +801,7 @@ int main(int argc, char** argv) {
       if (!verts.empty() && !SDL_RenderGeometry(ren, atlas, verts.data(), (int)verts.size(), vidx.data(), (int)vidx.size()) && atlas) { SDL_DestroyTexture(atlas); atlas = nullptr; atlasErr = SDL_GetError(); } }   // it failed: dot by dot from now on
     SDL_RenderPresent(ren);
   }
-  store.writeAutosave(serializePatch(ui));
+  store.writeAutosave(autosaveData());
   if (rec.on()) rec.stop(*curEng);
   if (bl.th.joinable()) bl.th.join();
   capture.stop(); sound.stop(); if (gCtxOk) ma_context_uninit(&gCtx);

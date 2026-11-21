@@ -214,8 +214,11 @@ public:
   // (equal loudness: sine and cosine). Set up before this engine is the one the sound card renders; paused until the new
   // session has loaded. The outgoing engine's recording (if any) stops when this one's first block starts, so a recording
   // carries straight on through the blend. When it reaches 1 the outgoing engine is still rendered (silently) until let go
-  void blendFrom(Engine* old, double seconds, double startAt = 0) { blendLen = std::max(0.05, seconds) * sr; blendPos = startAt * blendLen; blendRun.store(false); blendTo.store(-1); blendAt.store((float)startAt); blendSrc.store(old); }
+  void blendFrom(Engine* old, double seconds, double startAt = 0) { blendLen = std::max(0.05, seconds) * sr; blendPos = startAt * blendLen; blendAim = -1; blendSetTo.store(-1); blendRun.store(false); blendTo.store(-1); blendAt.store((float)startAt); blendSrc.store(old); }
   void blendGo() { blendRun.store(true); }
+  void blendPause() { blendRun.store(false); }
+  bool blendRunning() const { return blendRun.load(); }
+  void blendSet(float u) { blendSetTo.store(u); }   // by hand (dragging the bar, a MIDI knob, the Touch Bar): straight to there
   void blendFinish(double seconds) { blendTo.store(seconds); }   // NOW: the rest of the blend in this many seconds
   void blendRelease() { blendSrc.store(nullptr); }              // once it's done and the old engine has been cleared
   Engine* blending() const { return blendSrc.load(); }
@@ -247,7 +250,7 @@ private:
   std::vector<Module*> order;
   bool dirty = true;
   AudioBuf* prevBuf = nullptr; double prevPos = 0;
-  std::atomic<Engine*> blendSrc{nullptr}; std::atomic<bool> blendRun{false}; std::atomic<double> blendTo{-1}; double blendLen = 1, blendPos = 0; bool blendBegun = false, nested = false;
+  std::atomic<Engine*> blendSrc{nullptr}; std::atomic<bool> blendRun{false}; std::atomic<double> blendTo{-1}; std::atomic<float> blendSetTo{-1}; double blendLen = 1, blendPos = 0, blendAim = -1; bool blendBegun = false, nested = false;
   float blendL[BLOCK], blendR[BLOCK];
 };
 

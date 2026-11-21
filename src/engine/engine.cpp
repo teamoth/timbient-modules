@@ -262,16 +262,18 @@ void Engine::block(float* L, float* R, int n) {
   // BLEND TO: the session being left plays on in its own engine, fading out as this one fades in, keeping the loudness level
   // (an engine played inside another, as the one being left, doesn't blend itself: so CANCEL can turn a blend round seamlessly)
   if (Engine* src = nested ? nullptr : blendSrc.load(std::memory_order_acquire)) {
-    if (!blendBegun) { blendBegun = true; src->recOn.store(false, std::memory_order_release); }   // its recording carries on here
+    if (!blendBegun) { blendBegun = true; src->recOn.store(false, std::memory_order_release);   // its recording carries on here,
+      comp.env = src->comp.env; comp.gainRed = src->comp.gainRed; }   // and its compressor, just as it was (so the switch itself changes nothing)
     src->nested = true; src->block(blendL, blendR, n); src->nested = false;
     const double to = blendTo.exchange(-1); if (to >= 0) blendLen = blendPos + std::max(0.05, to) * sr;   // NOW
+    const float set = blendSetTo.exchange(-1); if (set >= 0) blendAim = std::min(1.0, (double)set) * blendLen;   // by hand: glides there (a sweep end to end in 0.15 s at most), so no clicks
     const bool run = blendRun.load(std::memory_order_relaxed);
     for (int i = 0; i < n; i++) { const double u = std::min(1.0, blendPos / blendLen); const float a = (float)(u * (PI / 2));
-      masterL[i] = masterL[i] * std::sin(a) + blendL[i] * std::cos(a); masterR[i] = masterR[i] * std::sin(a) + blendR[i] * std::cos(a); if (run && blendPos < blendLen) blendPos += 1; }
+      masterL[i] = masterL[i] * std::sin(a) + blendL[i] * std::cos(a); masterR[i] = masterR[i] * std::sin(a) + blendR[i] * std::cos(a); if (blendAim >= 0) { const double st = blendLen / (0.15 * sr); if (std::fabs(blendAim - blendPos) <= st) { blendPos = blendAim; blendAim = -1; } else blendPos += blendAim > blendPos ? st : -st; } else if (run && blendPos < blendLen) blendPos += 1; }
     blendAt.store((float)std::min(1.0, blendPos / blendLen), std::memory_order_relaxed); }
   else if (blendBegun && !nested) { blendBegun = false; blendAt.store(-1, std::memory_order_relaxed); }
   // the master: a gentle compressor and a safety limit, then out to the sound card
-  comp.sr = sr; comp.process(masterL, masterR, n);
+  comp.sr = sr; if (!nested) comp.process(masterL, masterR, n);   // (one played inside another goes through that one's compressor, not twice)
   float pk = 0;
   for (int i = 0; i < n; i++) { L[i] = masterL[i]; R[i] = masterR[i]; pk = std::max(pk, std::max(std::fabs(L[i]), std::fabs(R[i]))); }
   if (recOn.load(std::memory_order_acquire) && !recBuf.empty()) {   // RECORD: copy the master into the ring the screen thread empties
