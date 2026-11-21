@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
     const bool ok = balls == 3; if (!ok) fails++; std::printf("tombola balls kept: %d%s\n", balls, ok ? "" : "  WRONG"); }
   // DUCKER: a loud sound into SIDE pushes IN down
   { float lv[2]; for (int k = 0; k < 2; k++) { ui.clearPatch(); UiMod* out = ui.add("out", 300, 20); UiMod* tn = ui.add("tone", 0, 20); UiMod* dk = ui.add("ducker", 100, 20); UiMod* clk = ui.add("clock", 0, 120); ui.set(clk, "sync", 0);
-      ui.connect(clk, "PULSE", tn, "TRIG"); ui.connect(tn, "OUT", dk, "IN"); ui.connect(dk, "OUT", out, "IN"); ui.set(dk, "depth", 1);
+      ui.connect(clk, "PULSE", tn, "TRIG"); ui.connect(tn, "OUT", dk, "IN"); ui.connect(dk, "OUT", out, "IN"); ui.set(dk, "dip", 60);
       if (k) { UiMod* ns = ui.add("pluck", 0, 200); UiMod* c2 = ui.add("clock", 0, 260); ui.set(c2, "sync", 0); ui.set(c2, "bpm", 240); ui.connect(c2, "PULSE", ns, "TRIG"); ui.connect(ns, "OUT", dk, "SIDE"); }
       run(eng, 1); lv[k] = dk->m->outLev[0].load(); Result r = run(eng, 3); lv[k] = r.rms; }
     const bool ok = lv[1] < lv[0] * 0.8f; if (!ok) fails++; std::printf("ducker side: without %.4f, with %.4f%s\n", lv[0], lv[1], ok ? "" : "  WRONG"); }
@@ -369,13 +369,23 @@ int main(int argc, char** argv) {
     const bool ok = lvOk && fadeOk && moveOk && specOk && oldOk; if (!ok) fails++;
     std::printf("level x%.2f; crossfader A %.2f %.2f %.2f, B %.2f %.2f %.2f, square swaps %d in 4 s, random jumps %d; spectrum loudest %.0f Hz at %.1f dB, below 20 Hz %.0f dB, passes %s; old session %d cable(s), into IN %d, note \"%s\"%s\n",
       r1 / (0.1 / std::sqrt(2.0)), rA[0], rA[1], rA[2], rB[0], rB[1], rB[2], swaps, jumps, topHz, topDb, low, diff == 0 ? "untouched" : "CHANGED", nc, intoIn, note.c_str(), ok ? "" : "  WRONG"); }
+  // dragging a module over a sound cable offers to insert it, CROSSFADER and MIXER included (they have no IN/OUT by those names)
+  { std::string res; bool ok = true;
+    for (const char* ty : {"xfade", "mixer", "echo"}) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 30); UiMod* v = ui.add("pad", 0, 30); ui.connect(v, "OUT", o, "IN");
+      UiMod* m = ui.add(ty, 150, 400); Canvas c; c.fine = true; c.resize(1200, 900); c.beginFrame(); ui.draw(c, 0.016f);
+      const float gx = (float)(m->x - ui.viewX + 8), gy = (float)(m->y - ui.viewY + 3); ui.statusT = 0; ui.pointerDown(gx, gy); bool offered = false;
+      for (int y = 20; y < 500 && !offered; y += 2) for (int x = 20; x < 600 && !offered; x += 4) { ui.statusT = 0; ui.pointerMove((float)x, (float)y); if (ui.statusT > 0 && ui.statusMsg.find("DROP TO INSERT") == 0) offered = true; }
+      ui.pointerUp(0, 0); const Dropdown* d = ui.openList(); const bool asked = offered && d && !d->items.empty() && d->items[0] == "INSERT INTO THIS CABLE?";
+      if (asked) d->pick(1); bool through = false; for (auto& cb : ui.cables) if (cb.from == m->m->id && cb.to == o->m->id) through = true; ui.closeList();
+      if (!(asked && through)) ok = false; res += std::string(" ") + ty + (asked && through ? " ok" : offered ? " (NOT INSERTED)" : " (NOT OFFERED)"); }
+    ui.clearPatch(); run(eng, 1.f); if (!ok) fails++; std::printf("drag into a cable:%s%s\n", res.c_str(), ok ? "" : "  WRONG"); }
   // dropping a module into a cable: CROSSFADER goes in through A, all A and still (the sound is as it was); MIXER through 1; an
   // effect through IN, fully dry. In each case the sound arrives at OUTPUT about as loud as before
   { std::string res; bool ok = true;
     for (const char* ty : {"xfade", "mixer", "echo"}) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 20); UiMod* v = ui.add("pad", 0, 20); ui.set(v, "sus", 1); ui.set(v, "hold", 30); ui.connect(v, "OUT", o, "IN");
-      Event ev; ev.note = 57; ev.vel = 1; eng.trigger(v->m->id, 0, ev); run(eng, 3.f); const float before = std::max(o->m->disp[0].load(), 1e-6f);   // OUTPUT's meter (as linear peak)
+      Event ev; ev.note = 57; ev.vel = 1; eng.trigger(v->m->id, 0, ev); run(eng, 2.f); auto meter = [&] { double t = 0; for (int i = 0; i < 80; i++) { run(eng, 0.05f); t += o->m->disp[0].load(); } return (float)(t / 80); }; const float before = std::max(meter(), 1e-6f);   // OUTPUT's meter (as linear peak)
       UiMod* m = ui.add(ty, 150, 20); if (std::string(ty) == "xfade") { ui.set(m, "fade", 0.5f); ui.set(m, "move", 1); }   // (it was left moving, in the middle: the insert should settle it)
-      UiCable c0 = ui.cables[0]; ui.insertInto(c0, m->m->id); run(eng, 2.f); const float after = o->m->disp[0].load();
+      UiCable c0 = ui.cables[0]; ui.insertInto(c0, m->m->id); run(eng, 1.f); const float after = meter();
       int intoPort = -1, fromPort = -1; for (auto& cb : ui.cables) { if (cb.to == m->m->id) intoPort = cb.toPort; if (cb.from == m->m->id && cb.to == o->m->id) fromPort = cb.fromPort; }
       const ModuleDef* d = m->m->def; const int want = d->inIndex("IN") >= 0 ? d->inIndex("IN") : 0; const float db = 20 * std::log10(std::max(after, 1e-9f) / before);
       bool good = intoPort == want && fromPort >= 0 && std::fabs(db) < 1.5f;
@@ -434,6 +444,21 @@ int main(int argc, char** argv) {
     bool count = false; for (auto& r : c.runs) if (r.s.find("MIDI 1") != std::string::npos) count = true; chk(count, "bar count"); if (!ok) for (auto& l : ui.midiLog) std::printf("  log: %s\n", l.c_str());
     ui.closeList(); ui.midiDevs.clear(); ui.midiDevNames.clear(); ui.onMidiDevToggle = nullptr; ui.midiLog.clear();
     if (!ok) fails++; std::printf("midi settings:%s%s\n", ok ? " all fine" : res.c_str(), ok ? "" : "  WRONG"); }
+  // DUCKER: DEPTH in dB (-18 leaves 0.126 of the sound); VELOCITY ON dips a soft trigger less, OFF the full DEPTH; HOLD keeps it down;
+  // an old session's DEPTH (a share: 0.6) becomes the same dip in dB (-8), and its KEY cable and DEPTH mod cable still connect
+  { std::string res; bool ok = true; auto chk = [&](bool c, const char* w) { if (!c) { ok = false; res += std::string(" [") + w + "]"; } };
+    auto dipAt = [&](float dip, int vel, float v, float hold, float t) { ui.clearPatch(); ui.add("out", 300, 20); UiMod* dk = ui.add("ducker", 100, 20); ui.set(dk, "dip", dip); ui.set(dk, "vel", (float)vel); ui.set(dk, "hold", hold); ui.set(dk, "rel", 0.5f); run(eng, 0.1f);
+      Event ev; ev.vel = v; eng.trigger(dk->m->id, 1, ev); run(eng, t); return 1 - dk->m->disp[0].load(); };   // the gain it's at
+    const float g18 = dipAt(18, 1, 1, 0.2f, 0.06f), soft = dipAt(18, 1, 0.5f, 0.2f, 0.06f), softOff = dipAt(18, 0, 0.5f, 0.2f, 0.06f), sil = dipAt(60, 1, 1, 0.2f, 0.06f);
+    const float noHold = dipAt(18, 1, 1, 0, 0.3f), held = dipAt(18, 1, 1, 0.3f, 0.3f);
+    chk(std::fabs(g18 - 0.126f) < 0.02f, "-18 dB"); chk(std::fabs(soft - (1 - 0.874f * 0.5f)) < 0.03f, "velocity on"); chk(std::fabs(softOff - g18) < 0.02f, "velocity off"); chk(sil < 0.01f, "silent");
+    chk(held < 0.15f && noHold > 0.6f, "hold");
+    const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"out","x":300,"y":20,"p":{}},{"id":2,"type":"clock","x":0,"y":20,"p":{}},{"id":3,"type":"ducker","x":100,"y":20,"p":{"depth":0.6}},{"id":4,"type":"lfo","x":0,"y":120,"p":{}}],"cables":[{"f":2,"fp":"PULSE","t":3,"tp":"KEY","ty":"trig"},{"f":4,"fp":"OUT","t":3,"tq":"depth","ty":"mod"}]})";
+    Json j; Json::parse(old, j); ui.clearPatch(); loadPatch(ui, j); UiMod* dk = nullptr; for (auto& u : ui.mods) if (u->m->def->type == "ducker") dk = u.get();
+    bool trigIn = false, modIn = false; float dip = -1; if (dk) { const ModuleDef* d = dk->m->def; dip = dk->m->p[d->paramIndex("dip")].load(); for (auto& cb : ui.cables) if (cb.to == dk->m->id) { if (cb.type == PType::Mod && cb.toParam == d->paramIndex("dip")) modIn = true; else if (cb.type != PType::Mod && cb.toPort == d->inIndex("TRIG")) trigIn = true; } }
+    chk(std::fabs(dip - 7.96f) < 0.05f && trigIn && modIn, "old session");
+    ui.clearPatch(); run(eng, 0.2f); if (!ok) fails++;
+    std::printf("ducker: -18 dB %.3f, soft hit %.3f (velocity off %.3f), silent %.4f, at 0.3 s %.2f (held %.2f); old session %.2f dB, TRIG %s, mod %s%s%s\n", g18, soft, softOff, sil, noHold, held, dip, trigIn ? "on" : "LOST", modIn ? "on" : "LOST", ok ? "" : "  WRONG", res.c_str()); }
   // an old session whose cable went to SWELL (an input since renamed TRIG) still connects
   { const char* old = R"({"v":2,"w":2,"mods":[{"id":1,"type":"out","x":300,"y":20,"p":{}},{"id":2,"type":"clock","x":0,"y":20,"p":{}},{"id":3,"type":"pad","x":100,"y":20,"p":{}}],"cables":[{"f":2,"fp":"PULSE","t":3,"tp":"SWELL","ty":"trig"}]})";
     Json j; Json::parse(old, j); loadPatch(ui, j); bool in = false; for (auto& cb : ui.cables) if (cb.toPort == 0) in = true; ui.clearPatch();

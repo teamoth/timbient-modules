@@ -121,11 +121,11 @@ void Ui::demoPatch() {
   auto c1 = col(6, {"clump", "orbits", "clock"}), c2 = col(86, {"pluck", "tone"}), c3 = col(166, {"pad", "additive"}), c4 = col(246, {"echo", "filter", "lfo"}), c5 = col(326, {"mixer"}), c6 = col(406, {"reverb", "ducker"}), c7 = col(486, {"out"});
   UiMod *clump = c1[0], *orb = c1[1], *clk = c1[2], *pl = c2[0], *fm = c2[1], *pad = c3[0], *bell = c3[1], *echo = c4[0], *filt = c4[1], *lfo = c4[2], *mix = c5[0], *verb = c6[0], *duck = c6[1], *out = c7[0];
   set(clump, "oct", 5); set(clump, "mutate", 1); set(clump, "speed", 2.5f); set(pl, "tone", 0.08f); set(pad, "cut", 420); set(verb, "decay", 10); set(verb, "mix", 0.5f);
-  set(duck, "depth", 0.9f); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "decay", 1.6f);
+  set(duck, "dip", 20); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "decay", 1.6f);
   set(lfo, "rate", 20); set(pad, "air", 0.05f);
   connect(clump, "TRIG", pl, "TRIG"); connect(clump, "TRIG", fm, "TRIG"); connect(orb, "TRIG", pad, "TRIG"); connect(orb, "TRIG", bell, "TRIG");
   connect(pl, "OUT", echo, "IN"); connect(fm, "OUT", echo, "IN"); connect(echo, "OUT", mix, "1"); connect(pad, "OUT", filt, "IN"); connect(filt, "OUT", mix, "2"); connect(bell, "OUT", mix, "3");
-  connect(mix, "OUT", verb, "IN"); connect(verb, "OUT", duck, "IN"); connect(duck, "OUT", out, "IN"); connect(clk, "BAR", duck, "KEY");
+  connect(mix, "OUT", verb, "IN"); connect(verb, "OUT", duck, "IN"); connect(duck, "OUT", out, "IN"); connect(clk, "BAR", duck, "TRIG");
   modulate(lfo, filt, filt->m->def->paramIndex("cut"));
 }
 
@@ -1207,13 +1207,22 @@ bool Ui::unplugSelected() {
   for (auto& cb : cables) if (sameCable(cb, sel)) { const UiCable c0 = cb; unplug(c0); status("UNPLUGGED " + cableName(c0), 2.5f); changed(); return true; }
   return false;
 }
+// the sound input and output a module is dropped into a cable by: its IN and OUT, or with none, its first sound input
+// (CROSSFADER's A, MIXER's 1) and first sound output. False if it has no sound in and out
+static bool soundThrough(const ModuleDef* md, int& ii, int& oi) {
+  ii = md->inIndex("IN"); oi = md->outIndex("OUT");
+  if (ii >= 0 && md->ins[ii].type != PType::Audio) ii = -1; if (oi >= 0 && md->outs[oi].type != PType::Audio) oi = -1;
+  for (int k = 0; k < (int)md->ins.size() && ii < 0; k++) if (md->ins[k].type == PType::Audio) ii = k;
+  for (int k = 0; k < (int)md->outs.size() && oi < 0; k++) if (md->outs[k].type == PType::Audio) oi = k;
+  return ii >= 0 && oi >= 0 && !md->fixed; }
+
 void Ui::pointerMove(float sx, float sy) {
   if (std::fabs(sx - hoverX) + std::fabs(sy - hoverY) > 1.5f) { hoverX = sx; hoverY = sy; hoverT = 0; }   // the pointer moved: the note goes, and the wait starts again
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; drag.wx = wx; drag.wy = wy;
   if (drag.kind == D_PAN) { viewX = drag.vx0 - (int)(sx - drag.sx); viewY = drag.vy0 - (int)(sy - drag.sy); }
   else if (drag.kind == D_MOVE) { drag.m->x = wx - drag.ox; drag.m->y = std::max(viewY + TOP + 1, wy - drag.oy);
     // an unpatched effect dragged over an audio cable can be dropped into it
-    const ModuleDef* d = drag.m->m->def; bool free = d->inIndex("IN") >= 0 && d->outIndex("OUT") >= 0 && d->ins[d->inIndex("IN")].type == PType::Audio && d->outs[d->outIndex("OUT")].type == PType::Audio;
+    int ii, oi; bool free = soundThrough(drag.m->m->def, ii, oi);
     for (auto& cb : cables) if (cb.from == drag.m->m->id || cb.to == drag.m->m->id) free = false;
     drag.splice = free ? cableAt(wx, wy, 5, true) : -1; if (drag.splice >= 0) status("DROP TO INSERT INTO " + cableName(cables[drag.splice]), 0.3f); }
   else if (drag.kind == D_GRAB || drag.kind == D_PULL) {
@@ -1252,12 +1261,11 @@ void Ui::pointerMove(float sx, float sy) {
 void Ui::insertInto(const UiCable& c0, int mid) { UiMod *a = byId(c0.from), *b = byId(c0.to), *m = byId(mid); bool still = false; for (auto& cb : cables) if (sameCable(cb, c0)) still = true;
       if (!a || !b || !m || !still) { status("THAT CABLE HAS GONE", 3); return; }
       // its IN (or, with none, its first sound input: CROSSFADER's A, MIXER's 1) and its OUT (or its first sound output)
-      const ModuleDef* md = m->m->def; int ii = md->inIndex("IN"), oi = md->outIndex("OUT");
-      if (ii < 0) for (int k = 0; k < (int)md->ins.size() && ii < 0; k++) if (md->ins[k].type == PType::Audio) ii = k;
-      if (oi < 0) for (int k = 0; k < (int)md->outs.size() && oi < 0; k++) if (md->outs[k].type == PType::Audio) oi = k;
-      if (ii < 0 || oi < 0) { status(md->name + " HAS NO SOUND IN AND OUT TO INSERT", 3); return; }
+      const ModuleDef* md = m->m->def; int ii, oi;
+      if (!soundThrough(md, ii, oi)) { status(md->name + " HAS NO SOUND IN AND OUT TO INSERT", 3); return; }
       unplug(c0); connect(a, c0.fromPort, m, ii); connect(m, oi, b, c0.toPort);
       const int mi = md->paramIndex("mix"); if (mi >= 0) m->m->p[mi].store(0);   // fully dry, as the web version does, so nothing jumps out
+      if (md->type == "mixer" && md->ins[ii].name == "1") m->m->p[md->paramIndex("l1")].store(1);   // MIXER: channel 1 at full, so the sound goes through as loud as it was
       if (md->type == "xfade") { m->m->p[md->paramIndex("fade")].store(0); m->m->p[md->paramIndex("move")].store(0); }   // CROSSFADER: all A and still, so nothing changes until B is plugged in
       status("INSERTED " + md->name + (mi >= 0 ? " (FULLY DRY: RAISE ITS MIX)" : md->type == "xfade" ? " (ALL A: PLUG SOMETHING INTO B)" : ""), 4); changed(); }
 
@@ -1512,7 +1520,7 @@ void Ui::midiMapsLoad(const Json& a, bool global, const std::map<int, UiMod*>* i
   if (a.t != Json::ARR) return;
   for (auto& e : a.a) { MidiMap m; m.dev = e.str("dev"); m.ch = (int)e.num("ch", 0) & 15; m.kind = (int)e.num("kind", 0); m.num = (int)e.num("num", 0); m.mode = (int)e.num("mode", 0); m.key = e.str("key"); m.lsbSeen = e.num("fine", 0) > 0;
     if (m.key.empty()) continue; m.global = global;
-    if (global) { m.gType = e.str("type"); m.gNth = (int)e.num("nth", 0); if (m.gType.empty()) continue;
+    if (global) { m.gType = e.str("type"); m.gNth = (int)e.num("nth", 0); if (m.gType.empty()) continue; if (m.gType == "ducker" && m.key == "depth") m.key = "dip";   // (DEPTH in dB since 0.50)
       bool dup = false; for (auto& o : midiMaps) if (o.global && o.gType == m.gType && o.gNth == m.gNth && o.key == m.key) dup = true; if (dup) continue; }
     else { const int old = (int)e.num("mod", 0); if (idmap) { auto it = idmap->find(old); if (it == idmap->end()) continue; m.mod = it->second->m->id; } else m.mod = old; if (!byId(m.mod)) continue;
       midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [&](const MidiMap& o) { return !o.global && o.mod == m.mod && o.key == m.key; }), midiMaps.end()); }

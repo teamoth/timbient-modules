@@ -4,23 +4,33 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#2a2d33">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>Timbient Modules: web player</title>
 <style>
   :root { --bg: #2a2d33; --panel: #1e2025; --ink: #e7e4dc; --mid: #9a978f; --hi: #e8a33a; --warn: #e0675a; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 0.04em; }
   body { display: flex; flex-direction: column; overscroll-behavior: none; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 10px calc(8px) 10px; background: var(--panel); padding-top: max(8px, env(safe-area-inset-top)); }
-  header h1 { font-size: 13px; margin: 0 6px 0 0; font-weight: 600; text-transform: uppercase; color: var(--mid); white-space: nowrap; }
-  button, label.btn { font: inherit; text-transform: uppercase; color: var(--ink); background: transparent; border: 1px solid #4a4d55; padding: 6px 10px; border-radius: 2px; cursor: pointer; touch-action: manipulation; }
+  header { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--panel); padding-top: max(6px, env(safe-area-inset-top)); padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  header.tuck { display: none; }   /* tucked away while playing: a tap on the session brings it back */
+  button, label.btn { font: inherit; font-size: 12px; white-space: nowrap; text-transform: uppercase; color: var(--ink); background: transparent; border: 1px solid #4a4d55; padding: 5px 8px; border-radius: 2px; cursor: pointer; touch-action: manipulation; }
   button:hover, label.btn:hover { border-color: var(--hi); }
   button:disabled { color: #5e6168; border-color: #3a3d44; cursor: default; }
   button.on { color: var(--hi); border-color: var(--hi); }
-  .level { display: flex; align-items: center; gap: 8px; text-transform: uppercase; color: var(--mid); }
-  input[type=range] { width: 110px; accent-color: var(--hi); }
+  .level { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 50px; max-width: 200px; text-transform: uppercase; color: var(--mid); font-size: 12px; }
+  .level input { flex: 1; min-width: 40px; width: 100%; accent-color: var(--hi); }
+  .wide { display: none; }
+  @media (min-width: 560px) { .wide { display: inline; } .narrow { display: none; } }
   #file { display: none; }
-  #msg { flex-basis: 100%; min-height: 1.4em; color: var(--mid); text-transform: uppercase; }
-  #msg.warn { color: var(--warn); }
+  #msg { position: absolute; left: 8px; right: 8px; top: 22px; z-index: 2; margin: 0 auto; max-width: 36em; padding: 8px 10px; background: rgba(30,32,37,0.92); border: 1px solid #4a4d55; color: var(--ink); text-transform: uppercase; font-size: 12px; text-align: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.4s; }
+  #msg.show { opacity: 1; pointer-events: auto; }
+  #msg.warn { color: var(--warn); border-color: var(--warn); }
   #stage { position: relative; flex: 1; overflow: hidden; touch-action: none; cursor: grab; }
   #stage.drag { cursor: grabbing; }
   #screen { position: absolute; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; }
@@ -33,18 +43,17 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>Timbient Modules · web player</h1>
-  <label class="btn" for="file" id="openBtn">Open session</label>
+<header id="bar">
+  <label class="btn" for="file" id="openBtn">Open<span class="wide"> session</span></label>
   <input type="file" id="file" accept=".tmbnt,.json,application/json">
   <button id="play" disabled>Play</button>
-  <button id="stop" disabled>Stop</button>
-  <button id="restart" disabled>From the start</button>
-  <span class="level">Level <input type="range" id="level" min="0" max="1.5" step="0.01" value="0.85"></span>
-  <div id="msg" role="status" aria-live="polite"></div>
+  <button id="restart" disabled title="From the start"><span class="wide">From the start</span><span class="narrow">Restart</span></button>
+  <span class="level" title="Level"><span class="wide">Level</span><input type="range" id="level" min="0" max="1.5" step="0.01" value="0.85" aria-label="Level"></span>
+  <button id="full" hidden><span class="wide">Full screen</span><span class="narrow">Full</span></button>
 </header>
 <div id="stage">
   <canvas id="screen"></canvas>
+  <div id="msg" role="status" aria-live="polite"></div>
   <div id="drop">Drop a session to play it</div>
   <div id="start">
     <p>Plays sessions saved from Timbient Modules (.tmbnt files, with their sounds inside). To change a session, use the app.</p>

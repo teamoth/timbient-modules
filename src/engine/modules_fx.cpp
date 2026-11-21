@@ -68,41 +68,48 @@ static Reg rFilter(new ModuleDef{"filter", "FILTER", Cat::Proc, {{"IN", PType::A
    only(pct("drive", "DRIVE", 0.2f), "v:5,6,7"), only(pct("shape", "SHAPE", 0.f), "v:7"), only(pct("vowel", "VOWEL", 0.f), "v:4")}, 0, 68, false, [] { return new Filter(); }});
 
 
-// ---------------- DUCKER: dips on each KEY trigger, then breathes back (CURVE), optionally timed in beats ----------------
+// ---------------- DUCKER: dips on each TRIG (or when SIDE gets loud), holds, then breathes back (CURVE), optionally timed in beats ----------------
+// DEPTH is in dB (60 is silence). With VELOCITY on, a softer trigger dips less (by its velocity's share of the full dip, as it always did)
+static float duckGain(float db) { return db >= 59.5f ? 0.f : std::pow(10.f, -db / 20); }
 struct Ducker : Module {
-  float g = 1, low = 1, relT = 1, tSince = 1e9f, atkT = 0.01f, sEnv = 0, gs = 1; bool rising = false, side = false; Smooth dry, wet;
-  enum { DEPTH, ATK, REL, RBEATS, CURVE, MIX, THRESH };
+  float g = 1, low = 1, relT = 1, tSince = 1e9f, atkT = 0.01f, holdT = 0, sEnv = 0, gs = 1, sHeld = 1e9f; bool side = false; Smooth dry, wet;
+  enum { DEPTH, ATK, HOLD, REL, RBEATS, CURVE, VEL, MIX, THRESH };
   void blockStart(int) override { side = patched(2); }
   void prepare() override { dry.setTime(0.012f, sr); wet.setTime(0.012f, sr); dry.snap(1 - e[MIX]); wet.snap(e[MIX]); }
   void trig(int port, const Event& ev) override {
     if (port != 1) return;
-    low = 1 - e[DEPTH] * ev.vel; atkT = e[ATK];
+    const float full = 1 - duckGain(e[DEPTH]), v = e[VEL] > 0.5f ? clampf(ev.vel, 0, 1) : 1.f;
+    low = 1 - full * v; atkT = e[ATK]; holdT = e[HOLD];
     const float beat = ev.period > 0 && ev.ppb > 0 ? ev.period * ev.ppb : 60.f / eng->tempo.bpm.load();
     static const float beats[7] = {0, 0.5f, 1, 2, 3, 4, 8};
-    relT = e[RBEATS] > 0.5f ? beats[(int)e[RBEATS]] * beat : e[REL]; tSince = 0; rising = false;
+    relT = e[RBEATS] > 0.5f ? beats[(int)e[RBEATS]] * beat : e[REL]; tSince = 0;
   }
   void render(int a, int b) override {
-    dry.t = 1 - e[MIX]; wet.t = e[MIX]; const float dt = 1.f / sr, k = e[CURVE];
+    dry.t = 1 - e[MIX]; wet.t = e[MIX]; const float dt = 1.f / sr, k = e[CURVE], sideLow = duckGain(e[DEPTH]);
     for (int i = a; i < b; i++) {
       tSince += dt;
-      if (tSince < atkT) g += (low - g) * (1 - std::exp(-dt * 3 / std::max(0.002f, atkT)));
-      else if (tSince < atkT + relT) { const float u = (tSince - atkT) / std::max(0.02f, relT);
+      if (tSince < atkT + holdT) g += (low - g) * (1 - std::exp(-dt * 3 / std::max(0.002f, atkT)));   // down, and held there for HOLD
+      else if (tSince < atkT + holdT + relT) { const float u = (tSince - atkT - holdT) / std::max(0.02f, relT);
         const float f = (1 - k) * (1 - std::exp(-5 * u)) / (1 - std::exp(-5.f)) + k * (1 - std::cos(PI * u)) / 2; g = low + (1 - low) * f; }
       else g += (1 - g) * 0.001f;
       float gg = g;
-      if (side) {   // SIDE: the louder that sound is past THRESHOLD (up to 12 dB past), the further IN goes down, up to DEPTH; ATTACK and RELEASE shape it
+      if (side) {   // SIDE: the louder that sound is past THRESHOLD (up to 12 dB past), the further IN goes down, up to DEPTH; ATTACK, HOLD and RELEASE shape it
         const float lv = std::max(std::fabs(in[2][0][i]), std::fabs(in[2][1][i])); sEnv = lv > sEnv ? lv : sEnv * (1 - dt / 0.05f);   // a quick peak follower (catches short hits)
-        const float over = clampf((20 * std::log10(std::max(1e-6f, sEnv)) - e[THRESH]) / 12, 0, 1), to = 1 - e[DEPTH] * over;
-        gs += (to - gs) * (1 - std::exp(-dt * 3 / std::max(0.002f, to < gs ? e[ATK] : e[REL]))); gg = std::min(g, gs); }   // down at ATTACK, back up at RELEASE
+        const float over = clampf((20 * std::log10(std::max(1e-6f, sEnv)) - e[THRESH]) / 12, 0, 1), to = 1 - (1 - sideLow) * over;
+        if (to < gs + 1e-4f) sHeld = 0; else sHeld += dt;
+        if (to < gs || sHeld >= e[HOLD]) gs += (to - gs) * (1 - std::exp(-dt * 3 / std::max(0.002f, to < gs ? e[ATK] : e[REL])));
+        gg = std::min(g, gs); }   // down at ATTACK, held for HOLD, back up at RELEASE
       const float d = dry.tick(), w = wet.tick();
       for (int ch = 0; ch < 2; ch++) { const float x = in[0][ch][i]; out[0][ch][i] = x * d + x * gg * w; }
     }
     disp[0].store(1 - (side ? std::min(g, gs) : g));
   }
 };
-static Reg rDucker(new ModuleDef{"ducker", "DUCKER", Cat::Proc, {{"IN", PType::Audio}, {"KEY", PType::Trig}, {"SIDE", PType::Audio}}, {{"OUT", PType::Audio}},
-  {pct("depth", "DEPTH", 0.6f), T("atk", "ATTACK", 0.002f, 2, 0.01f), T("rel", "RELEASE", 0.05f, 12, 0.9f), OP("rbeats", "BEAT REL", {"OFF", "1/2", "1", "2", "3", "4", "8"}, 0),
-   pct("curve", "CURVE", 0), pct("mix", "MIX", 1), only(fmt(pr("thresh", "THRESHOLD", -48, 0, -30), [](float v) { return std::to_string((int)std::lround(v)) + "DB"; }), "side")}, 10, 68, false, [] { return new Ducker(); }});
+static Reg rDucker(new ModuleDef{"ducker", "DUCKER", Cat::Proc, {{"IN", PType::Audio}, {"TRIG", PType::Trig}, {"SIDE", PType::Audio}}, {{"OUT", PType::Audio}},
+  {fmt(pr("dip", "DEPTH", 0, 60, 18), [](float v) { return v >= 59.5f ? std::string("SILENT") : "-" + std::to_string((int)std::lround(v)) + "DB"; }), T("atk", "ATTACK", 0.002f, 2, 0.01f),
+   fmt(pr("hold", "HOLD", 0, 2, 0), [](float v) { return v < 0.0005f ? std::string("OFF") : v < 1 ? std::to_string((int)std::lround(v * 1000)) + "MS" : std::to_string(v).substr(0, 4) + "S"; }),
+   T("rel", "RELEASE", 0.05f, 12, 0.9f), OP("rbeats", "BEAT REL", {"OFF", "1/2", "1", "2", "3", "4", "8"}, 0),
+   pct("curve", "CURVE", 0), noMod(OP("vel", "VELOCITY", {"OFF", "ON"}, 1)), pct("mix", "MIX", 1), only(fmt(pr("thresh", "THRESHOLD", -48, 0, -30), [](float v) { return std::to_string((int)std::lround(v)) + "DB"; }), "side")}, 10, 68, false, [] { return new Ducker(); }});
 
 // ---------------- AMP: up to +36 dB, with a soft limiter ----------------
 // DRIVE (it was AMP; its key is still "amp" so old sessions open as they were). TYPE: CLEAN is the old AMP, plain gain. Light:

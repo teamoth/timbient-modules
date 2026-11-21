@@ -150,6 +150,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
   if (data.num("bpm", 0) > 0) ui.eng.tempo.bpm.store((float)data.num("bpm"));
   Json* mods = data.getm("mods"); Json* cables = data.getm("cables"); if (!mods || mods->t != Json::ARR) return "THAT FILE HAS NO MODULES";
   // older web sessions: modules that were merged or replaced
+  std::set<int> oldDuck;   // DUCKERs from before 0.50 (DEPTH in dB now: their mod cables and MIDI mappings follow it)
   std::map<int, int> oldVerb;   // REVERB and INFINITE HALL became one REVERB with a TYPE: 1 was a hall, 2 the old reverb (their mod cables are renamed below)
   for (auto& m : mods->a) {
     const std::string ty = m.str("type"); Json* p = m.getm("p"); if (!p) { m.set("p", Json::object()); p = m.getm("p"); }
@@ -173,6 +174,8 @@ std::string loadPatch(Ui& ui, const Json& data0) {
       static const double B[9] = {0, 0.25, 1 / 3.0, 0.5, 0.75, 1, 1.5, 2, 4}; const int sy = std::max(0, std::min(8, (int)p->num("sync")));
       if (sy > 0) { const double bpm = data.num("bpm", 72) > 0 ? data.num("bpm", 72) : 72; p->set("time", Json::number(std::max(0.05, std::min(4.0, B[sy] * 60 / bpm)))); p->set("div", Json::number(sy - 1)); } }
     if ((ty == "clock" || ty == "tracker") && !p->get("sync")) p->set("sync", Json::number(0));   // older sessions keep their own tempos
+    if (ty == "ducker" && !p->get("dip")) {   // before 0.50 DEPTH was the share taken off (0.6 took 60%): the same dip, in dB
+      const double d = p->num("depth", 0.6); p->set("dip", Json::number(d >= 0.999 ? 60.0 : std::min(60.0, -20 * std::log10(std::max(1e-3, 1 - d))))); oldDuck.insert((int)m.num("id")); }
     if (ty == "looper" && !p->get("src")) p->set("src", Json::number(1));   // GRAIN LOOPER: from before LIVE, it played what it held
   }
   // sessions from before the modules grew 8 wider for their - and + buttons: spread them out so they don't overlap
@@ -210,12 +213,14 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     UiMod *a = fi->second, *b = ti->second; const std::string ty = c.str("ty"), fp = c.str("fp"); std::string tp = c.str("tp");
     if (b->m->def->type == "out") { if (tp == "B") continue; if (tp == "A") tp = "IN"; }   // OUTPUT's B went (and its X-FADE): what was in B is left out
     if (tp == "SWELL") tp = "TRIG";
-    std::string tq = c.str("tq");
+    if (tp == "KEY" && b->m->def->type == "ducker") tp = "TRIG";   // DUCKER's KEY is TRIG since 0.50
+    std::string tq = c.str("tq"); if (tq == "depth" && oldDuck.count((int)c.num("t"))) tq = "dip";
     if (auto ov = oldVerb.find((int)c.num("t")); ov != oldVerb.end()) { if (tq == "damp") tq = "tone"; else if (ov->second == 2 && tq == "size") tq = "decay"; }
     if (ty == "mod") { const int pk = b->m->def->paramIndex(tq); if (pk < 0 || !ui.modulate(a, b, pk)) lost++; }
     else if (!ui.connect(a, outIdx(a->m->def, fp), b, inIdx(b->m->def, tp))) lost++;
   }
-  if (const Json* mm = data.get("midi")) ui.midiMapsLoad(*mm, false, &idmap);   // MIDI LEARN: this session's mappings, onto the modules as they are now
+  if (Json* mm = data.getm("midi")) { if (mm->t == Json::ARR) for (auto& e : mm->a) if (e.str("key") == "depth" && oldDuck.count((int)e.num("mod"))) e.set("key", Json::string("dip"));
+    ui.midiMapsLoad(*mm, false, &idmap); }   // MIDI LEARN: this session's mappings, onto the modules as they are now
   std::string note;
   std::vector<std::string> gone; for (const char* g : {"fm2", "grains", "bell", "glass", "crush", "timeline", "mutes"}) if (skipped.erase(g)) gone.push_back(std::string(g) == "timeline" ? "TIMELINE" : std::string(g) == "mutes" ? "MUTE SEQUENCER" : std::string(g) == "fm2" ? "FM 2-OP" : std::string(g) == "grains" ? "GRAIN CLOUD" : std::string(g) == "bell" ? "MODAL BELL" : std::string(g) == "crush" ? "BITCRUSH" : "GLASS");
   if (!skipped.empty()) { note = "NOT IN THE NATIVE VERSION YET: "; bool first = true; for (auto& s : skipped) { const ModuleDef* d = findDef(s); std::string nm = d ? d->name : s; for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); note += (first ? "" : ", ") + nm; first = false; } }

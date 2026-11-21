@@ -102,17 +102,18 @@ jobs:
         run: |
           emcmake cmake -B build-web -DTIMBIENT_WEB=ON -DTIMBIENT_APP=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build build-web --parallel --target timbient_web
-          mkdir -p site && cp web/index.html web/player.js build-web/timbient.js build-web/timbient.wasm CREDITS.md site/
+          mkdir -p site && cp web/index.html web/player.js web/sw.js web/manifest.webmanifest web/icon-*.png build-web/timbient.js build-web/timbient.wasm CREDITS.md site/
           touch site/.nojekyll
       - name: "Test: the web player opens and plays a session with a sound inside it"
         run: node tests/web_test.mjs site/timbient.js tests/fixtures/web_test.tmbnt
+      - name: "Test: the page can be installed (its app description, icons and offline helper are all there)"
+        run: node tests/web_site_check.mjs site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
   pages:
     needs: web
     runs-on: ubuntu-latest
-    continue-on-error: true   # (until GitHub Pages is switched on for the repository: Settings > Pages > Source: GitHub Actions)
     permissions:
       pages: write
       id-token: write

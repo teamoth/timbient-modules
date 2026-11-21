@@ -26,11 +26,11 @@ int main(int argc, char** argv) {
     Module *clump = add("clump"), *orb = add("orbits"), *pl = add("pluck"), *pad = add("pad"), *bell = add("tone"), *fm = add("additive"), *tone = add("tone");
     Module *echo = add("echo"), *verb = add("reverb"), *duck = add("ducker"), *clk = add("clock"), *filt = add("filter"), *mix = add("mixer"), *lfo = add("lfo"), *amp = add("amp");
     set(clump, "oct", 5); set(clump, "mutate", 1); set(clump, "speed", 2.5f); set(pl, "tone", 0.05f); set(pad, "cut", 320); set(verb, "decay", 10); set(verb, "mix", 0.54f);
-    set(duck, "depth", 1); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "index", 2.5f); set(fm, "ratio", 3.5f); set(fm, "isus", 0);
+    set(duck, "dip", 60); set(duck, "curve", 1); set(duck, "rbeats", 3); set(clk, "bpm", 60); set(clk, "sync", 0); set(fm, "index", 2.5f); set(fm, "ratio", 3.5f); set(fm, "isus", 0);
     wire(clump, "TRIG", pl, "TRIG", PType::Trig); wire(orb, "TRIG", pad, "TRIG", PType::Trig); wire(orb, "TRIG", bell, "TRIG", PType::Trig); wire(clump, "TRIG", fm, "TRIG", PType::Trig); wire(orb, "TRIG", tone, "TRIG", PType::Trig);
     wire(pl, "OUT", echo, "IN", PType::Audio); wire(fm, "OUT", echo, "IN", PType::Audio); wire(echo, "OUT", mix, "1", PType::Audio); wire(pad, "OUT", filt, "IN", PType::Audio); wire(filt, "OUT", mix, "2", PType::Audio);
     wire(bell, "OUT", mix, "3", PType::Audio); wire(tone, "OUT", mix, "4", PType::Audio); wire(mix, "OUT", verb, "IN", PType::Audio); wire(verb, "OUT", duck, "IN", PType::Audio); wire(duck, "OUT", amp, "IN", PType::Audio);
-    wire(amp, "OUT", out, "IN", PType::Audio); wire(clk, "BAR", duck, "KEY", PType::Trig);
+    wire(amp, "OUT", out, "IN", PType::Audio); wire(clk, "BAR", duck, "TRIG", PType::Trig);
     set(amp, "gain", 0); Cable mc; mc.from = lfo->id; mc.fromPort = 0; mc.to = filt->id; mc.toParam = filt->def->paramIndex("cut"); mc.type = PType::Mod; eng.connect(mc);
   }
   std::vector<float> L(sr * (size_t)secs), R(sr * (size_t)secs);

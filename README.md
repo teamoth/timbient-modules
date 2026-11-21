@@ -32,12 +32,16 @@ To listen to a session on a phone, a tablet or any computer without installing a
 **https://teamoth.github.io/timbient-modules/** and open a session file (.tmbnt, saved from the app with SAVE or SAVE AS:
 its sounds go inside it). It plays sessions only; it doesn't change them. Sessions up to 50 MB open there.
 
+It can be installed from the browser's menu (**Install app**, or **Add to Home Screen**), and then opens full screen from
+the home screen, like an app. While a session plays the controls tuck away after a few seconds: tap the session to bring
+them back. In a browser, **FULL SCREEN** hides the browser's own bars.
+
 ## MIDI controllers
 
 Right-click (or Ctrl-click) any control and choose **MIDI LEARN**, then move a knob, fader or encoder, or press a button,
 on your controller. Knobs take over once they reach the control's current value (so nothing jumps), encoders sending
 turns are recognised, as are fine 14-bit controls and NRPN, and values go back to the controller so encoders and
-displays match the screen. **SETTINGS > MIDI MAP** lists every mapping. Mappings are saved with the session, or can be
+displays match the screen. **SETTINGS > MIDI > MIDI MAP** lists every mapping. Mappings are saved with the session, or can be
 kept for every session.
 
 ## Building it yourself
