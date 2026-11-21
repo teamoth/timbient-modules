@@ -210,6 +210,16 @@ public:
   float outLatency = 0.03f;   // how far ahead of the speakers the engine runs (MIDI OUT waits this long so notes line up)
   std::atomic<bool> recOn{false}; std::vector<float> recBuf; std::atomic<long> recW{0}; long recR = 0;
   void collectGarbage();                                  // frees modules the audio thread has finished with
+  // BLEND TO: this engine also plays the engine the last session is still playing in, fading it out as this one fades in
+  // (equal loudness: sine and cosine). Set up before this engine is the one the sound card renders; paused until the new
+  // session has loaded. The outgoing engine's recording (if any) stops when this one's first block starts, so a recording
+  // carries straight on through the blend. When it reaches 1 the outgoing engine is still rendered (silently) until let go
+  void blendFrom(Engine* old, double seconds, double startAt = 0) { blendLen = std::max(0.05, seconds) * sr; blendPos = startAt * blendLen; blendRun.store(false); blendTo.store(-1); blendAt.store((float)startAt); blendSrc.store(old); }
+  void blendGo() { blendRun.store(true); }
+  void blendFinish(double seconds) { blendTo.store(seconds); }   // NOW: the rest of the blend in this many seconds
+  void blendRelease() { blendSrc.store(nullptr); }              // once it's done and the old engine has been cleared
+  Engine* blending() const { return blendSrc.load(); }
+  std::atomic<float> blendAt{-1};   // how far it has got: 0..1 (the screen reads it)
 
   // ---- audio thread ----
   void render(float* L, float* R, int n);                 // called by the sound card for n samples
@@ -237,6 +247,8 @@ private:
   std::vector<Module*> order;
   bool dirty = true;
   AudioBuf* prevBuf = nullptr; double prevPos = 0;
+  std::atomic<Engine*> blendSrc{nullptr}; std::atomic<bool> blendRun{false}; std::atomic<double> blendTo{-1}; double blendLen = 1, blendPos = 0; bool blendBegun = false, nested = false;
+  float blendL[BLOCK], blendR[BLOCK];
 };
 
 // scales and keys, shared with the screen

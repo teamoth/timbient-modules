@@ -34,8 +34,13 @@ public:
   uint32_t messagesFrom(const std::string& name) const;   // how many messages (and clock ticks) each open input has sent so far
   uint32_t clockFrom(const std::string& name) const;
 
+  // BLEND TO: MIDI coming in goes to the session on the screen; what every engine sends goes out (so notes still sounding
+  // in the session being left get their note-offs)
+  void setTarget(Engine& e);
+  void alsoSendFrom(Engine& e) { for (auto& x : extra) { Engine* z = nullptr; if (x.load() == &e) return; if (x.compare_exchange_strong(z, &e)) return; } }
+
 private:
-  Engine& eng;
+  Engine& eng; std::atomic<Engine*> extra[3] = {};
   std::vector<std::unique_ptr<RtMidiIn>> ins; std::vector<std::string> inNames;
   static constexpr int SLOTS = 16;
   std::atomic<RtMidiOut*> outs[SLOTS]; std::string outNames[SLOTS];

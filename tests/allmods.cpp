@@ -369,6 +369,33 @@ int main(int argc, char** argv) {
     const bool ok = lvOk && fadeOk && moveOk && specOk && oldOk; if (!ok) fails++;
     std::printf("level x%.2f; crossfader A %.2f %.2f %.2f, B %.2f %.2f %.2f, square swaps %d in 4 s, random jumps %d; spectrum loudest %.0f Hz at %.1f dB, below 20 Hz %.0f dB, passes %s; old session %d cable(s), into IN %d, note \"%s\"%s\n",
       r1 / (0.1 / std::sqrt(2.0)), rA[0], rA[1], rA[2], rB[0], rB[1], rB[2], swaps, jumps, topHz, topDb, low, diff == 0 ? "untouched" : "CHANGED", nc, intoIn, note.c_str(), ok ? "" : "  WRONG"); }
+  // BLEND TO: a second engine plays the first inside itself, fading it out as its own session fades in, keeping the loudness level
+  // (each quarter second within 1.5 dB of what equal-loudness gains give); a recording hands over; CANCEL turns round without a
+  // jump; and the screen's patch, set aside, comes back as it was
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    Engine e1, e2; e1.setSampleRate(RATE); e2.setSampleRate(RATE); Ui u1(e1), u2(e2);
+    auto voice = [&](Ui& u, Engine& e, float note) { u.clearPatch(); UiMod* o = u.add("out", 300, 20); UiMod* v = u.add("pad", 0, 20); u.set(v, "sus", 1); u.set(v, "hold", 30); u.connect(v, "OUT", o, "IN");
+      run(e, 0.1f); Event ev; ev.note = note; ev.vel = 1; e.trigger(v->m->id, 0, ev); run(e, 1.5f); };
+    Engine ea, eb; ea.setSampleRate(RATE); eb.setSampleRate(RATE); Ui ua(ea), ub(eb);   // the same two sessions again, played alone in step: the reference
+    voice(u1, e1, 57); voice(u2, e2, 64); voice(ua, ea, 57); voice(ub, eb, 64); const float ra = run(e1, 1.f).rms, rb = run(e2, 1.f).rms; run(ea, 1.f); run(eb, 1.f);
+    const float rec0 = 1; e1.recBuf.assign(48000 * 2, 0.f); e1.recOn.store(true); e2.recBuf.assign(48000 * 2, 0.f); e2.recR = e2.recW.load(); e2.recOn.store(true);
+    e2.blendFrom(&e1, 2.0); e2.blendGo(); float worst = 0; bool handed = false;
+    for (int w = 0; w < 10; w++) { const float u0 = std::max(0.f, e2.blendAt.load()); const float r = run(e2, 0.25f).rms, xa = run(ea, 0.25f).rms, xb = run(eb, 0.25f).rms; if (w == 0) handed = !e1.recOn.load() && e2.recW.load() > 0;
+      const float u = std::min(1.f, (u0 + std::max(0.f, e2.blendAt.load())) / 2), a = u * PI / 2, want = std::sqrt(xa * xa * std::cos(a) * std::cos(a) + xb * xb * std::sin(a) * std::sin(a));
+      worst = std::max(worst, std::fabs(20 * std::log10(std::max(1e-6f, r) / want))); if (std::getenv("TB_BLENDLOG")) std::printf("  u %.2f  blend %.4f  want %.4f  a %.4f  b %.4f\n", u, r, want, xa, xb); }
+    const float done = e2.blendAt.load(), after = run(e2, 0.5f).rms, alone = run(eb, 0.5f).rms; run(ea, 0.5f); (void)rec0;
+    chk(worst < 1.5f, "level " + std::to_string(worst)); chk(done >= 1 && std::fabs(20 * std::log10(after / alone)) < 0.5f, "ends on the new one"); chk(handed, "recording hands over");
+    // CANCEL halfway: the old engine takes over again, from where the fade had got to
+    e2.blendRelease(); run(e2, 0.05f); e2.blendFrom(&e1, 2.0); e2.blendGo(); run(e2, 1.0f); const float p = e2.blendAt.load(), r1 = run(e2, 0.05f).rms;
+    const float q = e2.blendAt.load(); e1.blendFrom(&e2, (q * 2.0) / q, 1 - q); e1.blendGo(); e2.blendRelease(); const float r2 = run(e1, 0.05f).rms, back0 = e1.blendAt.load();
+    run(e1, 1.3f); const float back = e1.blendAt.load(), r3 = run(e1, 0.5f).rms;
+    chk(std::fabs(20 * std::log10(r2 / r1)) < 1 && back0 < 0.6f && back >= 1 && std::fabs(20 * std::log10(r3 / ra)) < 1, "cancel");
+    // the screen: set aside, the engine keeps it; put back, the same modules
+    Module* m0 = u1.mods.empty() ? nullptr : u1.mods[0]->m; const size_t n0 = u1.mods.size(); Ui::Stash st; u1.stashPatch(st); const bool emptied = u1.mods.empty() && e1.mods.size() == n0;
+    u2.clearPatch(); u1.unstashPatch(st); chk(emptied && u1.mods.size() == n0 && u1.mods[0]->m == m0 && u1.eng == &e1, "set aside and back");
+    e1.blendRelease(); e1.recOn.store(false); e2.recOn.store(false); run(e2, 0.05f); run(e1, 0.1f); u1.clearPatch(); run(e1, 0.2f); if (!ok) fails++;
+    std::printf("blend: level within %.2f dB of equal loudness, done %.2f, then %.1f dB from the new one alone; recording %s; cancel at %.2f: %.1f dB jump, back %.2f; screen %s%s%s\n",
+      worst, done, 20 * std::log10(after / alone), handed ? "handed over" : "LOST", p, 20 * std::log10(r2 / r1), back, emptied ? "set aside" : "NOT", ok ? "" : "  WRONG", res.c_str()); }
   // dragging a module over a sound cable offers to insert it, CROSSFADER and MIXER included (they have no IN/OUT by those names)
   { std::string res; bool ok = true;
     for (const char* ty : {"xfade", "mixer", "echo"}) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 30); UiMod* v = ui.add("pad", 0, 30); ui.connect(v, "OUT", o, "IN");

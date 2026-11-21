@@ -259,6 +259,17 @@ void Engine::block(float* L, float* R, int n) {
     if (silent) { for (auto& o : m->out) for (auto& ch : o) std::fill(ch.begin(), ch.begin() + n, 0.f); for (auto& lv : m->outLev) lv.store(0, std::memory_order_relaxed); }
     const float f = m->flash.load(std::memory_order_relaxed); if (f > 0) m->flash.store(std::max(0.f, f - n / sr), std::memory_order_relaxed);
   }
+  // BLEND TO: the session being left plays on in its own engine, fading out as this one fades in, keeping the loudness level
+  // (an engine played inside another, as the one being left, doesn't blend itself: so CANCEL can turn a blend round seamlessly)
+  if (Engine* src = nested ? nullptr : blendSrc.load(std::memory_order_acquire)) {
+    if (!blendBegun) { blendBegun = true; src->recOn.store(false, std::memory_order_release); }   // its recording carries on here
+    src->nested = true; src->block(blendL, blendR, n); src->nested = false;
+    const double to = blendTo.exchange(-1); if (to >= 0) blendLen = blendPos + std::max(0.05, to) * sr;   // NOW
+    const bool run = blendRun.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; i++) { const double u = std::min(1.0, blendPos / blendLen); const float a = (float)(u * (PI / 2));
+      masterL[i] = masterL[i] * std::sin(a) + blendL[i] * std::cos(a); masterR[i] = masterR[i] * std::sin(a) + blendR[i] * std::cos(a); if (run && blendPos < blendLen) blendPos += 1; }
+    blendAt.store((float)std::min(1.0, blendPos / blendLen), std::memory_order_relaxed); }
+  else if (blendBegun && !nested) { blendBegun = false; blendAt.store(-1, std::memory_order_relaxed); }
   // the master: a gentle compressor and a safety limit, then out to the sound card
   comp.sr = sr; comp.process(masterL, masterR, n);
   float pk = 0;

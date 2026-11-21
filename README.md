@@ -36,6 +36,14 @@ It can be installed from the browser's menu (**Install app**, or **Add to Home S
 the home screen, like an app. While a session plays the controls tuck away after a few seconds: tap the session to bring
 them back. In a browser, **FULL SCREEN** hides the browser's own bars.
 
+## Blending between sessions
+
+**SESSIONS > BLEND TO...** picks the next session. It loads while the current one plays on, then fades in as the current one
+fades out, keeping the overall level steady (**BLEND LENGTH**: 10 seconds to 4 minutes). The screen shows the new session
+straight away, so it can be adjusted as it rises; its tempo glides from the old session's to its own. **NOW** in the top bar
+finishes the blend in a few seconds, **CANCEL** fades back to the session you came from, just as it was. A recording carries
+straight on through a blend.
+
 ## MIDI controllers
 
 Right-click (or Ctrl-click) any control and choose **MIDI LEARN**, then move a knob, fader or encoder, or press a button,

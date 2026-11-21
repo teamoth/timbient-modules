@@ -38,9 +38,10 @@ struct Dropdown { std::vector<std::string> items; int x = 0, y = 0, w = 0, cur =
 
 class Ui {
 public:
-  explicit Ui(Engine& e) : eng(e) {}
+  explicit Ui(Engine& e) : eng(&e) {}
   bool viewOnly = false; std::string viewTitle;   // the web player: the patch to look at, nothing to change (no bar buttons, menus or help)
-  Engine& eng;
+  Engine* eng;   // the engine this session plays in (BLEND TO moves the screen to another one)
+  void setEngine(Engine& e) { eng = &e; }
   std::vector<std::unique_ptr<UiMod>> mods; std::vector<UiCable> cables;
   int viewX = 0, viewY = 0, nextId = 1;
   std::string statusMsg; float statusT = 0;
@@ -113,6 +114,14 @@ public:
   void unplug(const UiCable& c);
   void set(UiMod* m, const std::string& k, float v);
   void clearPatch();
+  // BLEND TO: the session being blended away from keeps playing in its own engine; its modules and cables are set aside here
+  // (not taken out of that engine), so CANCEL can put them back just as they were
+  struct Stash { std::vector<std::unique_ptr<UiMod>> mods; std::vector<UiCable> cables; int viewX = 0, viewY = 0, nextId = 1; std::vector<MidiMap> maps; Engine* eng = nullptr; bool held = false; };
+  void stashPatch(Stash& s);     // the patch moves into s; the screen is left empty (the engine still has it all)
+  void unstashPatch(Stash& s);   // and back (the screen's patch, if any, should be stashed or cleared first)
+  float blendAt = -1;            // how far a blend has got (0..1), or -1: none. The top bar shows it, with NOW and CANCEL
+  std::string blendName;         // the session being blended to
+  std::function<void()> onBlendNow, onBlendCancel;
   void demoPatch();
   UiMod* byId(int id) { for (auto& u : mods) if (u->m->id == id) return u.get(); return nullptr; }
 

@@ -75,7 +75,7 @@ void Ui::browserKey(int dir) {
 
 void Ui::drawBrowser(Canvas& c) {
   if (!br.open) return;
-  if (br.playing >= 0 && eng.previewAt.load() < 0) br.playing = -1;   // it finished
+  if (br.playing >= 0 && eng->previewAt.load() < 0) br.playing = -1;   // it finished
   brW = br.wide ? c.W - 8 : std::min(c.W - 8, 190); brH = std::min(c.H - TOP - 8, 204); brX = (c.W - brW) / 2; brY = TOP + std::max(2, (c.H - TOP - brH) / 3);
   const int x = brX, y = brY, w = brW, h = brH;
   c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, MENU_BG); c.frame(x, y, w, h, 21);
@@ -93,7 +93,7 @@ void Ui::drawBrowser(Canvas& c) {
     std::string n = e.name == ".." ? "< UP A FOLDER" : (e.folder ? "> " : "") + upper(e.name); const int nroom = (w - 16) / 4;
     if ((int)n.size() > nroom) { const int tail = std::max(8, nroom * 2 / 5); n = n.substr(0, nroom - tail - 2) + ".." + n.substr(n.size() - tail); }   // long names keep their end, where they differ
     c.text(n, x + 6, ry + 1, i == br.playing ? 4 : e.folder ? 7 : i == br.sel ? 15 : 9);
-    if (i == br.playing) { const float at = std::max(0.f, eng.previewAt.load()); c.rect(x + 6, ry + 6, (int)std::lround(at * (w - 14)), 1, 4); } }
+    if (i == br.playing) { const float at = std::max(0.f, eng->previewAt.load()); c.rect(x + 6, ry + 6, (int)std::lround(at * (w - 14)), 1, 4); } }
   if (!br.err.empty()) c.text(br.err, x + 6, ly + (int)br.items.size() * 8 + 3, 9);   // under the rows (and clear of UP A FOLDER)
   if ((int)br.items.size() > brRows) {   // where you are in a long list
     const int th = std::max(3, lh * brRows / (int)br.items.size()), ty = ly + (int)((lh - th) * br.scroll / std::max(1.f, (float)br.items.size() - brRows));
@@ -113,7 +113,7 @@ void Ui::drawBrowser(Canvas& c) {
       std::string l3;
       if (f.noteKnown) { const int nn = (int)std::lround(f.note), cents = (int)std::lround((f.note - nn) * 100); l3 += "NOTE " + noteName(nn) + (std::abs(cents) >= 8 ? (cents > 0 ? " +" : " ") + std::to_string(cents) : ""); }
       if (f.keyKnown) { if (!l3.empty()) l3 += "  "; l3 += std::string("KEY ") + KEY_NAMES[f.root] + " " + scales()[f.scale].name;
-        const bool fits = [&] { const auto& st = scales()[eng.key.scale.load()].steps; const int r0 = eng.key.root.load();
+        const bool fits = [&] { const auto& st = scales()[eng->key.scale.load()].steps; const int r0 = eng->key.root.load();
           for (int dd : scales()[f.scale].steps) { const int pc = (f.root + dd) % 12; bool in = false; for (int q : st) if ((r0 + q) % 12 == pc) in = true; if (!in) return false; } return true; }();
         if (fits) l3 += " *"; }
       if (f.tempoKnown) { if (!l3.empty()) l3 += "  "; l3 += "ABOUT " + std::to_string((int)std::lround(f.bpm)) + " BPM"; }

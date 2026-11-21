@@ -61,8 +61,8 @@ static const char* tyName(PType t) { return t == PType::Audio ? "audio" : t == P
 
 Json serializePatch(Ui& ui) {
   Json d = Json::object(); d.set("v", Json::number(2)); d.set("w", Json::number(2));   // w 2: modules are 8 wider (room for - and +)
-  Json key = Json::object(); key.set("root", Json::number(ui.eng.key.root.load())); key.set("scale", Json::number(ui.eng.key.scale.load())); d.set("key", key);
-  d.set("bpm", Json::number(ui.eng.tempo.bpm.load()));
+  Json key = Json::object(); key.set("root", Json::number(ui.eng->key.root.load())); key.set("scale", Json::number(ui.eng->key.scale.load())); d.set("key", key);
+  d.set("bpm", Json::number(ui.eng->tempo.bpm.load()));
   { Json mm = ui.midiMapsJson(false); if (!mm.a.empty()) d.set("midi", mm); }   // MIDI LEARN: this session's mappings
   Json mods = Json::array();
   for (auto& up : ui.mods) { UiMod& u = *up; const ModuleDef* def = u.m->def; Json m = Json::object();
@@ -90,8 +90,8 @@ Json serializePatch(Ui& ui) {
 }
 
 void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& changed) {
-  if (const Json* k = data.get("key")) { ui.eng.key.root.store((int)k->num("root")); ui.eng.key.scale.store(std::max(0, std::min((int)scales().size() - 1, (int)k->num("scale")))); }
-  if (data.num("bpm", 0) > 0) ui.eng.tempo.bpm.store((float)data.num("bpm"));
+  if (const Json* k = data.get("key")) { ui.eng->key.root.store((int)k->num("root")); ui.eng->key.scale.store(std::max(0, std::min((int)scales().size() - 1, (int)k->num("scale")))); }
+  if (data.num("bpm", 0) > 0) ui.eng->tempo.bpm.store((float)data.num("bpm"));
   const Json* mods = data.get("mods"); if (!mods || mods->t != Json::ARR) return;
   // modules that aren't in the remembered patch go
   std::vector<UiMod*> gone;
@@ -146,8 +146,8 @@ const Json* patchIn(const Json& f) {
 std::string loadPatch(Ui& ui, const Json& data0) {
   Json data = data0;   // a copy we can adjust for older sessions
   ui.clearPatch();
-  if (const Json* k = data.get("key")) { if (k->get("root")) ui.eng.key.root.store((int)k->num("root")); if (k->get("scale")) ui.eng.key.scale.store(std::max(0, std::min((int)scales().size() - 1, (int)k->num("scale")))); }
-  if (data.num("bpm", 0) > 0) ui.eng.tempo.bpm.store((float)data.num("bpm"));
+  if (const Json* k = data.get("key")) { if (k->get("root")) ui.eng->key.root.store((int)k->num("root")); if (k->get("scale")) ui.eng->key.scale.store(std::max(0, std::min((int)scales().size() - 1, (int)k->num("scale")))); }
+  if (data.num("bpm", 0) > 0) ui.eng->tempo.bpm.store((float)data.num("bpm"));
   Json* mods = data.getm("mods"); Json* cables = data.getm("cables"); if (!mods || mods->t != Json::ARR) return "THAT FILE HAS NO MODULES";
   // older web sessions: modules that were merged or replaced
   std::set<int> oldDuck;   // DUCKERs from before 0.50 (DEPTH in dB now: their mod cables and MIDI mappings follow it)

@@ -37,7 +37,7 @@ void Ui::closeEditor(bool force) {   // closing always stops what it was playing
 static void edStop(Ui& u) { if (u.ed.playing && u.onEditPlay) u.onEditPlay({}, {}, u.ed.sr, 0, -1, false); u.ed.playing = false; }
 static void edPlay(Ui& u) { if (!u.onEditPlay || u.ed.d.size() < 2) return; u.onEditPlay(u.ed.d, u.ed.r, u.ed.sr, u.ed.a * u.ed.sr, u.ed.b * u.ed.sr, u.ed.loop); u.ed.playing = true; }
 static void edLive(Ui& u) {   // the handles moved (or LOOP changed) while it plays: it follows at once
-  if (!u.ed.playing) return; u.eng.prevA.store(u.ed.a * u.ed.sr); u.eng.prevE.store(u.ed.b * u.ed.sr); u.eng.prevLoop.store(u.ed.loop); }
+  if (!u.ed.playing) return; u.eng->prevA.store(u.ed.a * u.ed.sr); u.eng->prevE.store(u.ed.b * u.ed.sr); u.eng->prevLoop.store(u.ed.loop); }
 
 static void snapshot(Ui::Editor& e) {   // before a change: remember the sound, for UNDO (as much as fits)
   e.redo.clear(); const size_t one = e.d.size() + e.r.size(); if (one > UNDO_FLOATS) { e.undo.clear(); return; }
@@ -124,7 +124,7 @@ static void press(Ui& u, int id) {
 
 void Ui::drawEditor(Canvas& c) {
   if (!ed.open) return;
-  if (ed.playing && eng.previewAt.load() < 0) ed.playing = false;   // it finished
+  if (ed.playing && eng->previewAt.load() < 0) ed.playing = false;   // it finished
   edW = std::min(c.W - 8, 320); edX = (c.W - edW) / 2;
   const int x = edX, w = edW, wx = x + 4, ww = w - 8; const double dur = durOf(ed);
   // the buttons, in two rows (each with some on the right); a narrow window moves the right ones onto rows of their own
@@ -156,7 +156,7 @@ void Ui::drawEditor(Canvas& c) {
     for (int yy = ya; yy <= yb; yy++) c.px(wx + k, yy, in ? 48 : 21); }
   auto hx = [&](double tt) { return wx + (int)std::lround((tt - ed.v0) / (ed.v1 - ed.v0) * (ww - 1)); };
   for (int s = 0; s < 2; s++) { const int X = hx(s ? ed.b : ed.a); if (X < wx || X >= wx + ww) continue; for (int yy = wy; yy < wy + WH; yy++) c.px(X, yy, 4); c.rect(X - (s ? 3 : 0), wy, 4, 3, 4); }   // the handles
-  if (ed.playing) { const int X = hx(std::max(0.f, eng.previewAt.load()) * dur); if (X >= wx && X < wx + ww) for (int yy = wy; yy < wy + WH; yy++) c.px(X, yy, 9); }
+  if (ed.playing) { const int X = hx(std::max(0.f, eng->previewAt.load()) * dur); if (X >= wx && X < wx + ww) for (int yy = wy; yy < wy + WH; yy++) c.px(X, yy, 9); }
   c.ink = ink;
   // where you are: the view's ends, and a bar for the whole sound with the view on it (drag it to move along)
   const int ry = wy + WH + 2; c.rect(wx, ry, ww, 3, 21); const int vx0 = wx + (int)(ed.v0 / dur * ww), vx1 = wx + (int)std::ceil(ed.v1 / dur * ww); c.rect(vx0, ry, std::max(2, vx1 - vx0), 3, 9);

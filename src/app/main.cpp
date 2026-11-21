@@ -23,8 +23,8 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.50.0";
-static Engine* gEngine = nullptr;
+static const char* VERSION = "0.51.0";
+static std::atomic<Engine*> gEngine{nullptr};   // the engine the sound card renders: the session on the screen (while blending, it plays the last one too)
 
 // ---------------- sound ----------------
 // tiny numbers at the end of echo and reverb tails ("denormals") are very slow on Intel processors: treat them as zero
@@ -42,7 +42,7 @@ static void audioCallback(ma_device*, void* output, const void*, ma_uint32 frame
   ma_uint32 done = 0;
   while (done < frames) {
     const ma_uint32 n = std::min<ma_uint32>(4096, frames - done);
-    gEngine->render(L, R, (int)n);
+    gEngine.load(std::memory_order_acquire)->render(L, R, (int)n);
     for (ma_uint32 i = 0; i < n; i++) { out[(done + i) * 2] = L[i]; out[(done + i) * 2 + 1] = R[i]; }
     done += n;
   }
@@ -60,7 +60,7 @@ static std::vector<std::pair<std::string, ma_device_id>> listDevices(bool captur
   ma_device_info *pl = nullptr, *cp = nullptr; ma_uint32 np = 0, nc = 0; if (ma_context_get_devices(&gCtx, &pl, &np, &cp, &nc) != MA_SUCCESS) return v;
   const ma_device_info* in = capture ? cp : pl; const ma_uint32 n = capture ? nc : np; for (ma_uint32 i = 0; i < n; i++) v.push_back({in[i].name, in[i].id}); return v; }
 static bool findDevice(bool capture, const std::string& name, ma_device_id& id) { if (name.empty()) return false; for (auto& d : listDevices(capture)) if (d.first == name) { id = d.second; return true; } return false; }
-static void inputCallback(ma_device*, void*, const void* input, ma_uint32 frames) { if (gEngine && input && gEngine->input.live.load(std::memory_order_relaxed)) gEngine->input.write((const float*)input, frames); }
+static void inputCallback(ma_device*, void*, const void* input, ma_uint32 frames) { Engine* e = gEngine.load(std::memory_order_acquire); if (e && input && e->input.live.load(std::memory_order_relaxed) && e->input.frames) e->input.write((const float*)input, frames); }
 struct Capture {
   ma_device dev; bool open = false; std::string name;
   bool start(Engine& e, const std::string& want, int period) {
@@ -71,7 +71,7 @@ struct Capture {
     const int ch = std::max(1, std::min(8, (int)dev.capture.channels)); AudioInput& I = e.input; I.live.store(false); I.ch.store(ch); I.frames = 65536; I.buf.assign(I.frames * (size_t)ch, 0.f); I.w.store(0);
     I.lag.store(period * 2); name = named ? want : std::string(dev.capture.name); open = true; I.live.store(true);
     if (ma_device_start(&dev) != MA_SUCCESS) { stop(); return false; } return true; }
-  void stop() { if (open) { if (gEngine) gEngine->input.live.store(false); ma_device_uninit(&dev); open = false; } }
+  void stop() { if (open) { if (Engine* e = gEngine.load()) e->input.live.store(false); ma_device_uninit(&dev); open = false; } }
 };
 struct Sound {
   ma_device dev; bool open = false; int bufIdx = 2; std::string want, name;   // want: the output chosen in SETTINGS (empty: the system's)
@@ -93,6 +93,7 @@ struct DialogResult { bool open; std::string path; int target = 0, slot = 0; boo
 static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
 static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "tmbnt;json;txt"}};
 static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
+static void onBlendDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.target = -2; dlgResults.push_back(r); } }   // BLEND TO
 static void onSaveDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({false, files[0]}); } }
 static void onFolderDialog(void* ud, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.folder = true; r.target = ud ? -1 : 0; dlgResults.push_back(r); } }
 static const SDL_DialogFileFilter AUDIO_FILTER[] = {{"Sound files", "wav;wave;aif;aiff;flac;mp3"}};
@@ -136,15 +137,16 @@ int main(int argc, char** argv) {
   auto saveSettings = [&] { writeFile(store.path("settings.json"), settings.dump()); };
 
   // ---- sound first, so the engine knows the sample rate before any module is built ----
-  static Engine engine; gEngine = &engine;
+  // two engines: the session on the screen plays in one; BLEND TO loads the next session into the other and fades across
+  static Engine engA, engB; Engine* curEng = &engA; gEngine.store(&engA);
   static Sound sound; sound.bufIdx = std::max(0, std::min(4, (int)settings.num("buffer", 2))); sound.want = settings.str("outputDevice");
   static Capture capture; float captureT = 0, captureIdle = 0;   // AUDIO IN's input: opened while there's an AUDIO IN (so nothing asks for the microphone until then)
   int rateIdx = std::max(0, std::min(NRATES - 1, (int)settings.num("rate", 0)));
-  if (!sound.start(engine, RATES[rateIdx]) && !sound.want.empty()) sound.want.clear();   // the chosen output isn't there: the system's
-  if (!sound.open && !sound.start(engine, RATES[rateIdx]) && !(rateIdx != 0 && sound.start(engine, 0))) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
+  if (!sound.start(*curEng, RATES[rateIdx]) && !sound.want.empty()) sound.want.clear();   // the chosen output isn't there: the system's
+  if (!sound.open && !sound.start(*curEng, RATES[rateIdx]) && !(rateIdx != 0 && sound.start(*curEng, 0))) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Timbient Modules", "Could not open the sound device.", nullptr); return 1; }
 
-  Ui ui(engine);
-  static Midi midi(engine); midi.start();
+  Ui ui(*curEng);
+  static Midi midi(*curEng); midi.alsoSendFrom(engB); midi.start();
   // the app opens to an empty session; RESTORE LAST WORK brings back what was there
   { Json prev; if (store.readAutosave(prev) && prev.get("mods") && prev.get("mods")->a.size() > 1) writeFile(store.path("previous.json"), prev.dump()); }
   ui.add("out", 300, 30);
@@ -162,7 +164,7 @@ int main(int argc, char** argv) {
     UiMod::Snd& sd = u->snd[slot]; sd.peaks = peaksOf(*b); sd.missing = false; sd.secs = b->d.size() / b->sr; if (keep) sd.name = name;
     if (keep) { char id[40]; std::snprintf(id, 40, "n%llx%04x", (unsigned long long)std::time(nullptr), (unsigned)(SDL_rand(65536)));
       if (writeWavMono16(audioDir + id + ".wav", *b)) { sd.id = id; dirty = true; saveT = 0.5f; } else ui.status("COULD NOT KEEP THE SOUND", 4); }
-    u->m->roots[slot].store(sd.root); engine.setBuffer(u->m->id, b, slot);
+    u->m->roots[slot].store(sd.root); (*curEng).setBuffer(u->m->id, b, slot);
     if (keep && u->m->def->type == "looper") u->m->p[0].store(1);   // GRAIN LOOPER: a sound caught or loaded is HELD
   };
   auto restoreSound = [&](UiMod* u) {
@@ -172,13 +174,13 @@ int main(int argc, char** argv) {
   };
   auto catchSound = [&](UiMod* u, bool quiet) {   // GRAIN LOOPER: CATCH takes the last LENGTH seconds of what came in
     Module* m = u->m; if (m->ring.empty()) return; const long N = (long)m->ring.size(), w = m->ringW.load(std::memory_order_acquire);
-    const long n = std::min(std::min(N, w), (long)(m->p[m->def->paramIndex("len")].load() * engine.sr)); if (n < 256) { if (!quiet) ui.status("NOTHING TO CATCH YET"); return; }
-    AudioBuf* b = new AudioBuf(); b->sr = engine.sr; b->d.resize(n); float mx = 0; const int ci = m->def->paramIndex("chan"); const bool st = ci >= 0 && m->p[ci].load() > 0.5f && m->ringR.size() == m->ring.size();
+    const long n = std::min(std::min(N, w), (long)(m->p[m->def->paramIndex("len")].load() * (*curEng).sr)); if (n < 256) { if (!quiet) ui.status("NOTHING TO CATCH YET"); return; }
+    AudioBuf* b = new AudioBuf(); b->sr = (*curEng).sr; b->d.resize(n); float mx = 0; const int ci = m->def->paramIndex("chan"); const bool st = ci >= 0 && m->p[ci].load() > 0.5f && m->ringR.size() == m->ring.size();
     if (st) b->r.resize(n);   // CHANNELS STEREO: left and right
     for (long i = 0; i < n; i++) { const long k = (w - n + i) % N; b->d[i] = st ? 2 * m->ring[k] - m->ringR[k] : m->ring[k]; mx = std::max(mx, std::fabs(b->d[i])); if (st) { b->r[i] = m->ringR[k]; mx = std::max(mx, std::fabs(b->r[i])); } }
     if (mx < 0.002f) { delete b; if (!quiet) ui.status("NOTHING TO CATCH YET"); return; }
     for (auto& v : b->d) v *= 0.8f / mx; for (auto& v : b->r) v *= 0.8f / mx;
-    giveSound(u, b, true); ui.status("CAUGHT " + std::to_string((int)std::lround(n / engine.sr)) + "S");
+    giveSound(u, b, true); ui.status("CAUGHT " + std::to_string((int)std::lround(n / (*curEng).sr)) + "S");
   };
   auto loadData = [&](const Json& data, const std::string& what) {
     const std::string note = loadPatch(ui, data); ui.centrePending = true; dirty = true; saveT = 0.5f;   // the view: to the middle of the session
@@ -192,7 +194,7 @@ int main(int argc, char** argv) {
     const bool back = to < hpos; hpos = to; Json j; if (!Json::parse(hist[hpos], j)) return;
     const int vx = ui.viewX, vy = ui.viewY; restoring = true; std::vector<std::pair<UiMod*, int>> sc; applyPatch(ui, j, sc);   // only what changed: sequencers keep going
     for (auto& [u, k] : sc) { UiMod::Snd& sd = u->snd[k];
-      if (sd.id.empty()) { engine.setBuffer(u->m->id, nullptr, k); sd.peaks.clear(); continue; }
+      if (sd.id.empty()) { (*curEng).setBuffer(u->m->id, nullptr, k); sd.peaks.clear(); continue; }
       std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err, true); if (b) giveSound(u, b, false, k); else sd.missing = true; }
     restoring = false;
     ui.viewX = vx; ui.viewY = vy; dirty = true; saveT = 0.5f; ui.status(back ? "UNDONE" : "REDONE", 1.2f);
@@ -218,10 +220,10 @@ int main(int argc, char** argv) {
   // ---- the sound browser: hear a file before it goes in ----
   auto browseDir = [&]() -> std::string { const std::string d = settings.str("browseDir"); if (!d.empty()) return d; const char* mu = SDL_GetUserFolder(SDL_FOLDER_MUSIC); return mu ? mu : store.dir; };
   ui.onPreview = [&](const std::string& path) {
-    if (path.empty()) { engine.preview(nullptr); return; }
-    std::string err; AudioBuf* b = decodeAudio(path, 1200, err, true); if (!b) { engine.preview(nullptr); ui.status(err, 4); return; }   // heard as it is, stereo or not
+    if (path.empty()) { (*curEng).preview(nullptr); return; }
+    std::string err; AudioBuf* b = decodeAudio(path, 1200, err, true); if (!b) { (*curEng).preview(nullptr); ui.status(err, 4); return; }   // heard as it is, stereo or not
     float mx = 0; for (float v : b->d) mx = std::max(mx, std::fabs(v)); for (float v : b->r) mx = std::max(mx, std::fabs(v)); if (mx > 1e-4f && mx < 0.5f) { for (auto& v : b->d) v *= 0.5f / mx; for (auto& v : b->r) v *= 0.5f / mx; }   // quiet files a little louder, so you can hear them
-    engine.preview(b); };
+    (*curEng).preview(b); };
   // the sound browser's details: worked out on a thread of their own, so the screen never waits (only the newest ask matters)
   struct InfoJob { std::mutex mx; std::condition_variable cv; std::string want; bool stop = false; bool ready = false; std::string path; SoundInfo info; int ch = 0; float rate = 0; double secs = 0; bool failed = false; };
   static InfoJob job;
@@ -243,7 +245,7 @@ int main(int argc, char** argv) {
       const bool folder = SDL_GetPathInfo(full.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY; c->out->push_back({name, folder}); return SDL_ENUM_CONTINUE; }, &ctx); };
   ui.br.autoPreview = settings.num("autoPreview", 1) > 0.5; ui.br.wide = settings.num("browseWide", 0) > 0.5;
   ui.onEditPlay = [&](const std::vector<float>& d, const std::vector<float>& r, float sr, double a, double e, bool loop) {
-    if (d.empty()) { engine.preview(nullptr); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = d; b->r = r; engine.preview(b, a, e, loop); };
+    if (d.empty()) { (*curEng).preview(nullptr); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = d; b->r = r; (*curEng).preview(b, a, e, loop); };
   ui.onEditCrop = [&](int id, int slot, std::vector<float>&& d, std::vector<float>&& rr, float sr, const std::string& name) {   // KEEP: this becomes the module's sound (kept, so sessions bring it back)
     UiMod* u = ui.byId(id); if (!u) { ui.status("ITS MODULE HAS GONE", 3); return; } AudioBuf* b = new AudioBuf(); b->sr = sr; b->d = std::move(d); b->r = std::move(rr); const double secs = b->d.size() / sr;
     giveSound(u, b, true, slot, name.empty() ? "EDITED" : name);
@@ -313,7 +315,7 @@ int main(int argc, char** argv) {
       const auto devs = listDevices(true); Dropdown q; q.x = u->x - ui.viewX + 8; q.y = u->y - ui.viewY + 20; q.items.push_back("SYSTEM DEFAULT"); q.cur = 0; const std::string cur = settings.str("inputDevice");
       for (size_t k2 = 0; k2 < devs.size(); k2++) { q.items.push_back(devs[k2].first); if (devs[k2].first == cur) q.cur = (int)k2 + 1; }
       q.pick = [&, devs](int j) { if (j > (int)devs.size()) return; const std::string nm = j == 0 ? std::string() : devs[j - 1].first; settings.set("inputDevice", Json::string(nm)); saveSettings();
-        if (!capture.start(engine, nm, BUFFERS[sound.bufIdx])) ui.status("COULD NOT OPEN THAT INPUT", 5); else ui.status("INPUT: " + capture.name + " (FOR EVERY AUDIO IN)", 3); };
+        if (!capture.start(*curEng, nm, BUFFERS[sound.bufIdx])) ui.status("COULD NOT OPEN THAT INPUT", 5); else ui.status("INPUT: " + capture.name + " (FOR EVERY AUDIO IN)", 3); };
       ui.openDropdown(q); return true; }
     if (ty == "sample" && k == "savetake") {   // SAVE TAKE: the sound as a WAV, in the recordings folder
       const UiMod::Snd& sd = u->snd[0]; if (sd.id.empty()) { ui.status("NOTHING RECORDED OR LOADED YET", 3); return true; }
@@ -323,8 +325,8 @@ int main(int argc, char** argv) {
       ui.status(SDL_CopyFile((audioDir + sd.id + ".wav").c_str(), to.c_str()) ? "SAVED: " + to : std::string("COULD NOT SAVE THE TAKE"), 5); return true; }
     if (ty == "out" && k == "rec") {
       if (!rec.on()) { std::time_t tt = std::time(nullptr); char nm[64]; std::strftime(nm, 64, "timbient-%Y%m%d-%H%M%S.wav", std::localtime(&tt));
-        if (rec.start(engine, recDir + nm)) ui.status("RECORDING"); else ui.status("COULD NOT START A RECORDING IN " + recDir, 6); }
-      else { const std::string p = rec.path; const bool got = rec.stop(engine); if (Module* o = outMod()) o->disp[1].store(0);
+        if (rec.start(*curEng, recDir + nm)) ui.status("RECORDING"); else ui.status("COULD NOT START A RECORDING IN " + recDir, 6); }
+      else { const std::string p = rec.path; if (Engine* src = curEng->blending()) rec.pump(*src); const bool got = rec.stop(*curEng); if (Module* o = outMod()) o->disp[1].store(0);
         if (got) { ui.status("RECORDING STOPPED: CHOOSE WHERE TO SAVE IT", 6);   // ask where it goes (it's safe in Music / Timbient Modules meanwhile)
           SDL_ShowSaveFileDialog(onRecDialog, new std::string(p), win, WAV_FILTER, 1, p.c_str()); }
         else { std::remove(p.c_str()); ui.status("NOTHING RECORDED"); } }
@@ -363,11 +365,67 @@ int main(int argc, char** argv) {
       if (fn.empty()) fn = "session"; saveName = fn + ".tmbnt";
       std::string start = saveName; if (!curFile.empty()) { const size_t sl = curFile.find_last_of("/\\"); if (sl != std::string::npos) start = curFile.substr(0, sl + 1) + saveName; }
       SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, start.c_str()); }); };
+  // ---- BLEND TO: the next session loads into the other engine, then fades in as this one fades out (equal loudness) ----
+  // The session being left keeps playing in its own engine (the new one plays it inside itself), and its screen is set aside,
+  // so CANCEL can fade back to it just as it was. The new one's tempo glides from the old one's to its own over the blend
+  static const int BLEND_SECS[5] = {10, 30, 60, 120, 240};
+  int blendIdx = std::max(0, std::min(4, (int)settings.num("blendLength", 1)));
+  struct BlendLoad { std::thread th; std::atomic<int> state{0}; std::string path, err; Json data; };   // state: 0 none, 1 reading, 2 ready, 3 failed
+  static BlendLoad bl; Ui::Stash blendStash; std::string blendOldFile; float blendBpm0 = 0, blendBpm1 = 0, blendClearT = -1; bool blendGlide = false;
+  auto blendLabel = [](int k) { const int v = BLEND_SECS[k]; return v < 60 ? std::to_string(v) + " S" : std::to_string(v / 60) + " MIN"; };
+  auto otherEng = [&]() -> Engine& { return curEng == &engA ? engB : engA; };
+  auto blendBusy = [&](bool say) { const bool b = curEng->blending() != nullptr || bl.state.load() == 1 || bl.state.load() == 2;
+    if (b && say) ui.status("WAIT FOR THE BLEND TO FINISH (OR NOW, OR CANCEL)", 4); return b; };
+  auto handRecording = [&](Engine& from, Engine& to) {   // a recording carries straight on in the engine taking over
+    if (!rec.on()) return; if (to.recBuf.size() != from.recBuf.size()) to.recBuf.assign(from.recBuf.size(), 0.f); to.recR = to.recW.load(); to.recOn.store(true, std::memory_order_release); };
+  auto blendLoad = [&](const std::string& path) {   // read, unpack and check the file away from the screen
+    if (blendBusy(true)) return; if (bl.th.joinable()) bl.th.join();
+    bl.path = path; bl.err.clear(); bl.state.store(1); ui.status("GETTING " + fileName(path) + " READY TO BLEND...", 30);
+    bl.th = std::thread([&, path] { Json f; if (!Json::parse(readFile(path), f)) { bl.err = "THAT FILE COULD NOT BE READ"; bl.state.store(3); return; }
+      if (const Json* pack = f.get("audio")) if (pack->t == Json::OBJ) for (auto& kv : pack->o) { const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
+        AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000), (int)kv.second.num("ch", 1)); if (b) { writeWavMono16(fn, *b); delete b; } }
+      const Json* data = patchIn(f); if (!data) { bl.err = "THAT IS NOT A TIMBIENT SESSION"; bl.state.store(3); return; }
+      bl.data = *data; bl.state.store(2); }); };
+  auto blendStart = [&] {   // (on the screen's thread, once the file is ready)
+    Engine& from = *curEng; Engine& to = otherEng(); to.collectGarbage();
+    to.setSampleRate(from.sr); to.outLatency = from.outLatency; to.noteLimit.store(from.noteLimit.load()); to.freeze.store(false); to.input.live.store(false);
+    to.key.root.store(from.key.root.load()); to.key.scale.store(from.key.scale.load()); to.tempo.bpm.store(from.tempo.bpm.load());   // (a file without them carries on with these)
+    blendOldFile = curFile; blendBpm0 = from.tempo.bpm.load(); ui.stashPatch(blendStash);
+    handRecording(from, to); to.blendFrom(&from, BLEND_SECS[blendIdx]); curEng = &to; ui.setEngine(to); gEngine.store(&to, std::memory_order_release); midi.setTarget(to);
+    if (capture.open) capture.start(to, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);
+    loadData(bl.data, fileName(bl.path)); curFile = bl.path; bl.data = Json();
+    blendBpm1 = to.tempo.bpm.load(); to.tempo.bpm.store(blendBpm0); blendGlide = std::fabs(blendBpm1 - blendBpm0) > 0.01f;
+    to.blendGo(); ui.blendAt = 0; ui.blendName = fileName(bl.path); blendClearT = -1;
+    ui.status("BLENDING TO " + fileName(bl.path) + " OVER " + blendLabel(blendIdx), 4); };
+  ui.onBlendNow = [&] { if (curEng->blending() && ui.blendAt >= 0 && ui.blendAt < 1) { curEng->blendFinish(3); ui.status("FINISHING THE BLEND", 2); } };
+  ui.onBlendCancel = [&] {   // back the way it came: the session being left fades back in, as it was; the new one fades out (as long as it took to get here, at most 4 s)
+    Engine* back = curEng->blending(); if (!back || ui.blendAt < 0 || ui.blendAt >= 1 || !blendStash.held) return;
+    Engine& now = *curEng; const float p = std::max(0.02f, now.blendAt.load()); const double rest = std::min(4.0, (double)p * BLEND_SECS[blendIdx]);
+    Ui::Stash gone; ui.stashPatch(gone); gone = Ui::Stash();   // (its modules stay in the engine being left, which is cleared when the fade ends)
+    ui.unstashPatch(blendStash); handRecording(now, *back);
+    back->blendFrom(&now, rest / p, 1 - p); back->blendGo(); curEng = back; gEngine.store(back, std::memory_order_release); now.blendRelease(); midi.setTarget(*back);
+    if (capture.open) capture.start(*back, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);
+    curFile = blendOldFile; blendGlide = false; ui.blendName = fileName(blendOldFile); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.1f; ui.status("BACK TO " + (blendOldFile.empty() ? std::string("THE LAST SESSION") : fileName(blendOldFile)), 3); };
+  auto blendFrame = [&] {   // each frame: start a blend that's ready, follow one that's going, and tidy up after one that's done
+    const int st = bl.state.load(); if (st == 3) { bl.state.store(0); ui.status(bl.err, 5); } else if (st == 2) { bl.state.store(0); blendStart(); }
+    Engine* src = curEng->blending(); if (!src) { ui.blendAt = -1; return; }
+    const float p = curEng->blendAt.load();
+    if (blendClearT < 0) {
+      ui.blendAt = std::max(0.f, p); if (blendGlide) curEng->tempo.bpm.store(blendBpm0 + (blendBpm1 - blendBpm0) * std::max(0.f, p));
+      if (curEng->cpuLoad.load() > 0.92f) ui.status("THE TWO SESSIONS TOGETHER ARE A LOT FOR THIS COMPUTER", 2);
+      if (p >= 1) { if (blendGlide) curEng->tempo.bpm.store(blendBpm1); src->clear(); blendClearT = 0.4f; blendStash = Ui::Stash(); ui.blendAt = -1; ui.status("BLENDED: " + ui.blendName, 3); } }
+    else if ((blendClearT -= 1.f / 60) <= 0) { curEng->blendRelease(); blendClearT = -1; } };
+
   std::function<void(int)> openSessions = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
-    d.items = {"NEW EMPTY SESSION", "RESTORE LAST WORK", "OPEN...", curFile.empty() ? "SAVE..." : "SAVE  " + fileName(curFile), "SAVE AS..."};
+    d.items = {"NEW EMPTY SESSION", "RESTORE LAST WORK", "OPEN...", "BLEND TO...", "BLEND LENGTH  " + blendLabel(blendIdx), curFile.empty() ? "SAVE..." : "SAVE  " + fileName(curFile), "SAVE AS..."};
     if (!store.list.empty()) { d.items.push_back("SAVE THE " + std::to_string(store.list.size()) + " OLD IN-APP SESSIONS AS FILES..."); d.items.push_back("REMOVE THE OLD IN-APP SESSIONS"); }
     d.pick = [&, x0](int i) {
+      if (i <= 2 && blendBusy(true)) return;   // (a new session can't come in halfway through a blend)
+      if (i == 3) { SDL_ShowOpenFileDialog(onBlendDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
+      if (i == 4) { Dropdown q; q.x = x0; q.y = 11 + 4 * 8; q.title = 0; q.items = {"BLEND LENGTH"}; for (int k = 0; k < 5; k++) q.items.push_back(blendLabel(k)); q.cur = blendIdx + 1;
+        q.pick = [&](int j) { if (j < 1) return; blendIdx = j - 1; settings.set("blendLength", Json::number(blendIdx)); saveSettings(); ui.status("BLENDS TAKE " + blendLabel(blendIdx), 2); }; ui.openDropdown(q); return; }
+      if (i >= 5) i -= 2;
       if (i == 0) { Dropdown q; q.x = x0; q.y = 11; q.items = {"CLEAR EVERYTHING?", "YES, START EMPTY", "NO, KEEP IT"}; q.title = 0; q.danger = 1;
         q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); curFile.clear(); dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
       if (i == 1) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) loadData(prev, "YOUR LAST WORK"); else ui.status("NOTHING TO RESTORE"); return; }
@@ -375,7 +433,7 @@ int main(int argc, char** argv) {
       if (i == 3) { if (curFile.empty()) saveAs(); else ui.status(writeFile(curFile, sessionFile(serializePatch(ui))) ? "SAVED " + fileName(curFile) : "COULD NOT SAVE THE FILE", 4); return; }
       if (i == 4) { saveAs(); return; }
       if (i == 5) { SDL_ShowOpenFolderDialog(onFolderDialog, (void*)1, win, nullptr, false); ui.status("PICK A FOLDER FOR THEM", 4); return; }
-      if (i == 6) { Dropdown z; z.x = x0; z.y = 11 + i * 8; z.items = {"REMOVE THEM FROM THE APP?", "YES (I SAVED THEM AS FILES)", "NO, KEEP THEM"}; z.title = 0; z.danger = 1;
+      if (i == 6) { Dropdown z; z.x = x0; z.y = 11 + (i + 2) * 8; z.items = {"REMOVE THEM FROM THE APP?", "YES (I SAVED THEM AS FILES)", "NO, KEEP THEM"}; z.title = 0; z.danger = 1;
         z.pick = [&](int q2) { if (q2 == 1) { store.list.clear(); store.save(); ui.status("THE OLD IN-APP SESSIONS ARE GONE"); } }; ui.openDropdown(z); }
     };
     ui.openDropdown(d);
@@ -453,41 +511,42 @@ int main(int argc, char** argv) {
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
-    char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround(engine.tempo.bpm.load()));
-    char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / engine.sr);
-    d.items = {std::string("KEY  ") + KEY_NAMES[engine.key.root.load()], std::string("SCALE  ") + scales()[engine.key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround(engine.sr / 100) / 10) + "." + std::to_string((int)std::lround(engine.sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS", "MIDI"};
+    char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround((*curEng).tempo.bpm.load()));
+    char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / (*curEng).sr);
+    d.items = {std::string("KEY  ") + KEY_NAMES[(*curEng).key.root.load()], std::string("SCALE  ") + scales()[(*curEng).key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround((*curEng).sr / 100) / 10) + "." + std::to_string((int)std::lround((*curEng).sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS", "MIDI"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
-      if (i == 0) { for (int k = 0; k < 12; k++) q.items.push_back(std::string("KEY ") + KEY_NAMES[k]); q.cur = engine.key.root.load();
-        q.pick = [&](int j) { engine.key.root.store(j); ui.status(std::string("KEY ") + KEY_NAMES[j]); dirty = true; saveT = 0.5f; }; }
-      else if (i == 1) { for (auto& s : scales()) q.items.push_back(s.name); q.cur = engine.key.scale.load();
-        q.pick = [&](int j) { engine.key.scale.store(j); ui.status(std::string("SCALE ") + scales()[j].name); dirty = true; saveT = 0.5f; }; }
+      if (i == 0) { for (int k = 0; k < 12; k++) q.items.push_back(std::string("KEY ") + KEY_NAMES[k]); q.cur = (*curEng).key.root.load();
+        q.pick = [&](int j) { (*curEng).key.root.store(j); ui.status(std::string("KEY ") + KEY_NAMES[j]); dirty = true; saveT = 0.5f; }; }
+      else if (i == 1) { for (auto& s : scales()) q.items.push_back(s.name); q.cur = (*curEng).key.scale.load();
+        q.pick = [&](int j) { (*curEng).key.scale.store(j); ui.status(std::string("SCALE ") + scales()[j].name); dirty = true; saveT = 0.5f; }; }
       else if (i == 2) { ui.openTempo(x0, 11 + 2 * 8); return; }
-      else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / engine.sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
+      else if ((i == 3 || i == 4 || i == 6) && blendBusy(true)) return;   // (the sound restarting, or a new rate, halfway through a blend)
+      else if (i == 3) { for (int k = 0; k < 5; k++) { char b[48]; std::snprintf(b, 48, "%d  (%.0f MS)%s", BUFFERS[k], BUFFERS[k] * 3 * 1000.0 / (*curEng).sr, k == 2 ? "  DEFAULT" : ""); q.items.push_back(b); } q.cur = sound.bufIdx;
         q.pick = [&](int j) { if (j == sound.bufIdx) return; sound.stop(); sound.bufIdx = j; settings.set("buffer", Json::number(j)); saveSettings();
-          if (!sound.start(engine, (unsigned)engine.sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j]));
-          if (capture.open) capture.start(engine, settings.str("inputDevice"), BUFFERS[j]); }; }
+          if (!sound.start(*curEng, (unsigned)(*curEng).sr)) ui.status("COULD NOT RESTART THE SOUND DEVICE", 6); else ui.status("AUDIO BUFFER " + std::to_string(BUFFERS[j]));
+          if (capture.open) capture.start(*curEng, settings.str("inputDevice"), BUFFERS[j]); }; }
       else if (i == 4 || i == 5) {   // OUTPUT / INPUT: which device (by name; SYSTEM DEFAULT follows the computer's own choice)
         const bool cap = i == 5; const auto devs = listDevices(cap); const std::string cur = cap ? settings.str("inputDevice") : sound.want;
         q.items.push_back("SYSTEM DEFAULT"); q.cur = 0; for (size_t k = 0; k < devs.size(); k++) { q.items.push_back(devs[k].first); if (devs[k].first == cur) q.cur = (int)k + 1; }
         if (devs.empty()) q.items.push_back(cap ? "(NO INPUTS FOUND)" : "(NO OUTPUTS FOUND)");
         q.pick = [&, cap, devs](int j) { if (j > (int)devs.size()) return; const std::string nm = j == 0 ? std::string() : devs[j - 1].first;
-          if (cap) { settings.set("inputDevice", Json::string(nm)); saveSettings(); if (capture.open) { if (!capture.start(engine, nm, BUFFERS[sound.bufIdx])) ui.status("COULD NOT OPEN THAT INPUT", 5); } ui.status("INPUT: " + (nm.empty() ? std::string("SYSTEM DEFAULT") : nm), 3); return; }
+          if (cap) { settings.set("inputDevice", Json::string(nm)); saveSettings(); if (capture.open) { if (!capture.start(*curEng, nm, BUFFERS[sound.bufIdx])) ui.status("COULD NOT OPEN THAT INPUT", 5); } ui.status("INPUT: " + (nm.empty() ? std::string("SYSTEM DEFAULT") : nm), 3); return; }
           sound.stop(); sound.want = nm; settings.set("outputDevice", Json::string(nm)); saveSettings();
-          if (!sound.start(engine, (unsigned)engine.sr) && !sound.start(engine, RATES[rateIdx])) { sound.want.clear(); sound.start(engine, RATES[rateIdx]); ui.status("COULD NOT OPEN THAT OUTPUT: BACK TO THE SYSTEM'S", 5); }
+          if (!sound.start(*curEng, (unsigned)(*curEng).sr) && !sound.start(*curEng, RATES[rateIdx])) { sound.want.clear(); sound.start(*curEng, RATES[rateIdx]); ui.status("COULD NOT OPEN THAT OUTPUT: BACK TO THE SYSTEM'S", 5); }
           else ui.status("OUTPUT: " + sound.name, 3);
-          if (capture.open) capture.start(engine, settings.str("inputDevice"), BUFFERS[sound.bufIdx]); }; }
+          if (capture.open) capture.start(*curEng, settings.str("inputDevice"), BUFFERS[sound.bufIdx]); }; }
       else if (i == 6) { q.items = {"AUTO  (YOUR SOUND OUTPUT'S OWN RATE)", "48K", "44.1K", "32K  LIGHTER", "24K  LIGHTEST, LESS TREBLE"};
         if (NRATES > 5) { q.items.push_back("96K  HEAVIER: ABOUT TWICE THE WORK"); q.items.push_back("88.2K  HEAVIER"); } q.cur = rateIdx;
         q.pick = [&](int j) { if (j == rateIdx) return;
-          if (rec.on()) { rec.stop(engine); if (Module* o = outMod()) o->disp[1].store(0); }   // a recording can't change rate halfway
+          if (rec.on()) { rec.stop(*curEng); if (Module* o = outMod()) o->disp[1].store(0); }   // a recording can't change rate halfway
           const std::string snap = serializePatch(ui).dump(); const int vx = ui.viewX, vy = ui.viewY;
           sound.stop(); rateIdx = j; settings.set("rate", Json::number(j)); saveSettings();
-          if (!sound.start(engine, RATES[j])) { rateIdx = 0; sound.start(engine, 0); ui.status("THAT RATE ISN'T AVAILABLE: BACK TO AUTO", 5); }
-          if (capture.open) capture.start(engine, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);   // the input at the new rate too
+          if (!sound.start(*curEng, RATES[j])) { rateIdx = 0; sound.start(*curEng, 0); ui.status("THAT RATE ISN'T AVAILABLE: BACK TO AUTO", 5); }
+          if (capture.open) capture.start(*curEng, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);   // the input at the new rate too
           Json js; if (Json::parse(snap, js)) { restoring = true; loadPatch(ui, js); for (auto& up : ui.mods) restoreSound(up.get()); restoring = false; }   // rebuilt at the new rate
-          ui.viewX = vx; ui.viewY = vy; char b[64]; std::snprintf(b, 64, "QUALITY %.1fK SAMPLES A SECOND", engine.sr / 1000); ui.status(b, 4); }; }
+          ui.viewX = vx; ui.viewY = vy; char b[64]; std::snprintf(b, 64, "QUALITY %.1fK SAMPLES A SECOND", (*curEng).sr / 1000); ui.status(b, 4); }; }
       else if (i == 7) { q.items = {"60 FPS  SMOOTHEST", "30 FPS  LIGHTER", "20 FPS  LIGHTEST"}; q.cur = fpsIdx;   // dragging and patching always run at full speed
         q.pick = [&](int j) { fpsIdx = j; settings.set("fps", Json::number(j)); saveSettings(); ui.status("SCREEN " + std::to_string(FPS[j]) + " FPS WHEN IDLE, FULL SPEED WHILE YOU WORK", 4); }; }
       else if (i == 8) { ui.cableMotion = !ui.cableMotion; settings.set("cableMotion", Json::number(ui.cableMotion ? 1 : 0)); saveSettings();
@@ -593,7 +652,7 @@ int main(int argc, char** argv) {
           if (ev.key.key == SDLK_EQUALS || ev.key.key == SDLK_PLUS || ev.key.key == SDLK_KP_PLUS) pendingZoom++;
           if (ev.key.key == SDLK_MINUS || ev.key.key == SDLK_KP_MINUS) pendingZoom--;
           if (ev.key.key == SDLK_0 && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) pendingZoom = -zoom;
-          if (ev.key.key == SDLK_SPACE) { engine.freeze.store(!engine.freeze.load()); ui.status(engine.freeze.load() ? "FROZEN" : "UNFROZEN"); }
+          if (ev.key.key == SDLK_SPACE) { (*curEng).freeze.store(!(*curEng).freeze.load()); ui.status((*curEng).freeze.load() ? "FROZEN" : "UNFROZEN"); }
           break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:   // right click, or Ctrl-click (a Mac trackpad): the module's menu
           if (ev.button.button == SDL_BUTTON_RIGHT || (ev.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & SDL_KMOD_CTRL))) { ui.contextAt(ev.button.x * dens / scale, ev.button.y * dens / scale); ctxClick = true; break; }
@@ -635,6 +694,7 @@ int main(int argc, char** argv) {
             if (writeFile(path, sessionFile(ss.data))) n++; }
           ui.status(n == (int)store.list.size() ? "SAVED " + std::to_string(n) + " SESSIONS. YOU CAN NOW REMOVE THEM FROM THE APP" : "SAVED " + std::to_string(n) + " OF " + std::to_string(store.list.size()), 6); continue; }
         if (r.folder) { if (ui.br.open) ui.browseTo(r.path); settings.set("browseDir", Json::string(r.path)); saveSettings(); continue; }
+        if (r.target == -2) { blendLoad(r.path); continue; }   // BLEND TO
         if (r.target) { UiMod* u = ui.byId(r.target); if (!u) continue; std::string err;   // a sound for a Sample or Grain Looper
           int slot = r.slot; if (slot < 0) { for (int k = 0; k < UiMod::SLOTS; k++) if (u->snd[k].id.empty()) { slot = k; break; } if (slot < 0) { ui.status("ALL 8 PLACES ARE FULL: TAP A NUMBER TO REPLACE ONE", 5); continue; } }
           const int ci = u->m->def->paramIndex("chan"); const bool st = ci >= 0 && u->m->p[ci].load() > 0.5f;   // CHANNELS: STEREO keeps a file's left and right
@@ -654,9 +714,9 @@ int main(int argc, char** argv) {
         else { std::string p = r.path; const size_t sl = p.find_last_of("/\\"); if (p.find('.', sl == std::string::npos ? 0 : sl) == std::string::npos) p += ".tmbnt";
           if (writeFile(p, sessionFile(serializePatch(ui)))) { curFile = p; ui.status("SAVED " + fileName(p), 4); } else ui.status("COULD NOT SAVE THE FILE", 5); }
       } }
-    engine.collectGarbage();
+    engA.collectGarbage(); engB.collectGarbage(); blendFrame();
     pumpInfo();
-    if (rec.on()) { rec.pump(engine); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }
+    if (rec.on()) { if (Engine* src = curEng->blending()) rec.pump(*src); rec.pump(*curEng); if (Module* o = outMod()) { o->disp[1].store(1); o->disp[2].store(rec.frames / rec.sr); } }
     // MIDI: notice devices coming and going; give MIDI OUT modules their device
     { int dv; MidiMsg mm; ui.midiDevNames = midi.inputNames(); while (midi.popUi(dv, mm)) ui.midiIn(dv, mm.st, mm.d1, mm.d2); ui.midiFrame(ldt); }   // MIDI LEARN
     { // SETTINGS > MIDI > DEVICES: every input and output, which are open, which are sending (a light) and which are off
@@ -675,7 +735,7 @@ int main(int argc, char** argv) {
     // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
     { bool want = false; for (auto& up : ui.mods) if (up->m->def->type == "audioin") want = true;   // AUDIO IN: the input open while there's one (closed a little after the last goes)
       captureT -= ldt; if (want) captureIdle = 0; else captureIdle += ldt;
-      if (want && !capture.open && captureT <= 0) { captureT = 5; if (!capture.start(engine, settings.str("inputDevice"), BUFFERS[sound.bufIdx]))
+      if (want && !capture.open && captureT <= 0) { captureT = 5; if (!capture.start(*curEng, settings.str("inputDevice"), BUFFERS[sound.bufIdx]))
           ui.status("COULD NOT OPEN THE INPUT. ON A MAC, ALLOW THE MICROPHONE FOR TIMBIENT MODULES IN SYSTEM SETTINGS > PRIVACY", 8); }
       if (!want && capture.open && captureIdle > 2) capture.stop();
       ui.inputName = capture.open ? capture.name : std::string(); }
@@ -683,7 +743,7 @@ int main(int argc, char** argv) {
       UiMod* u = up.get(); Module* m = u->m; const ModuleDef* d = m->def; bool inUse = m->p[d->paramIndex("rec")].load() > 0.5f;
       for (auto& c : ui.cables) if (c.to == m->id && (c.toPort == 2 || c.toPort == 3)) inUse = true;
       u->recGiveT -= ldt;
-      if (inUse && !m->recBuf.load() && u->recGiveT <= 0) { u->recGiveT = 1; AudioBuf* b = new AudioBuf(); b->sr = engine.sr; const size_t cap = (size_t)(60.0 * engine.sr); b->d.assign(cap, 0.f); b->r.assign(cap, 0.f); engine.setBuffer(m->id, b, 99); }
+      if (inUse && !m->recBuf.load() && u->recGiveT <= 0) { u->recGiveT = 1; AudioBuf* b = new AudioBuf(); b->sr = (*curEng).sr; const size_t cap = (size_t)(60.0 * (*curEng).sr); b->d.assign(cap, 0.f); b->r.assign(cap, 0.f); (*curEng).setBuffer(m->id, b, 99); }
       const int seq = (int)m->disp[42].load(); AudioBuf* rb = m->recBuf.load();
       if (seq != u->lastTake && rb) { u->lastTake = seq; const size_t n = std::min(rb->d.size(), (size_t)m->disp[43].load());
         if (n > 64) { AudioBuf* b = new AudioBuf(); b->sr = rb->sr; b->d.assign(rb->d.begin(), rb->d.begin() + n); const int ci = d->paramIndex("chan");
@@ -691,10 +751,10 @@ int main(int argc, char** argv) {
           char nm[32]; const std::time_t tt = std::time(nullptr); std::strftime(nm, 32, "TAKE %H.%M.%S", std::localtime(&tt));
           giveSound(u, b, true, 0, nm); const int ks = d->paramIndex("start"), kl = d->paramIndex("len"); if (ks >= 0) m->p[ks].store(0); if (kl >= 0) m->p[kl].store(1);
           char t[48]; std::snprintf(t, 48, "RECORDED %.1fS", n / rb->sr); ui.status(t, 3); histDirty = true; histT = 0.2f; }
-        engine.action(m->id, "taken"); }
+        (*curEng).action(m->id, "taken"); }
       // the feedback guard: its own sound finding its way back into its IN
       const bool loop = ui.feedsBack(m->id, 2);
-      if ((int)loop != u->fbSent) { u->fbSent = loop; engine.action(m->id, loop ? "fb:1" : "fb:0"); if (loop) ui.status("SAMPLER: ITS OWN OUT LEADS BACK INTO ITS IN (THROUGH THE CABLES), SO IT WON'T MONITOR. IT STILL RECORDS", 6); } }
+      if ((int)loop != u->fbSent) { u->fbSent = loop; (*curEng).action(m->id, loop ? "fb:1" : "fb:0"); if (loop) ui.status("SAMPLER: ITS OWN OUT LEADS BACK INTO ITS IN (THROUGH THE CABLES), SO IT WON'T MONITOR. IT STILL RECORDS", 6); } }
     { static float catchT = 0; catchT += ldt; if (catchT > 2) { catchT = 0; for (auto& up : ui.mods) if (up->m->def->type == "looper" && up->m->p[0].load() > 0.5f && up->snd[0].peaks.empty() && up->snd[0].id.empty()) catchSound(up.get(), true); } }   // HELD with nothing held yet: what came in
 
     if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(serializePatch(ui)); dirty = false; } }
@@ -723,7 +783,8 @@ int main(int argc, char** argv) {
     SDL_RenderPresent(ren);
   }
   store.writeAutosave(serializePatch(ui));
-  if (rec.on()) rec.stop(engine);
+  if (rec.on()) rec.stop(*curEng);
+  if (bl.th.joinable()) bl.th.join();
   capture.stop(); sound.stop(); if (gCtxOk) ma_context_uninit(&gCtx);
   { std::lock_guard<std::mutex> l(job.mx); job.stop = true; job.cv.notify_one(); } if (infoThread.joinable()) infoThread.join();
   SDL_DestroyTexture(tex); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();

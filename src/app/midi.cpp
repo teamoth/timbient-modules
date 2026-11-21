@@ -11,17 +11,19 @@ namespace tb {
 
 namespace {
 struct InCtx { Engine* eng; int q; };
+std::atomic<Engine*> gTarget{nullptr};   // where MIDI coming in goes (the session on the screen)
 InCtx inCtx[Engine::MIDI_INS];
 SpscQueue<MidiMsg, 1024> uiQ[Engine::MIDI_INS];   // the same messages, for MIDI LEARN and the MONITOR on the screen's thread
 std::atomic<uint32_t> msgN[Engine::MIDI_INS], clkN[Engine::MIDI_INS];   // how much each open input has sent (the DEVICES list's lights)
 void onIn(double, std::vector<unsigned char>* msg, void* ud) {   // runs on the device's own thread: just queue the bytes
   if (!msg || msg->empty()) return; InCtx* c = (InCtx*)ud; MidiMsg m; m.st = (*msg)[0]; if (msg->size() > 1) m.d1 = (*msg)[1]; if (msg->size() > 2) m.d2 = (*msg)[2];
-  c->eng->midiInQ[c->q].push(m); if (m.st < 0xF0 || m.st == 0xFA || m.st == 0xFB || m.st == 0xFC) uiQ[c->q].push(m);   // (not clock ticks: counted instead)
+  Engine* e = gTarget.load(std::memory_order_acquire); (e ? e : c->eng)->midiInQ[c->q].push(m); if (m.st < 0xF0 || m.st == 0xFA || m.st == 0xFB || m.st == 0xFC) uiQ[c->q].push(m);   // (not clock ticks: counted instead)
   if (m.st == 0xF8) clkN[c->q].fetch_add(1, std::memory_order_relaxed); else msgN[c->q].fetch_add(1, std::memory_order_relaxed);
 }
 }
 
-Midi::Midi(Engine& e) : eng(e) {}
+Midi::Midi(Engine& e) : eng(e) { gTarget.store(&e); }
+void Midi::setTarget(Engine& e) { gTarget.store(&e, std::memory_order_release); alsoSendFrom(e); }
 
 Midi::~Midi() {
   running = false; if (sender.joinable()) sender.join();
@@ -90,6 +92,7 @@ void Midi::sendLoop() {
   std::vector<MidiOutMsg> pending; pending.reserve(4096);
   while (running) {
     MidiOutMsg m; while (eng.midiOutQ.pop(m)) pending.push_back(m); while (uiOutQ.pop(m)) pending.push_back(m);
+    for (auto& x : extra) if (Engine* e = x.load(std::memory_order_acquire)) if (e != &eng) while (e->midiOutQ.pop(m)) pending.push_back(m);
     if (!pending.empty()) {
       const double now = wallSeconds();
       std::stable_sort(pending.begin(), pending.end(), [](const MidiOutMsg& a, const MidiOutMsg& b) { return a.at < b.at; });
