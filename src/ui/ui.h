@@ -30,6 +30,7 @@ struct UiMod {
   static constexpr int SLOTS = 8; Snd snd[SLOTS]; int shown = 0;
   std::string dev;                                                       // MIDI OUT: the device chosen (empty: the first one there)
   std::vector<std::pair<float, float>> dots; int hopSeen = 0;            // Random Hops: recent hops (age, height); Tombola uses dots too
+  std::string text; int noteW = 98, noteH = 40; float noteScroll = 0;    // NOTES: what's typed, the box's size (it can be dragged bigger), how far it's scrolled
 };
 struct UiCable { int from, fromPort, to, toPort, toParam; PType type; unsigned seen = 0; std::vector<float> pulses; float flow = 0, lastV = 0, rate = 0; };   // flow: how far its moving pattern has gone   // pulses: triggers on their way along it (0 at the output, 1 at the input)
 
@@ -130,6 +131,7 @@ public:
   void startLearnBlend();                  // MIDI LEARN for the blend: an EVERY SESSION mapping of its own (no module)
   void demoPatch();
   UiMod* byId(int id) { for (auto& u : mods) if (u->m->id == id) return u.get(); return nullptr; }
+  const UiMod* byId(int id) const { for (auto& u : mods) if (u->m->id == id) return u.get(); return nullptr; }
 
   // each frame
   void draw(Canvas& c, float dt);
@@ -182,7 +184,17 @@ public:
   std::function<void(int, int)> onBrowseFile;
   std::function<bool(const std::string&, std::vector<Browser::Entry>&)> onList;   // a folder's contents (the app does this with SDL)                            // the system's own file picker instead
   // a small box for typing a name
-  struct Ask { std::string title, text; std::function<void(const std::string&)> done; bool dice = false; };
+  struct Ask { std::string title, text; std::function<void(const std::string&)> done; bool dice = false; int check = -1; std::string checkLabel; };   // check: a tick box (-1: none)
+  int askChecked = -1;
+  // NOTES: the one being typed into (its id; 0: none), where the cursor is, and the editing keys (the app's own keys wait meanwhile)
+  int noteEdit = 0; size_t noteCur = 0;
+  bool typing() const { return ask || noteEdit; }
+  void noteKey(int k);                    // 1 up 2 down 3 left 4 right 5 backspace 6 delete 7 enter 8 home 9 end 27 escape (stop)
+  std::string noteText() const;           // its text (to copy)
+  void notePaste(const std::string& t);   // typed in at the cursor
+  void noteCut();
+  struct NoteLine { size_t start, len; };
+  std::vector<NoteLine> noteLines(const UiMod& u) const;   // wrapped to the box's width   // the tick box as the name box closed with OK (for its done)
   std::unique_ptr<Ask> ask;
   void askText(const std::string& title, const std::string& init, std::function<void(const std::string&)> done) { ask = std::make_unique<Ask>(Ask{title, init, std::move(done)}); dd.reset(); menuOpen = false; }
   void askName(const std::string& title, std::function<void(const std::string&)> done) { askText(title, randomName(), std::move(done)); ask->dice = true; }   // with a dice for another name
@@ -244,7 +256,7 @@ private:
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE };
   UiMod* tapM = nullptr; int tapK = -1; std::vector<double> tapTimes;   // TAP on speed rows
   float wanderTapT = -9; int wanderTapK = -1; UiMod* wanderTapM = nullptr;   // the Tracker's column numbers: a second tap soon after sets RANDOM NOTE back to 0
   // cables as curves you can touch

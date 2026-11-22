@@ -24,7 +24,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.52.0";
+static const char* VERSION = "0.53.0";
 static std::atomic<Engine*> gEngine{nullptr};   // the engine the sound card renders: the session on the screen (while blending, it plays the last one too)
 
 // ---------------- sound ----------------
@@ -94,6 +94,16 @@ struct DialogResult { bool open; std::string path; int target = 0, slot = 0; boo
 static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
 static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "tmbnt;json;txt"}};
 static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
+// "calm example" in D flat YO: "calm example (db_yo)". A key-and-scale bracket already at the end (from an earlier save) is
+// replaced, not added to. Lower case, flats as b, F# as #; the scale's name without spaces
+std::string withKeyTag(std::string n, int root, int scale) {
+  auto isTag = [](const std::string& in) { const size_t u = in.find('_'); return u != std::string::npos && u > 0 && u + 1 < in.size() && in.find(' ') == std::string::npos && in.find('_', u + 1) == std::string::npos; };
+  while (!n.empty() && n.back() == ' ') n.pop_back();
+  if (!n.empty() && n.back() == ')') { const size_t o = n.rfind('('); if (o != std::string::npos && isTag(n.substr(o + 1, n.size() - o - 2))) { n.resize(o); while (!n.empty() && n.back() == ' ') n.pop_back(); } }
+  std::string k; for (const char* p = KEY_NAMES[((root % 12) + 12) % 12]; *p; p++) k += *p == '\x02' ? 'b' : (char)std::tolower((unsigned char)*p);
+  std::string sc; const auto& all = scales(); if (scale >= 0 && scale < (int)all.size()) for (char ch : std::string(all[scale].name)) if (ch != ' ') sc += (char)std::tolower((unsigned char)ch);
+  return (n.empty() ? n : n + " ") + "(" + k + "_" + sc + ")";
+}
 static void onBlendDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.target = -2; dlgResults.push_back(r); } }   // BLEND TO
 static void onSaveDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({false, files[0]}); } }
 static void onFolderDialog(void* ud, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.folder = true; r.target = ud ? -1 : 0; dlgResults.push_back(r); } }
@@ -367,9 +377,12 @@ int main(int argc, char** argv) {
     for (auto& ch : p) ch = (char)std::toupper((unsigned char)ch); return p; };
   static std::string saveName;   // SAVE AS: a name first (the dice suggests some), then where it goes
   auto saveAs = [&] { ui.askName("NAME THIS SESSION", [&](const std::string& n) { std::string fn; for (char ch : n) fn += (ch == '/' ? '-' : (char)std::tolower((unsigned char)ch));
+      const bool tag = ui.askChecked > 0; settings.set("keyInName", Json::number(tag ? 1 : 0)); saveSettings();
+      if (tag) fn = withKeyTag(fn, curEng->key.root.load(), curEng->key.scale.load());   // "calm example (db_yo)"
       if (fn.empty()) fn = "session"; saveName = fn + ".tmbnt";
       std::string start = saveName; if (!curFile.empty()) { const size_t sl = curFile.find_last_of("/\\"); if (sl != std::string::npos) start = curFile.substr(0, sl + 1) + saveName; }
-      SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, start.c_str()); }); };
+      SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, start.c_str()); });
+    if (ui.ask) { ui.ask->check = settings.num("keyInName", 0) > 0.5 ? 1 : 0; ui.ask->checkLabel = "ADD KEY AND SCALE"; } };
   // ---- BLEND TO: the next session loads into the other engine, then fades in as this one fades out (equal loudness) ----
   // The session being left keeps playing in its own engine (the new one plays it inside itself), and its screen is set aside,
   // so CANCEL can fade back to it just as it was. The new one's tempo glides from the old one's to its own over the blend
@@ -634,6 +647,14 @@ int main(int argc, char** argv) {
         case SDL_EVENT_TEXT_INPUT: ui.typed(ev.text.text); break;
         case SDL_EVENT_KEY_DOWN:
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
+          if (ui.noteEdit) {   // NOTES: typing into one (letters come as text); Cmd/Ctrl+C, X and V copy, cut and paste the whole note; other Cmd/Ctrl keys still work
+            const SDL_Keycode k = ev.key.key; const bool cmd = ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL);
+            if (cmd && k == SDLK_C) { SDL_SetClipboardText(ui.noteText().c_str()); ui.status("NOTE COPIED", 1.5f); break; }
+            if (cmd && k == SDLK_X) { SDL_SetClipboardText(ui.noteText().c_str()); ui.noteCut(); ui.status("NOTE CUT", 1.5f); break; }
+            if (cmd && k == SDLK_V) { if (char* t = SDL_GetClipboardText()) { ui.notePaste(t); SDL_free(t); } break; }
+            const int nk = k == SDLK_UP ? 1 : k == SDLK_DOWN ? 2 : k == SDLK_LEFT ? 3 : k == SDLK_RIGHT ? 4 : k == SDLK_BACKSPACE ? 5 : k == SDLK_DELETE ? 6 : (k == SDLK_RETURN || k == SDLK_KP_ENTER) ? 7 : k == SDLK_HOME ? 8 : k == SDLK_END ? 9 : k == SDLK_ESCAPE ? 27 : 0;
+            if (nk) { ui.noteKey(nk); break; }
+            if (!cmd) break; }   // (anything else: typed text, which comes as its own event)
           if (ui.qwLearn >= 0) {   // QWERTY MIDI: the key for the note picked
             const int i = ui.qwLearn; ui.qwLearn = -1; static const char* NM[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
             const std::string nn = std::string(NM[i % 12]) + std::to_string(i / 12);
@@ -691,7 +712,7 @@ int main(int argc, char** argv) {
       }
     }
     if (ui.wantFullscreen != ui.isFullscreen) { SDL_SetWindowFullscreen(win, ui.wantFullscreen); ui.isFullscreen = ui.wantFullscreen; }
-    if ((bool)ui.ask != texting) { texting = (bool)ui.ask; if (texting) SDL_StartTextInput(win); else SDL_StopTextInput(win); }
+    if (ui.typing() != texting) { texting = ui.typing(); if (texting) SDL_StartTextInput(win); else SDL_StopTextInput(win); }
     // files chosen in the system dialogs
     { std::vector<DialogResult> rs; { std::lock_guard<std::mutex> l(dlgMx); rs.swap(dlgResults); }
       for (auto& r : rs) {
@@ -779,7 +800,7 @@ int main(int argc, char** argv) {
     if (dirty) { saveT -= ldt; if (saveT <= 0) { store.writeAutosave(autosaveData()); dirty = false; } }
     if (histDirty) { histT -= ldt; if (histT <= 0) { snapshot(); histDirty = false; } }
     // draw only when it's time: never while the window can't be seen; at the chosen rate when idle; at full speed while you work
-    { const float every = hidden ? 1e9f : (busyT > 0 || held || ui.ask) ? 0.f : 1.f / FPS[fpsIdx], since = (SDL_GetTicksNS() - last) / 1e9f;
+    { const float every = hidden ? 1e9f : (busyT > 0 || held || ui.typing()) ? 0.f : 1.f / FPS[fpsIdx], since = (SDL_GetTicksNS() - last) / 1e9f;
       if (since < every) { SDL_WaitEventTimeout(nullptr, (Sint32)std::max(1.f, std::min(100.f, (every - since) * 1000))); continue; } }
     const Uint64 now = SDL_GetTicksNS(); const float dt = std::min(0.1f, (now - last) / 1e9f); last = now;
     if (W != canvas.W || H != canvas.H) canvas.resize(W, H);

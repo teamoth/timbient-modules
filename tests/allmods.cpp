@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
       for (size_t i = 0; i < b->d.size(); i++) { ph += (220 + i * 0.003f) / 44100.f; b->d[i] = 0.6f * std::sin(TAU * ph) + 0.05f * rr.bi(); }
       eng.setBuffer(m->m->id, b); }
     const Result r = run(eng, 4);
-    const bool silent = r.peak < 0.005f && d->type != "audioin";   /* AUDIO IN: silent with nothing coming in */ if (r.bad || silent) fails++;
+    const bool silent = r.peak < 0.005f && d->type != "audioin" && d->type != "notes";   /* AUDIO IN: silent with nothing coming in; NOTES makes no sound */ if (r.bad || silent) fails++;
     std::printf("%-10s peak %.3f  rms %.4f  cost %5.2f%%%s%s\n", d->type.c_str(), r.peak, r.rms, r.cost, r.bad ? "  NOT FINITE" : "", silent ? "  SILENT" : "");
   }
   // every voice must follow the note it's given: its sound should repeat at the note's period (or a whole multiple of it)
@@ -430,6 +430,30 @@ int main(int argc, char** argv) {
     ui.midiMaps.erase(std::remove_if(ui.midiMaps.begin(), ui.midiMaps.end(), [](const Ui::MidiMap& m) { return m.gType == "#app"; }), ui.midiMaps.end());
     ui.blendAt = -1; ui.onBlendSet = nullptr; ui.onBlendPause = nullptr; ui.sessionTitle.clear(); ui.midiDevNames.clear(); if (!ok) fails++;
     std::printf("blend by hand: paused at %.2f (still %.2f), set to 0.8: %.2f a moment on, then %.2f, %.2f%s%s\n", a0, a1, mid, a2, a3, ok ? "" : "  WRONG", res.c_str()); }
+  // NOTES: click in it and type (Enter: a new line, Backspace, arrows), it wraps at its width, a drag on its corner resizes it,
+  // folded it shows its first line, the text and size are saved with the session, the web player can't type in it; and the name
+  // box's tick box (ADD KEY AND SCALE) toggles and is passed on
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    ui.clearPatch(); ui.viewX = ui.viewY = 0; UiMod* n = ui.add("notes", 40, 40); Canvas c; c.fine = true; c.resize(700, 400);
+    auto frame = [&] { c.beginFrame(); ui.draw(c, 0.016f); };
+    frame(); Ui::Geom g = ui.geom(*n); ui.pointerDown((float)(n->x + 10), (float)(n->y + g.vy + 3)); ui.pointerUp((float)(n->x + 10), (float)(n->y + g.vy + 3));
+    chk(ui.noteEdit == n->m->id && ui.typing(), "click starts typing");
+    ui.typed("CC 21 is the filter"); ui.noteKey(7); ui.typed("slow"); ui.noteKey(5); ui.noteKey(3); ui.typed("l");
+    chk(n->text == "CC 21 is the filter\nsllo", "typing");
+    ui.noteKey(1); ui.noteKey(8); ui.typed(">"); chk(n->text == ">CC 21 is the filter\nsllo", "up, home");
+    n->text = "one two three four five six seven eight nine ten eleven twelve"; const auto L = ui.noteLines(*n); bool fits = L.size() >= 3; for (auto& l : L) if ((int)l.len * 4 > g.w - 8) fits = false; chk(fits, "wraps");
+    ui.noteKey(27); chk(!ui.noteEdit, "escape");
+    frame(); g = ui.geom(*n); ui.pointerDown((float)(n->x + g.w - 3), (float)(n->y + g.h - 3)); ui.pointerMove((float)(n->x + g.w + 57), (float)(n->y + g.h + 37)); ui.pointerUp(0, 0);
+    chk(n->noteW == 158 && n->noteH == 80, "resize " + std::to_string(n->noteW) + "x" + std::to_string(n->noteH));
+    n->text = "SET LIST\nmore"; n->fold = true; frame(); bool label = false, more = false; for (auto& r : c.runs) { if (r.s == "SET LIST") label = true; if (r.s == "more") more = true; } chk(label && !more, "folded: first line");
+    n->fold = false; Json j = serializePatch(ui); ui.clearPatch(); loadPatch(ui, j); UiMod* back = nullptr; for (auto& u : ui.mods) if (u->m->def->type == "notes") back = u.get();
+    chk(back && back->text == "SET LIST\nmore" && back->noteW == 158 && back->noteH == 80, "saved and loaded");
+    ui.viewOnly = true; frame(); if (back) { g = ui.geom(*back); ui.pointerDown((float)(back->x + 10), (float)(back->y + g.vy + 3)); ui.pointerUp(0, 0); } chk(!ui.noteEdit, "web player: read only"); ui.viewOnly = false;
+    // the name box's tick box
+    ui.askName("NAME THIS SESSION", [](const std::string&) {}); ui.ask->check = 0; ui.ask->checkLabel = "ADD KEY AND SCALE"; frame();
+    { const int w = std::min(700 - 10, 150), x = (700 - w) / 2, y = 10 + 30; /* the name box: TOP + 30 */ ui.pointerDown((float)(x + 8), (float)(y + 26)); ui.pointerUp(0, 0); } const bool ticked = ui.ask && ui.ask->check == 1; ui.keyEnter();
+    chk(ticked && ui.askChecked == 1, "tick box");
+    ui.clearPatch(); run(eng, 0.1f); if (!ok) fails++; std::printf("notes: %d lines wrapped%s%s\n", (int)L.size(), ok ? "" : "  WRONG", res.c_str()); }
   // dragging a module over a sound cable offers to insert it, CROSSFADER and MIXER included (they have no IN/OUT by those names)
   { std::string res; bool ok = true;
     for (const char* ty : {"xfade", "mixer", "echo"}) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 30); UiMod* v = ui.add("pad", 0, 30); ui.connect(v, "OUT", o, "IN");

@@ -9,6 +9,7 @@ static const std::map<std::string, std::string> MODULES = {
   {"sample", "Sampler|Plays a sound file or a recording, from triggers. Record into it through IN with the RECORD button; each take becomes its sound."},
   {"looper", "Grain Looper|A cloud of tiny grains: LIVE takes them from the last few seconds coming in, HELD from a sound it caught or loaded."},
   {"stretch", "Stretch|Stretches sound out hugely in time without changing its pitch, into slow, smeared washes (like PaulStretch)."},
+  {"notes", "Notes|A box to type into: reminders, set notes, what a MIDI knob does. Click in it to type (Escape or a click elsewhere: done). Drag the corner to make it bigger. Folded, it shows its first line, so a first line makes a label. Saved with the session."},
   {"level", "Level|The smallest module: how loud, and a meter. Plug several cables into IN and they add up: a little hub when a mixer is more than you need."},
   {"xfade", "Crossfader|Fades between A and B, by hand (drag the fader, or FADE) or by itself in the LFO's shapes, to a clock or its own tempo."},
   {"spectrum", "Spectrum|Shows what's in the sound, from the lowest lows (left) to the highest highs (right): drop it onto any sound cable, the sound passes straight through. The shading shows what's outside hearing and at its edges, so stray rumble and fizz stand out; a mark points at narrow peaks. Point at it to read a frequency."},

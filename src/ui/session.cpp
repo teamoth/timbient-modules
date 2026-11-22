@@ -77,6 +77,7 @@ Json serializePatch(Ui& ui) {
         for (int k = 0; k <= last; k++) { if (u.snd[k].id.empty()) { a.push(Json()); continue; } Json e = Json::array(); e.push(Json::string(u.snd[k].id)); e.push(Json::number(u.snd[k].root)); e.push(Json::string(u.snd[k].name)); a.push(e); }
         p.set("sounds", a); } }
     if (!u.dev.empty()) p.set("dev", Json::string(u.dev));
+    if (u.m->def->type == "notes") { p.set("text", Json::string(u.text)); p.set("nw", Json::number(u.noteW)); p.set("nh", Json::number(u.noteH)); }   // NOTES
     m.set("p", p);
     m.set("mute", Json::boolean(u.m->mute.load())); m.set("solo", Json::boolean(u.m->solo.load())); m.set("fold", Json::boolean(u.fold)); if (u.m->bypass.load()) m.set("bypass", Json::boolean(true)); mods.push(m); }
   d.set("mods", mods);
@@ -116,6 +117,7 @@ void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& c
       else if (u->snd[k].root != want[k].root || u->snd[k].name != want[k].name) { u->snd[k].root = want[k].root; u->snd[k].name = want[k].name; } 
       u->m->roots[k].store(u->snd[k].root); }
     if (p) u->dev = p->str("dev");
+    if (p && u->m->def->type == "notes") { u->text = p->str("text"); u->noteW = (int)p->num("nw", 98); u->noteH = (int)p->num("nh", 40); }
     u->m->mute.store(m.truthy("mute")); u->m->solo.store(m.truthy("solo") && def->cat == Cat::Voice); u->fold = m.truthy("fold"); u->m->bypass.store(m.truthy("bypass"));
   }
   // the same stacking order as then
@@ -194,7 +196,7 @@ std::string loadPatch(Ui& ui, const Json& data0) {
     if (const Json* p = m.get("p")) { const std::string aid = p->str("audio"); if (!aid.empty()) u->snd[0].id = aid;
       if (const Json* a = p->get("sounds")) if (a->t == Json::ARR) for (size_t k = 0; k < a->a.size() && k < (size_t)UiMod::SLOTS; k++) { const Json& e = a->a[k];
         if (e.t == Json::ARR && e.a.size() >= 1 && e.a[0].t == Json::STR) { u->snd[k].id = e.a[0].s; if (e.a.size() > 1 && e.a[1].t == Json::NUM) u->snd[k].root = (float)e.a[1].n; if (e.a.size() > 2 && e.a[2].t == Json::STR) u->snd[k].name = e.a[2].s;
-          u->m->roots[k].store(u->snd[k].root); } } u->dev = p->str("dev"); }
+          u->m->roots[k].store(u->snd[k].root); } } u->dev = p->str("dev"); if (u->m->def->type == "notes") { u->text = p->str("text"); u->noteW = (int)p->num("nw", 98); u->noteH = (int)p->num("nh", 40); } }
     bool stopped = false;
     if (const Json* p = m.get("p")) {   // older sessions: a RUN setting became the footer's ON/OFF; Orbits gained RANGE
       if ((ty == "clock" || ty == "tracker") && p->get("run") && p->get("run")->t == Json::NUM && p->get("run")->n < 0.5) stopped = true;

@@ -36,6 +36,15 @@ It can be installed from the browser's menu (**Install app**, or **Add to Home S
 the home screen, like an app. While a session plays the controls tuck away after a few seconds: tap the session to bring
 them back. In a browser, **FULL SCREEN** hides the browser's own bars.
 
+## Notes and names
+
+**NOTES** (in + ADD, under PROCESS) is a box to type into: set notes, reminders, what a MIDI knob does. Click in it to type;
+Escape or a click elsewhere when done. Drag its bottom-right corner to resize it; folded, it shows its first line, so a first
+line makes a label. Notes are saved with the session, and show (but can't be changed) in the web player.
+
+When naming a session (SAVE AS), **ADD KEY AND SCALE** puts the session's key and scale in the file name:
+"calm example (db_yo)". An older bracket like it is replaced rather than added to.
+
 ## Blending between sessions
 
 **SESSIONS > BLEND TO...** picks the next session. It loads while the current one plays on, then fades in as the current one

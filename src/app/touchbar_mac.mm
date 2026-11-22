@@ -66,10 +66,21 @@ static NSString* const kLevel = @"com.timbient.modules.level";
 @end
 
 static TimbientTouchBar* gBar = nil;
+static NSWindow* gWin = nil;
 
+// A new layout is a new NSTouchBar handed to the window: macOS shows that straight away, where changing the items of the bar
+// already showing could wait until something (a click in the window) made it look again
 static void setLayout(bool blending) {
-  if (!gBar || !gBar->bar) return;
-  gBar->bar.defaultItemIdentifiers = blending ? @[kBlend, kPause, kNow, kCancel] : @[kBlendTo, NSTouchBarItemIdentifierFlexibleSpace, kLevel];
+  if (!gBar || !gWin) return;
+  NSTouchBar* b = [[NSTouchBar alloc] init];
+  b.delegate = gBar;
+  b.defaultItemIdentifiers = blending ? @[kBlend, kPause, kNow, kCancel] : @[kBlendTo, NSTouchBarItemIdentifierFlexibleSpace, kLevel];
+  gBar->blend = nil; gBar->level = nil; gBar->pause = nil;   // (the new bar makes its own items, from what's shown now)
+  NSTouchBar* old = gBar->bar; gBar->bar = b; gWin.touchBar = b;
+#if !__has_feature(objc_arc)
+  [old release];   // (the window keeps its own hold on the bar it shows)
+#endif
+  (void)old;
 }
 
 namespace tb {
@@ -81,17 +92,15 @@ void touchBarInstall(SDL_Window* window, const TouchBarHooks& hooks) {
   if (!w) return;
   gHooks = hooks;
   gBar = [[TimbientTouchBar alloc] init];
-  gBar->bar = [[NSTouchBar alloc] init];
-  gBar->bar.delegate = gBar;
+  gWin = w;
   setLayout(false);
-  w.touchBar = gBar->bar;
   gHave = true;
 }
 
 void touchBarUpdate(const TouchBarState& s) {   // (what's shown is remembered even before an item exists: it's made with it)
   if (!gHave || !gBar) return;
   const double now = CFAbsoluteTimeGetCurrent();
-  if (gFirst || s.blending != gShown.blending) { gShown.blending = s.blending; gShown.at = s.at; setLayout(s.blending); if (gBar->blend) gBar->blend.slider.doubleValue = s.at; }
+  if (gFirst || s.blending != gShown.blending) { gShown.blending = s.blending; gShown.at = s.at; gShown.paused = s.paused; gShown.level = s.level; if (!gFirst) setLayout(s.blending); }
   if (std::fabs(s.at - gShown.at) > 0.002f && now - gBar->blendTouched > 0.4) { gShown.at = s.at; if (gBar->blend) gBar->blend.slider.doubleValue = s.at; }
   if (std::fabs(s.level - gShown.level) > 0.002f && now - gBar->levelTouched > 0.4) { gShown.level = s.level; if (gBar->level) gBar->level.slider.doubleValue = s.level; }
   if (gFirst || s.paused != gShown.paused) { gShown.paused = s.paused; if (gBar->pause) gBar->pause.title = s.paused ? @"GO" : @"PAUSE"; }

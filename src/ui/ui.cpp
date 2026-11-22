@@ -62,7 +62,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "journey", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "euclid", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "noinput", "audioin"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "pitchshift", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "xfade", "level", "listen", "spectrum"}},
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "pitchshift", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "xfade", "level", "listen", "spectrum", "notes"}},
   {"MOD", {"lfo", "env", "rand", "follow"}}};
 
 // ---------------- building ----------------
@@ -227,7 +227,7 @@ static int paramOfRow(const UiMod& u, int r) { const auto o = rowOrder(u); retur
 static int rowY(const UiMod& u, int j) { return std::max(0, rowOf(u, j)); }   // a cable to a hidden row lands on the first one
 // effects can be bypassed: a straight audio IN to an audio OUT (not MIXER, which has four)
 static bool bypassable(const ModuleDef* d) { return d->cat == Cat::Proc && d->type != "mixer" && !d->ins.empty() && d->ins[0].type == PType::Audio && !d->outs.empty() && d->outs[0].type == PType::Audio; }
-bool Ui::hasSwitch(const UiMod& u) const { return !u.m->def->fixed; }
+bool Ui::hasSwitch(const UiMod& u) const { return !u.m->def->fixed && u.m->def->type != "notes"; }
 bool Ui::hasKey(const UiMod& u) const { return u.m->def->keyIdx >= 0; }   // sequencers that play in a key: a KEY socket beside the SWITCH
 int Ui::kyX(const UiMod& u) const { return swX(u) + 8; }
 bool Ui::feedsBack(int id, int port) const {
@@ -249,7 +249,9 @@ Ui::Geom Ui::geom(const UiMod& u) const {
   int cw = 15, ch = 9; keysCell(u, cw, ch);
   const int vh = d->type == "tracker" && d->vis ? trRows(u.m) * 6 + 1 + trHead(u.m) : d->type == "keys" ? ch * 4 : d->vis;
   Geom g; g.jr = jr; g.vh = vh; g.vy = HEAD + jr * ROW + (vh ? 1 : 0); g.py = HEAD + jr * ROW + (vh ? vh + 2 : 0); g.h = g.py + (np ? rowsHeight(u, rowOrder(u)) : 0) + (np ? 2 : 0) + FOOT;   // a little room under the last row (for the tails of g, p, y)
-  g.w = d->width + (d->type == "keys" ? 8 * (cw - 15) : 0); return g;
+  g.w = d->width + (d->type == "keys" ? 8 * (cw - 15) : 0);
+  if (d->type == "notes") { g.vh = u.fold ? 8 : u.noteH; g.vy = HEAD + 1; g.py = HEAD + g.vh + 2; g.h = g.py + FOOT; g.w = u.noteW; }
+  return g;
 }
 UiMod* Ui::hit(int wx, int wy, int& lx, int& ly) {
   for (int i = (int)mods.size() - 1; i >= 0; i--) { UiMod& u = *mods[i]; const Geom g = geom(u);
@@ -351,6 +353,18 @@ static void stereoMeter(Canvas& c, UiMod& u, int x, int y, int w, float linL, fl
 void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
   Module* m = u.m; const std::string& ty = m->def->type; auto D = [&](int i) { return m->disp[i].load(std::memory_order_relaxed); };
   const int vh = geom(u).vh;
+  if (ty == "notes") {
+    const auto L = noteLines(u); const bool ed = noteEdit == m->id && !viewOnly; const int lh = 8, rows = std::max(1, vh / lh);
+    int curL = 0; size_t curC = 0; if (ed) { for (size_t i = 0; i < L.size(); i++) if (noteCur >= L[i].start && noteCur <= L[i].start + L[i].len) { curL = (int)i; curC = noteCur - L[i].start; } }
+    int first = (int)u.noteScroll; if (u.fold) first = 0; else if (ed) { if (curL < first) first = curL; if (curL >= first + rows) first = curL - rows + 1; }
+    first = std::max(0, std::min(first, std::max(0, (int)L.size() - rows))); u.noteScroll = (float)first;
+    c.rect(x, y, w, vh, ed ? 21 : 27);   // (a frame of its own while typing)
+    if (ed) c.rect(x + 1, y + 1, w - 2, vh - 2, 27);
+    if (u.text.empty() && !ed) c.text("CLICK TO TYPE", x + 2, y + 1, 21);
+    for (int r = 0; r < rows && first + r < (int)L.size(); r++) c.text(u.text.substr(L[first + r].start, L[first + r].len), x + 2, y + 1 + r * lh, 4);
+    if (!u.fold && (int)L.size() > rows) { const int bh = std::max(3, vh * rows / (int)L.size()), by = y + (vh - bh) * first / std::max(1, (int)L.size() - rows); c.rect(x + w - 2, by, 1, bh, 18); }   // a little scroll mark
+    if (ed && std::fmod(blink, 1.f) < 0.6f && curL >= first && curL < first + rows) c.rect(x + 2 + (int)curC * 4 - 1, y + (curL - first) * lh, 1, 7, 4);
+    return; }
   if (ty == "clump") {   // the loop as a line; each step a bar, taller when stronger, lit when it fires
     const int base = y + vh - 3;
     for (int i = 0; i < w; i += 2) c.px(x + i, base + 1, 18);
@@ -708,6 +722,10 @@ void Ui::drawModule(Canvas& c, UiMod& u, float dt) {
     const int fw = (int)std::lround(n * bw); for (int i = 0; i < fw; i++) { c.px(bx + i, ry + 4, active ? 4 : idle ? 21 : modded ? 11 : 7); if (active) c.px(bx + i, ry + 3, 4); }   // modulated: green, and moving with it
     if (modded) { const int bxm = bx + (int)std::lround(nb * (bw - 1)); c.px(bxm, ry + 2, 9); c.px(bxm, ry + 3, 9); c.px(bxm, ry + 5, 9); }   // where you set it
   }
+  if (d->type == "notes") { const int fy = y + g.h - FOOT + 1; for (int i = 3; i < w - 3; i += 2) c.px(x + i, fy - 2, 21);
+    c.frame(x + 3, fy, 9, 7, 18); c.text(u.fold ? "+" : "-", x + 6, fy + 1, 9);
+    for (int k = 0; k < 6; k++) for (int j = 0; j <= k; j += 2) c.px(x + w - 2 - k + j, fy + 6 - j, 18);   // the corner: drag to resize
+    c.ink = nullptr; c.textInk = nullptr; return; }
   if (!d->fixed) { const int fy = y + g.h - FOOT + 1; for (int i = 3; i < w - 3; i += 2) c.px(x + i, fy - 2, 21);
     auto box = [&](int bx, bool on, const char* l, int col) { if (on) c.rect(bx, fy, 9, 7, col); else c.frame(bx, fy, 9, 7, 18); c.text(l, bx + 3, fy + 1, on ? 15 : 9); };
     if (d->cat == Cat::Trig || d->cat == Cat::Mod) {   // sequencers and mod sources: simply on or off
@@ -872,14 +890,15 @@ void Ui::draw(Canvas& c, float dt) {
   drawEditor(c);
   // the name box
   if (ask) {
-    const int w = std::min(c.W - 10, 150), h = 34, x = (c.W - w) / 2, y = TOP + 30;
+    const int cb = ask->check >= 0 ? 10 : 0, w = std::min(c.W - 10, 150), h = 34 + cb, x = (c.W - w) / 2, y = TOP + 30;
     c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, MENU_BG); c.frame(x, y, w, h, 21);
     c.text(ask->title, x + 4, y + 4, 18); c.rect(x + 4, y + 12, w - 8, 9, 21);
     std::string t = ask->text; const int room = (w - 14) / 4; if ((int)t.size() > room) t = t.substr(t.size() - room);
     c.text(t, x + 6, y + 14, 4); if (std::fmod(blink, 1.f) < 0.5f) c.rect(x + 6 + Canvas::tw(t) + 2, y + 13, 1, 7, 4);
-    c.text("OK", x + 6, y + 25, 9); c.text("CANCEL", x + 24, y + 25, 9);
-    if (ask->dice) { const int dx = x + w - 52; c.frame(dx, y + 24, 7, 7, 9); for (int k : {0, 2, 4}) c.px(dx + 1 + k, y + 25 + k, 4);   // a dice: another name
-      c.text("NEW NAME", dx + 10, y + 25, 9); }
+    if (cb) { c.frame(x + 6, y + 24, 7, 7, 18); if (ask->check > 0) { c.rect(x + 8, y + 26, 3, 3, 4); } c.text(ask->checkLabel, x + 17, y + 25, 18); }   // the tick box
+    c.text("OK", x + 6, y + 25 + cb, 9); c.text("CANCEL", x + 24, y + 25 + cb, 9);
+    if (ask->dice) { const int dx = x + w - 52; c.frame(dx, y + 24 + cb, 7, 7, 9); for (int k : {0, 2, 4}) c.px(dx + 1 + k, y + 25 + cb + k, 4);   // a dice: another name
+      c.text("NEW NAME", dx + 10, y + 25 + cb, 9); }
   }
   drawHelp(c, dt);
   c.ink = nullptr;
@@ -967,8 +986,31 @@ void Ui::drawHelp(Canvas& c, float dt) {   // the note: after the pointer rests 
   c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, MENU_BG); c.frame(x, y, w, h, 21);
   int ty = y + 3; if (!title.empty()) { c.text(title, x + 4, ty, 4); ty += 9; } for (auto& l : lines) { c.text(l, x + 4, ty, 9); ty += 8; } }
 
-void Ui::typed(const std::string& t) { if (!ask) return; for (char ch : t) { const char u = (char)std::toupper((unsigned char)ch);
+void Ui::typed(const std::string& t) {
+  if (!ask && noteEdit) { std::string ok; for (char ch : t) if ((unsigned char)ch >= 32 && (unsigned char)ch < 127) ok += ch; notePaste(ok); return; }
+  if (!ask) return; for (char ch : t) { const char u = (char)std::toupper((unsigned char)ch);
     if (((u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') || std::string(" #-/+.").find(u) != std::string::npos) && ask->text.size() < 24) ask->text += u; } }
+// ---- NOTES ----
+std::vector<Ui::NoteLine> Ui::noteLines(const UiMod& u) const {   // word-wrapped to the box (a word too long for a line is cut)
+  std::vector<NoteLine> L; const int cpl = std::max(1, (geom(u).w - 6 - 4) / 4); const std::string& t = u.text; size_t i = 0;
+  while (true) { size_t e = t.find('\n', i); if (e == std::string::npos) e = t.size(); size_t a = i;
+    do { size_t n = e - a; if ((int)n > cpl) { size_t cut = a + cpl; size_t sp = t.rfind(' ', cut); if (sp != std::string::npos && sp > a) cut = sp + 1; n = cut - a; }
+      L.push_back({a, n}); a += n; } while (a < e);
+    if (e == t.size()) break; i = e + 1; if (i == t.size()) { L.push_back({i, 0}); break; } }
+  if (L.empty()) L.push_back({0, 0}); return L; }
+std::string Ui::noteText() const { const UiMod* u = byId(noteEdit); return u ? u->text : std::string(); }
+void Ui::notePaste(const std::string& in) { UiMod* u = byId(noteEdit); if (!u || in.empty()) return; std::string t; for (char ch : in) if (ch == '\n' || ((unsigned char)ch >= 32 && (unsigned char)ch < 127)) t += ch; else if (ch == '\t') t += "  ";
+  noteCur = std::min(noteCur, u->text.size()); u->text.insert(noteCur, t); noteCur += t.size(); changed(); }
+void Ui::noteCut() { UiMod* u = byId(noteEdit); if (!u) return; u->text.clear(); noteCur = 0; changed(); }
+void Ui::noteKey(int k) {
+  UiMod* u = byId(noteEdit); if (!u || k == 27) { noteEdit = 0; return; } std::string& t = u->text; noteCur = std::min(noteCur, t.size());
+  if (k == 3) { if (noteCur) noteCur--; } else if (k == 4) { if (noteCur < t.size()) noteCur++; }
+  else if (k == 5) { if (noteCur) { t.erase(noteCur - 1, 1); noteCur--; changed(); } } else if (k == 6) { if (noteCur < t.size()) { t.erase(noteCur, 1); changed(); } }
+  else if (k == 7) notePaste("\n");
+  else { const auto L = noteLines(*u); int li = 0; for (size_t i = 0; i < L.size(); i++) if (noteCur >= L[i].start && noteCur <= L[i].start + L[i].len) li = (int)i; const size_t col = noteCur - L[li].start;
+    if (k == 8) noteCur = L[li].start; else if (k == 9) noteCur = L[li].start + L[li].len;
+    else if (k == 1 && li > 0) noteCur = L[li - 1].start + std::min(col, L[li - 1].len); else if (k == 2 && li + 1 < (int)L.size()) noteCur = L[li + 1].start + std::min(col, L[li + 1].len); } }
+
 // a name for a session, from two lists of quiet words (SAVE AS: the dice gives another)
 std::string Ui::randomName() {
   /* describing words: nature, weather, colour, materials, machines, space, the city, moods, time, the odd strange one */
@@ -1009,7 +1051,7 @@ std::string Ui::randomName() {
 }
 void Ui::keyBackspace() { if (ask && !ask->text.empty()) ask->text.pop_back(); }
 void Ui::keyEscape() { ask.reset(); }
-void Ui::keyEnter() { if (!ask) return; auto a = std::move(ask); std::string t = a->text; while (!t.empty() && t.back() == ' ') t.pop_back(); if (!t.empty() && a->done) a->done(t); }
+void Ui::keyEnter() { if (!ask) return; auto a = std::move(ask); askChecked = a->check; std::string t = a->text; while (!t.empty() && t.back() == ' ') t.pop_back(); if (!t.empty() && a->done) a->done(t); }
 
 // ---------------- input ----------------
 bool Ui::hasQwerty() const { for (auto& u : mods) if (u->m->def->type == "qwerty" && !u->m->mute.load()) return true; return false; }
@@ -1066,12 +1108,14 @@ void Ui::contextAt(float sx, float sy) {
 }
 void Ui::pointerDown(float sx, float sy) {
   hoverT = -1;   // a tap hides the note until the pointer moves on
+  noteEdit = 0;   // (NOTES: a press anywhere but in a note's text stops the typing; a press in one starts it again below)
   const int wx = (int)sx + viewX, wy = (int)sy + viewY;
   { int lx0, ly0; if (sy >= TOP && !ask) if (UiMod* hu = hit(wx, wy, lx0, ly0)) lastTouched = hu->m->id; }
   drag = Drag(); drag.sx = sx; drag.sy = sy; drag.wx = wx; drag.wy = wy;
   if (ask) {   // OK / CANCEL in the name box
-    const int w = std::min(lastW - 10, 150), x = (lastW - w) / 2, y = TOP + 30;
-    if (sy >= y + 22 && sy <= y + 32) { if (sx >= x + 3 && sx <= x + 16) keyEnter(); else if (sx >= x + 21 && sx <= x + 50) keyEscape(); else if (ask->dice && sx >= x + w - 54) ask->text = randomName(); }
+    const int cb = ask->check >= 0 ? 10 : 0, w = std::min(lastW - 10, 150), x = (lastW - w) / 2, y = TOP + 30;
+    if (cb && sy >= y + 22 && sy <= y + 32 && sx >= x + 3 && sx <= x + 18 + Canvas::tw(ask->checkLabel)) { ask->check = ask->check > 0 ? 0 : 1; return; }   // the tick box
+    if (sy >= y + 22 + cb && sy <= y + 32 + cb) { if (sx >= x + 3 && sx <= x + 16) keyEnter(); else if (sx >= x + 21 && sx <= x + 50) keyEscape(); else if (ask->dice && sx >= x + w - 54) ask->text = randomName(); }
     return;
   }
   if (selOn) { const int bw = Canvas::tw("UNPLUG") + 6; selOn = false; selT = 0.3f;   // the picked cable's UNPLUG button; any other tap just lets go of it
@@ -1124,6 +1168,16 @@ void Ui::pointerDown(float sx, float sy) {
       Dropdown q; q.items = {"DELETE " + d->name + "?", "YES, DELETE", "NO, KEEP IT"}; q.title = 0; q.danger = 1; q.x = u->x - viewX + g.w - 40; q.y = u->y - viewY + HEAD;
       q.pick = [this, u](int i) { if (i == 1) { status("REMOVED " + u->m->def->name); removeGently(u); changed(); } }; openDropdown(q); return; }
     drag.kind = D_MOVE; drag.m = u; drag.ox = wx - u->x; drag.oy = wy - u->y; return; }
+  if (d->type == "notes") {
+    if (ly >= g.h - FOOT) { if (lx < 13) { u->fold = !u->fold; noteEdit = 0; changed(); return; }
+      if (lx >= g.w - 9 && !u->fold && !viewOnly) { drag.kind = D_NOTESIZE; drag.m = u; drag.vx0 = u->noteW; drag.vy0 = u->noteH; return; } }
+    else if (ly >= g.vy && ly < g.vy + g.vh && !viewOnly) {
+      if (u->fold) { u->fold = false; changed(); }
+      const auto L = noteLines(*u); const int row = (int)u->noteScroll + (ly - g.vy) / 8; noteEdit = u->m->id;
+      if (L.empty() || row >= (int)L.size()) noteCur = u->text.size();
+      else { const NoteLine& nl = L[std::max(0, row)]; noteCur = nl.start + (size_t)std::max(0, std::min((int)nl.len, (lx - 5 + 2) / 4)); }
+      lastTouched = u->m->id; return; }
+  }
   if (!d->fixed && ly >= g.h - FOOT) {
     const bool onOff = d->cat == Cat::Trig || d->cat == Cat::Mod;
     if (onOff && lx >= 3 && lx < 18) { u->m->mute.store(!u->m->mute.load()); status(d->name + (u->m->mute.load() ? " OFF" : " ON")); changed(); return; }
@@ -1255,6 +1309,7 @@ void Ui::pointerMove(float sx, float sy) {
   if (std::fabs(sx - hoverX) + std::fabs(sy - hoverY) > 1.5f) { hoverX = sx; hoverY = sy; hoverT = 0; }   // the pointer moved: the note goes, and the wait starts again
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; drag.wx = wx; drag.wy = wy;
   if (drag.kind == D_PAN) { viewX = drag.vx0 - (int)(sx - drag.sx); viewY = drag.vy0 - (int)(sy - drag.sy); }
+  else if (drag.kind == D_NOTESIZE && drag.m) { drag.m->noteW = std::max(50, std::min(480, drag.vx0 + (int)std::lround(sx - drag.sx))); drag.m->noteH = std::max(16, std::min(480, drag.vy0 + (int)std::lround(sy - drag.sy))); }
   else if (drag.kind == D_BLEND) { if (onBlendSet && blendBarX1 > blendBarX0) onBlendSet(clampf((sx - blendBarX0) / (float)(blendBarX1 - blendBarX0), 0, 1)); }
   else if (drag.kind == D_MOVE) { drag.m->x = wx - drag.ox; drag.m->y = std::max(viewY + TOP + 1, wy - drag.oy);
     // an unpatched effect dragged over an audio cable can be dropped into it
