@@ -6,13 +6,6 @@ Written in C++ and inspired by the idea of having something that's a bit like a 
 
 One goal here is to have this running well on older hardware, for example 32bit windows machines.
 
-**Status:** An early preview. Things are still being developed, but it does work. Improvements are onging. Testing is happening on:
-
-- Windows 64bit (Surface Go 2)
-- Windows 32bit (Panasonic CF-U1)
-- Mac (2017 MBP)
-- Linux - currently untested
-
 ## Download
 
 Every change is built automatically. Get the newest version from the **Latest build** release:
@@ -35,15 +28,6 @@ its sounds go inside it). It plays sessions only; it doesn't change them. Sessio
 It can be installed from the browser's menu (**Install app**, or **Add to Home Screen**), and then opens full screen from
 the home screen, like an app. While a session plays the controls tuck away after a few seconds: tap the session to bring
 them back. In a browser, **FULL SCREEN** hides the browser's own bars.
-
-## Notes and names
-
-**NOTES** (in + ADD, under PROCESS) is a box to type into: set notes, reminders, what a MIDI knob does. Click in it to type;
-Escape or a click elsewhere when done. Drag its bottom-right corner to resize it; folded, it shows its first line, so a first
-line makes a label. Notes are saved with the session, and show (but can't be changed) in the web player.
-
-When naming a session (SAVE AS), **ADD KEY AND SCALE** puts the session's key and scale in the file name:
-"calm example (db_yo)". An older bracket like it is replaced rather than added to.
 
 ## Blending between sessions
 
@@ -68,13 +52,6 @@ on your controller. Knobs take over once they reach the control's current value 
 turns are recognised, as are fine 14-bit controls and NRPN, and values go back to the controller so encoders and
 displays match the screen. **SETTINGS > MIDI > MIDI MAP** lists every mapping. Mappings are saved with the session, or can be
 kept for every session.
-
-## Building it yourself
-
-    cmake -B build -DCMAKE_BUILD_TYPE=Release
-    cmake --build build --config Release
-
-SDL3 and miniaudio are downloaded automatically during the build.
 
 ## Layout
 
