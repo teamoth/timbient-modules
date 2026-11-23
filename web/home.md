@@ -23,6 +23,8 @@ Sessions can also be blended: while one plays, the next loads in the background,
 
 It's made to run well on older hardware too, including 32-bit Windows machines.
 
+Things that inspired timbient modules: SunVox, Monome Norns scripts, Polyend Tracker, Modular synths.
+
 ## Installing
 
 **Mac** (Intel and Apple Silicon, macOS 10.13 or later): unzip, drag *Timbient Modules.app* into Applications, then run this once in Terminal (the app isn't signed with an Apple developer certificate):
