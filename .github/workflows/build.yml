@@ -5,7 +5,7 @@ name: build
 on:
   push:
     branches: [main]
-    paths-ignore: ['**.md']   # (editing the README or CREDITS alone doesn't need a build)
+    paths: ['**', '!**.md', 'web/home.md']   # (editing the README or CREDITS alone doesn't need a build; the home page's words do)
   workflow_dispatch:
 permissions:
   contents: write
@@ -104,7 +104,7 @@ jobs:
           emcmake cmake -B build-web -DTIMBIENT_WEB=ON -DTIMBIENT_APP=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build build-web --parallel --target timbient_web
           # the site: the home page at the top, the web player in player/
-          mkdir -p site/player && cp -r web/index.html web/home CREDITS.md site/ && cp web/player/* build-web/timbient.js build-web/timbient.wasm CREDITS.md site/player/
+          mkdir -p site/player && cp -r web/home CREDITS.md site/ && node tools/build_home.mjs web/home.md web/home-template.html site/index.html && cp web/player/* build-web/timbient.js build-web/timbient.wasm CREDITS.md site/player/
           touch site/.nojekyll
       - name: "Test: the web player opens and plays a session with a sound inside it"
         run: node tests/web_test.mjs site/player/timbient.js tests/fixtures/web_test.tmbnt

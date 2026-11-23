@@ -1,15 +1,16 @@
 <!doctype html>
+<!-- The home page's layout. Its words are in home.md: the build puts them in here ({{...}}) to make the page. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Timbient Modules</title>
-<meta name="description" content="A pixelated, modular patch-bay playground for ambient and experimental music: sequencers, voices and effects to patch together. For Mac and Windows.">
+<title>{{TITLE_TEXT}}</title>
+<meta name="description" content="{{TAGLINE_TEXT}}">
 <meta name="theme-color" content="#e8eef5">
 <link rel="icon" href="home/icon-192.png">
 <link rel="apple-touch-icon" href="home/icon-192.png">
-<meta property="og:title" content="Timbient Modules">
-<meta property="og:description" content="A pixelated, modular patch-bay playground for ambient and experimental music.">
+<meta property="og:title" content="{{TITLE_TEXT}}">
+<meta property="og:description" content="{{TAGLINE_TEXT}}">
 <meta property="og:image" content="https://teamoth.github.io/timbient-modules/home/screenshot.png">
 <style>
   /* The app's own default look: pale blue-grey, dark text, the icon's cyan, amber and pink as small accents */
@@ -20,11 +21,10 @@
   a { color: var(--blue); }
   a:hover { color: #173d63; }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
-  header { padding: 56px 0 28px; display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; }
+  header { padding: 56px 0 36px; display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; }
   header img { width: 128px; height: 128px; }
   h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 42px); line-height: 1.15; font-weight: 700; }
   .tag { margin: 0; color: var(--mid); font-size: 17px; max-width: 46em; }
-  .cables { height: 6px; margin: 0 0 32px; background: repeating-linear-gradient(115deg, var(--cyan) 0 6px, var(--amber) 6px 12px, var(--pink) 12px 18px); border-radius: 3px; }
   .get { display: grid; grid-template-columns: repeat(3, minmax(0, 220px)); gap: 14px; margin: 0 0 14px; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 12px 20px; border-radius: 4px; text-decoration: none; font-weight: 700; font-size: 16px; background: var(--blue); color: #fff; }
   .btn:hover { background: #224a72; color: #fff; }
@@ -43,6 +43,7 @@
   .card p { margin: 0 0 12px; font-size: 15px; }
   .card p:last-child { margin-bottom: 0; }
   .quiet { color: var(--mid); font-size: 14px; }
+  code.inline { display: inline; padding: 1px 5px; margin: 0; white-space: normal; }
   code { display: block; margin: 10px 0 0; padding: 10px 12px; background: #eef2f7; border: 1px solid var(--line); border-radius: 4px; color: #7a4a06; font-size: 13px; overflow-x: auto; white-space: pre; }
   footer { border-top: 1px solid var(--line); padding: 22px 0 40px; color: var(--mid); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 24px; }
   footer a { color: var(--mid); }
@@ -59,11 +60,10 @@
   <header>
     <img src="home/icon-256.png" alt="Timbient Modules icon: the letters TM made of twisted patch cables" width="128" height="128">
     <div>
-      <h1>Timbient Modules</h1>
-      <p class="tag">A pixelated, modular patch-bay playground for ambient and experimental music: sequencers, voices and effects to patch together.</p>
+      <h1>{{TITLE}}</h1>
+      <p class="tag">{{TAGLINE}}</p>
     </div>
   </header>
-  <div class="cables" aria-hidden="true"></div>
 
   <div class="get">
     <a class="btn" href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Windows.zip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Windows</a>
@@ -71,27 +71,14 @@
     <a class="btn" href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Linux.tar.gz"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Linux</a>
   </div>
   <p class="small">Also: <a href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Windows-32bit.zip">Windows 32-bit</a> ·
-    <a href="https://github.com/teamoth/timbient-modules/releases/tag/latest">all downloads and what's new</a>. Always the newest version.</p>
+    <a href="https://github.com/teamoth/timbient-modules/releases/tag/latest">all downloads</a>. Always the newest version.</p>
 
   <figure>
     <a href="home/screenshot.png"><img src="home/screenshot.png" width="3360" height="2100" alt="Timbient Modules with a session open: sequencers, a note looper, pluck and pad voices, a resonator, echo, reverb and a grain looper, joined by patch cables"></a>
-    <figcaption>A session, “faded chapel”, in G Yo. Click for full size.</figcaption>
   </figure>
 
   <div class="cols">
-    <div class="card">
-      <h2><span style="background: var(--cyan)"></span>What it is</h2>
-      <p>Where this is different from a DAW is that there isn't just one BPM, and you don't need to input specific notes. Everything can be clock-synced together (and there's a note-entry tracker module), but the idea is that separate voices can have completely different timings from each other, and you choose a scale, key and range in which notes are generated.</p>
-      <p>It's made to run well on older hardware too, including 32-bit Windows machines.</p>
-    </div>
-    <div class="card">
-      <h2><span style="background: var(--amber)"></span>Installing</h2>
-      <p><strong>Mac</strong> (Intel and Apple Silicon, macOS 10.13 or later): unzip, drag <em>Timbient Modules.app</em> into Applications, then run this once in Terminal (the app isn't signed with an Apple developer certificate):</p>
-      <code>xattr -cr "/Applications/Timbient Modules.app"</code>
-      <p style="margin-top: 14px"><strong>Windows</strong>: unzip and run <em>Timbient Modules.exe</em>. If Windows warns, click <em>More info</em>, then <em>Run anyway</em>.</p>
-      <p><strong>Linux</strong>: unpack and run <em>timbient-modules</em>.</p>
-      <p class="quiet">Sessions saved from the app can also be played on a phone or tablet with the <a href="player/">web player</a>.</p>
-    </div>
+{{SECTIONS}}
   </div>
 
   <footer>
