@@ -5,54 +5,52 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Timbient Modules</title>
 <meta name="description" content="A pixelated, modular patch-bay playground for ambient and experimental music: sequencers, voices and effects to patch together. For Mac and Windows.">
-<meta name="theme-color" content="#18191c">
+<meta name="theme-color" content="#e8eef5">
 <link rel="icon" href="home/icon-192.png">
 <link rel="apple-touch-icon" href="home/icon-192.png">
 <meta property="og:title" content="Timbient Modules">
 <meta property="og:description" content="A pixelated, modular patch-bay playground for ambient and experimental music.">
 <meta property="og:image" content="https://teamoth.github.io/timbient-modules/home/screenshot.png">
 <style>
-  /* The app's own colours: charcoal, with the icon's cyan, amber and pink */
-  :root { --bg: #18191c; --panel: #212328; --line: #34373e; --ink: #e9eaec; --mid: #a9adb4; --cyan: #59c3e8; --amber: #f2a541; --pink: #e86f8a; }
+  /* The app's own default look: pale blue-grey, dark text, the icon's cyan, amber and pink as small accents */
+  :root { --bg: #e8eef5; --panel: #f7f9fc; --line: #c9d3df; --ink: #1f2329; --mid: #555d69; --blue: #2f5f8f; --cyan: #59c3e8; --amber: #f2a541; --pink: #e86f8a; }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
-  a { color: var(--cyan); }
-  a:hover { color: #9adcf3; }
+  a { color: var(--blue); }
+  a:hover { color: #173d63; }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
   header { padding: 56px 0 28px; display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; }
-  header img { width: 128px; height: 128px; image-rendering: pixelated; }
-  h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 44px); line-height: 1.1; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700; }
+  header img { width: 128px; height: 128px; }
+  h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 42px); line-height: 1.15; font-weight: 700; }
   .tag { margin: 0; color: var(--mid); font-size: 17px; max-width: 46em; }
   .cables { height: 6px; margin: 0 0 32px; background: repeating-linear-gradient(115deg, var(--cyan) 0 6px, var(--amber) 6px 12px, var(--pink) 12px 18px); border-radius: 3px; }
-  .get { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 0 0 14px; }
-  .btn { display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 12px 22px; border-radius: 4px; text-decoration: none; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; font-size: 15px; }
-  .btn.main { background: var(--amber); color: #1b1407; }
-  .btn.main:hover { background: #f7bd6b; color: #1b1407; }
-  .btn.alt { border: 1px solid var(--line); color: var(--ink); background: var(--panel); }
-  .btn.alt:hover { border-color: var(--cyan); color: var(--ink); }
+  .get { display: grid; grid-template-columns: repeat(3, minmax(0, 220px)); gap: 14px; margin: 0 0 14px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 12px 20px; border-radius: 4px; text-decoration: none; font-weight: 700; font-size: 16px; background: var(--blue); color: #fff; }
+  .btn:hover { background: #224a72; color: #fff; }
   .btn svg { width: 18px; height: 18px; }
   .small { color: var(--mid); font-size: 14px; margin: 0 0 40px; }
   .small a { color: var(--mid); }
   .small a:hover { color: var(--ink); }
   figure { margin: 0 0 48px; }
-  figure a { display: block; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #e8eef5; }
+  figure a { display: block; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #e8eef5; box-shadow: 0 2px 10px rgba(31, 35, 41, 0.08); }
   figure img { display: block; width: 100%; height: auto; }
   figcaption { color: var(--mid); font-size: 13px; margin-top: 10px; }
-  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 20px; margin: 0 0 56px; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin: 0 0 56px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 22px 24px; }
-  .card h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .card h2 { margin: 0 0 10px; font-size: 17px; }
   .card h2 span { display: inline-block; width: 9px; height: 9px; margin-right: 9px; border-radius: 2px; }
-  .card p { margin: 0 0 12px; color: #cfd2d7; font-size: 15px; }
+  .card p { margin: 0 0 12px; font-size: 15px; }
   .card p:last-child { margin-bottom: 0; }
-  code { display: block; margin: 10px 0 0; padding: 10px 12px; background: #121316; border: 1px solid var(--line); border-radius: 4px; color: var(--amber); font-size: 13px; overflow-x: auto; white-space: pre; }
+  .quiet { color: var(--mid); font-size: 14px; }
+  code { display: block; margin: 10px 0 0; padding: 10px 12px; background: #eef2f7; border: 1px solid var(--line); border-radius: 4px; color: #7a4a06; font-size: 13px; overflow-x: auto; white-space: pre; }
   footer { border-top: 1px solid var(--line); padding: 22px 0 40px; color: var(--mid); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 24px; }
   footer a { color: var(--mid); }
   footer a:hover { color: var(--ink); }
-  @media (max-width: 600px) {
+  @media (max-width: 700px) {
     header { grid-template-columns: 1fr; gap: 18px; padding-top: 36px; }
     header img { width: 96px; height: 96px; }
-    .btn { width: 100%; justify-content: center; }
+    .get { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -68,14 +66,11 @@
   <div class="cables" aria-hidden="true"></div>
 
   <div class="get">
-    <a class="btn main" href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Mac.zip">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download for Mac</a>
-    <a class="btn main" href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Windows.zip">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download for Windows</a>
-    <a class="btn alt" href="player/">Try it in your browser</a>
+    <a class="btn" href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Windows.zip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Windows</a>
+    <a class="btn" href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Mac.zip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Mac</a>
+    <a class="btn" href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Linux.tar.gz"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Linux</a>
   </div>
   <p class="small">Also: <a href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Windows-32bit.zip">Windows 32-bit</a> ·
-    <a href="https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Linux.tar.gz">Linux</a> ·
     <a href="https://github.com/teamoth/timbient-modules/releases/tag/latest">all downloads and what's new</a>. Always the newest version.</p>
 
   <figure>
@@ -94,11 +89,8 @@
       <p><strong>Mac</strong> (Intel and Apple Silicon, macOS 10.13 or later): unzip, drag <em>Timbient Modules.app</em> into Applications, then run this once in Terminal (the app isn't signed with an Apple developer certificate):</p>
       <code>xattr -cr "/Applications/Timbient Modules.app"</code>
       <p style="margin-top: 14px"><strong>Windows</strong>: unzip and run <em>Timbient Modules.exe</em>. If Windows warns, click <em>More info</em>, then <em>Run anyway</em>.</p>
-    </div>
-    <div class="card">
-      <h2><span style="background: var(--pink)"></span>In your browser</h2>
-      <p>The <a href="player/">web player</a> plays sessions saved from the app (with their sounds) on a phone, a tablet or any computer, with nothing to install. It plays sessions; changes are made in the app.</p>
-      <p>On a phone it can be installed from the browser's menu, and then opens full screen like an app.</p>
+      <p><strong>Linux</strong>: unpack and run <em>timbient-modules</em>.</p>
+      <p class="quiet">Sessions saved from the app can also be played on a phone or tablet with the <a href="player/">web player</a>.</p>
     </div>
   </div>
 
