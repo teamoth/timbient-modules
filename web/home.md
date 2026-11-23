@@ -1,6 +1,7 @@
 <!--
   The words on the home page (teamoth.github.io/timbient-modules). Edit them here, like the README:
-  - The line starting with # is the page's title; the paragraph under it is the line beneath the title.
+  - The line starting with # is the page's title; the paragraph under it is the line beneath the title, and the
+    paragraph after that is the small line under the download buttons.
   - Each ## starts a section (a box on the page); the sections sit side by side, then stack on a phone.
   - **bold**, *italic*, [link text](https://address), and a blank line between paragraphs.
   - A block between two lines of ``` is shown as code (like the Terminal command).
@@ -11,6 +12,8 @@
 # timbient modules
 
 A pixelated, modular patch-bay playground for ambient and experimental music: sequencers, voices and effects to patch together.
+
+Also: [Windows 32-bit](https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Windows-32bit.zip) · [all downloads](https://github.com/teamoth/timbient-modules/releases/tag/latest)
 
 ## What it is
 

@@ -1,6 +1,6 @@
 // The home page: the words from web/home.md, put into the layout in web/home-template.html.
 //   node tools/build_home.mjs web/home.md web/home-template.html site/index.html
-// home.md: a # title, the paragraph under it (the line beneath the title), then ## sections (a box each), with
+// home.md: a # title, the paragraph under it (the line beneath the title), the next (the line under the buttons), then ## sections (a box each), with
 // paragraphs, **bold**, *italic*, [links](address), `code`, and ``` blocks. <!-- notes --> are left out.
 import { readFileSync, writeFileSync } from 'fs';
 
@@ -31,11 +31,11 @@ for (let i = 0; i < lines.length; i++) {
 }
 flush();
 
-let title = 'Timbient Modules', tagline = ''; const sections = []; let cur = null;
+let title = 'Timbient Modules', tagline = '', below = ''; const sections = []; let cur = null;
 for (const b of blocks) {
   if (b.k === 'h1') { title = b.t; continue; }
   if (b.k === 'h2') { cur = { title: b.t, body: [] }; sections.push(cur); continue; }
-  if (!cur) { if (b.k === 'p' && !tagline) tagline = b.t; continue; }
+  if (!cur) { if (b.k === 'p') { if (!tagline) tagline = b.t; else if (!below) below = b.t; } continue; }   // the line under the title, then the one under the buttons
   cur.body.push(b.k === 'code' ? `<code>${esc(b.t)}</code>` : `<p>${inline(b.t)}</p>`);
 }
 const accents = ['var(--cyan)', 'var(--amber)', 'var(--pink)'];
@@ -44,6 +44,6 @@ const cards = sections.map((s, i) => `    <div class="card">
       ${s.body.join('\n      ')}
     </div>`).join('\n');
 
-const out = tpl.replaceAll('{{TITLE}}', inline(title)).replaceAll('{{TITLE_TEXT}}', esc(title)).replaceAll('{{TAGLINE}}', inline(tagline)).replaceAll('{{TAGLINE_TEXT}}', esc(tagline)).replace('{{SECTIONS}}', cards);
+const out = tpl.replaceAll('{{TITLE}}', inline(title)).replaceAll('{{TITLE_TEXT}}', esc(title)).replaceAll('{{TAGLINE}}', inline(tagline)).replaceAll('{{TAGLINE_TEXT}}', esc(tagline)).replace('{{BELOW_BUTTONS}}', inline(below)).replace('{{SECTIONS}}', cards);
 writeFileSync(outPath, out);
 console.log(`home page: "${title}", ${sections.length} sections -> ${outPath}`);
