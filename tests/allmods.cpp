@@ -454,6 +454,20 @@ int main(int argc, char** argv) {
     { const int w = std::min(700 - 10, 150), x = (700 - w) / 2, y = 10 + 30; /* the name box: TOP + 30 */ ui.pointerDown((float)(x + 8), (float)(y + 26)); ui.pointerUp(0, 0); } const bool ticked = ui.ask && ui.ask->check == 1; ui.keyEnter();
     chk(ticked && ui.askChecked == 1, "tick box");
     ui.clearPatch(); run(eng, 0.1f); if (!ok) fails++; std::printf("notes: %d lines wrapped%s%s\n", (int)L.size(), ok ? "" : "  WRONG", res.c_str()); }
+  // NOTEPAD: the top bar's button opens it; typing goes into it (not marking the session as changed); a new session leaves it be;
+  // its title moves it, its X closes it
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    ui.clearPatch(); Canvas c; c.fine = true; c.resize(700, 400); auto frame = [&] { c.beginFrame(); ui.draw(c, 0.016f); };
+    int sessionEdits = 0; auto oc = ui.onChange; ui.onChange = [&] { sessionEdits++; };
+    frame(); for (auto& r : c.runs) if (r.s == "NOTEPAD" && r.y < 10) { ui.pointerDown((float)r.x + 2, 4); ui.pointerUp(0, 0); break; }
+    frame(); chk(ui.padOpen && ui.pad && ui.padX >= 0, "opens");
+    if (ui.pad) { const Ui::Geom g = ui.geom(*ui.pad); ui.pointerDown((float)ui.padX + 10, (float)ui.padY + g.vy + 3); ui.pointerUp(0, 0);
+      chk(ui.noteEdit == Ui::PAD_ID, "click to type"); ui.typed("1 moss diner"); ui.noteKey(7); ui.typed("2 faded chapel");
+      chk(ui.pad->text == "1 moss diner\n2 faded chapel" && sessionEdits == 0 && ui.padDirty, "typing (the app's, not the session's)");
+      ui.noteKey(27); ui.clearPatch(); ui.add("out", 300, 30); frame(); chk(ui.padOpen && ui.pad->text == "1 moss diner\n2 faded chapel", "a new session leaves it");
+      const int x0 = ui.padX, y0 = ui.padY; ui.pointerDown((float)x0 + 20, (float)y0 + 3); ui.pointerMove((float)x0 - 80, (float)y0 + 43); ui.pointerUp(0, 0); frame();
+      chk(ui.padX == x0 - 100 && ui.padY == y0 + 40, "moves"); ui.pointerDown((float)ui.padX + g.w - 5, (float)ui.padY + 3); ui.pointerUp(0, 0); chk(!ui.padOpen, "X closes"); }
+    ui.onChange = oc; ui.padOpen = false; ui.pad.reset(); ui.padX = ui.padY = -1; ui.clearPatch(); if (!ok) fails++; std::printf("notepad:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
   // dragging a module over a sound cable offers to insert it, CROSSFADER and MIXER included (they have no IN/OUT by those names)
   { std::string res; bool ok = true;
     for (const char* ty : {"xfade", "mixer", "echo"}) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 30); UiMod* v = ui.add("pad", 0, 30); ui.connect(v, "OUT", o, "IN");

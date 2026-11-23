@@ -130,8 +130,8 @@ public:
   int blendBarX0 = 0, blendBarX1 = 0;      // where the bar is (for dragging, and right-click: MIDI LEARN)
   void startLearnBlend();                  // MIDI LEARN for the blend: an EVERY SESSION mapping of its own (no module)
   void demoPatch();
-  UiMod* byId(int id) { for (auto& u : mods) if (u->m->id == id) return u.get(); return nullptr; }
-  const UiMod* byId(int id) const { for (auto& u : mods) if (u->m->id == id) return u.get(); return nullptr; }
+  UiMod* byId(int id) { if (id == PAD_ID) return pad.get(); for (auto& u : mods) if (u->m->id == id) return u.get(); return nullptr; }
+  const UiMod* byId(int id) const { if (id == PAD_ID) return pad.get(); for (auto& u : mods) if (u->m->id == id) return u.get(); return nullptr; }
 
   // each frame
   void draw(Canvas& c, float dt);
@@ -189,6 +189,13 @@ public:
   // NOTES: the one being typed into (its id; 0: none), where the cursor is, and the editing keys (the app's own keys wait meanwhile)
   int noteEdit = 0; size_t noteCur = 0;
   bool typing() const { return ask || noteEdit; }
+  // NOTEPAD: one note of your own, not in any session (a set list, reminders): a panel floating over the patch, shown or hidden
+  // from the top bar, moved by its title, resized by its corner; it stays whatever session is opened. The app saves it
+  static constexpr int PAD_ID = -77;
+  std::unique_ptr<UiMod> pad; bool padOpen = false, padDirty = false; int padX = -1, padY = -1;
+  UiMod* padMod();                        // (made the first time it's needed)
+  void noteChanged() { if (noteEdit == PAD_ID) padDirty = true; else changed(); }
+  bool padAt(float sx, float sy) const;   // is this point on the panel
   void noteKey(int k);                    // 1 up 2 down 3 left 4 right 5 backspace 6 delete 7 enter 8 home 9 end 27 escape (stop)
   std::string noteText() const;           // its text (to copy)
   void notePaste(const std::string& t);   // typed in at the cursor
@@ -256,7 +263,7 @@ private:
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE, D_PADMOVE };
   UiMod* tapM = nullptr; int tapK = -1; std::vector<double> tapTimes;   // TAP on speed rows
   float wanderTapT = -9; int wanderTapK = -1; UiMod* wanderTapM = nullptr;   // the Tracker's column numbers: a second tap soon after sets RANDOM NOTE back to 0
   // cables as curves you can touch

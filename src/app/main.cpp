@@ -13,7 +13,6 @@
 #include "audio_files.h"
 #include "../engine/analyse.h"
 #include "midi.h"
-#include "touchbar.h"
 #include <cstdio>
 #include <fstream>
 #include <ctime>
@@ -24,7 +23,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.53.0";
+static const char* VERSION = "0.54.0";
 static std::atomic<Engine*> gEngine{nullptr};   // the engine the sound card renders: the session on the screen (while blending, it plays the last one too)
 
 // ---------------- sound ----------------
@@ -527,6 +526,13 @@ int main(int argc, char** argv) {
   ui.onMidiDevToggle = [&](const std::string& name) { std::vector<std::string> off = midi.offList(); auto it = std::find(off.begin(), off.end(), name); const bool nowOff = it == off.end();
     if (nowOff) off.push_back(name); else off.erase(it); midi.setOff(off); Json a = Json::array(); for (auto& n : off) a.push(Json::string(n)); settings.set("midiOff", a); saveSettings();
     std::string up = name; for (auto& ch : up) ch = (char)std::toupper((unsigned char)ch); ui.status("MIDI: " + up + (nowOff ? " SWITCHED OFF" : " SWITCHED ON"), 2); };
+  // NOTEPAD: the app's own note, kept with the settings (saved a moment after it changes, and on quitting)
+  if (const Json* np = settings.get("notepad")) if (UiMod* p = ui.padMod()) {
+    p->text = np->str("text"); p->noteW = std::max(60, (int)np->num("w", 150)); p->noteH = std::max(16, (int)np->num("h", 110));
+    ui.padX = (int)np->num("x", -1); ui.padY = (int)np->num("y", -1); ui.padOpen = np->num("open", 0) > 0.5; p->fold = np->num("fold", 0) > 0.5; }
+  float padSaveT = -1;
+  auto savePad = [&] { if (!ui.pad) return; Json j = Json::object(); j.set("text", Json::string(ui.pad->text)); j.set("w", Json::number(ui.pad->noteW)); j.set("h", Json::number(ui.pad->noteH));
+    j.set("x", Json::number(ui.padX)); j.set("y", Json::number(ui.padY)); j.set("open", Json::number(ui.padOpen ? 1 : 0)); j.set("fold", Json::number(ui.pad->fold ? 1 : 0)); settings.set("notepad", j); saveSettings(); };
   ui.onGlobalMaps = [&] { settings.set("midiGlobal", ui.midiMapsJson(true)); settings.set("midiFeedback", Json::number(ui.midiFeedback ? 1 : 0)); saveSettings(); };
   ui.helpOn = settings.num("help", 1) > 0.5;   // HELP starts on; switched off, it stays off
   ui.onHelpToggle = [&](bool on) { settings.set("help", Json::number(on ? 1 : 0)); saveSettings(); };
@@ -599,12 +605,6 @@ int main(int argc, char** argv) {
       winW = std::min(winW, std::max(480, ub.w - 40)); winH = std::min(winH, std::max(320, ub.h - 60)); } }
   win = SDL_CreateWindow("Timbient Modules", winW, winH, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (small ? SDL_WINDOW_MAXIMIZED : 0));
   SDL_SetWindowMinimumSize(win, 480, 320);
-  { TouchBarHooks th;   // the Touch Bar (on Macs that have one): the blend as a crossfader, or BLEND TO... and the OUTPUT's LEVEL
-    th.blendSet = [&](float u) { if (ui.onBlendSet) ui.onBlendSet(u); }; th.pause = [&] { if (ui.onBlendPause) ui.onBlendPause(); };
-    th.now = [&] { if (ui.onBlendNow) ui.onBlendNow(); }; th.cancel = [&] { if (ui.onBlendCancel) ui.onBlendCancel(); };
-    th.blendTo = [&] { if (!blendBusy(true)) SDL_ShowOpenFileDialog(onBlendDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); };
-    th.levelSet = [&](float v) { if (Module* o = outMod()) { const int k = o->def->paramIndex("level"); if (k >= 0) { o->p[k].store(o->def->params[k].fromNorm(v)); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.6f; } } };
-    touchBarInstall(win, th); }
   SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
   SDL_SetRenderVSync(ren, 1);
   SDL_Texture* tex = nullptr; int texW = 0, texH = 0; float scale = 3;
@@ -751,8 +751,7 @@ int main(int argc, char** argv) {
           if (writeFile(p, sessionFile(serializePatch(ui)))) { curFile = p; savedNow(); ui.status("SAVED " + fileName(p), 4); } else ui.status("COULD NOT SAVE THE FILE", 5); }
       } }
     engA.collectGarbage(); engB.collectGarbage(); blendFrame();
-    { TouchBarState ts; ts.blending = ui.blendAt >= 0; ts.paused = ui.blendPaused; ts.at = std::max(0.f, ui.blendAt);
-      if (Module* o = outMod()) { const int k = o->def->paramIndex("level"); if (k >= 0) ts.level = o->def->params[k].toNorm(o->p[k].load()); } touchBarUpdate(ts); }
+    if (ui.padDirty) { ui.padDirty = false; padSaveT = 1.0f; } if (padSaveT > 0 && (padSaveT -= 1.f / 60) <= 0) savePad();
     { std::string t = curFile.empty() ? std::string("NEW SESSION") : fileName(curFile); const size_t dot = t.rfind('.'); if (!curFile.empty() && dot != std::string::npos && dot > 0) t = t.substr(0, dot);
       ui.sessionTitle = t; ui.sessionChanged = sessionChanged(); }
     pumpInfo();
@@ -824,6 +823,7 @@ int main(int argc, char** argv) {
   }
   store.writeAutosave(autosaveData());
   if (rec.on()) rec.stop(*curEng);
+  if (ui.pad) savePad();
   if (bl.th.joinable()) bl.th.join();
   capture.stop(); sound.stop(); if (gCtxOk) ma_context_uninit(&gCtx);
   { std::lock_guard<std::mutex> l(job.mx); job.stop = true; job.cv.notify_one(); } if (infoThread.joinable()) infoThread.join();

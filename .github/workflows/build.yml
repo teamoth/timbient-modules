@@ -5,6 +5,7 @@ name: build
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md']   # (editing the README or CREDITS alone doesn't need a build)
   workflow_dispatch:
 permissions:
   contents: write
@@ -102,12 +103,15 @@ jobs:
         run: |
           emcmake cmake -B build-web -DTIMBIENT_WEB=ON -DTIMBIENT_APP=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build build-web --parallel --target timbient_web
-          mkdir -p site && cp web/index.html web/player.js web/sw.js web/manifest.webmanifest web/icon-*.png build-web/timbient.js build-web/timbient.wasm CREDITS.md site/
+          # the site: the home page at the top, the web player in player/
+          mkdir -p site/player && cp -r web/index.html web/home CREDITS.md site/ && cp web/player/* build-web/timbient.js build-web/timbient.wasm CREDITS.md site/player/
           touch site/.nojekyll
       - name: "Test: the web player opens and plays a session with a sound inside it"
-        run: node tests/web_test.mjs site/timbient.js tests/fixtures/web_test.tmbnt
-      - name: "Test: the page can be installed (its app description, icons and offline helper are all there)"
-        run: node tests/web_site_check.mjs site
+        run: node tests/web_test.mjs site/player/timbient.js tests/fixtures/web_test.tmbnt
+      - name: "Test: the player can be installed (its app description, icons and offline helper are all there)"
+        run: node tests/web_site_check.mjs site/player
+      - name: "Test: the home page's links and pictures are all there"
+        run: node tests/web_home_check.mjs site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -136,7 +140,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: timbient-*   # the app downloads only (not the web site's bundle)
           merge-multiple: true
+      - name: Tidy the release (the web site's bundle was once attached to it by mistake)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete-asset latest artifact.tar -y -R "$GITHUB_REPOSITORY" || true
       - name: Update the "latest" release
         uses: softprops/action-gh-release@v2
         with:

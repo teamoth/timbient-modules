@@ -62,8 +62,9 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
   {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "journey", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "euclid", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "noinput", "audioin"}},
-  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "pitchshift", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "xfade", "level", "listen", "spectrum", "notes"}},
-  {"MOD", {"lfo", "env", "rand", "follow"}}};
+  {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "pitchshift", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "xfade", "level", "listen", "spectrum"}},
+  {"MOD", {"lfo", "env", "rand", "follow"}},
+  {"MISC", {"notes"}}};
 
 // ---------------- building ----------------
 UiMod* Ui::add(const std::string& type, int x, int y, int id) {
@@ -817,6 +818,7 @@ void Ui::draw(Canvas& c, float dt) {
   for (auto& b : bar) { const int x0 = bx; auto fn = b.fn; btn(b.label, b.col, [fn, x0] { fn(x0); }); }
   { bool open = false; for (auto& u : mods) if (!u->m->def->fixed && !u->fold) open = true;
     btn(open ? "FOLD ALL" : "OPEN ALL", 9, [this, open] { for (auto& u : mods) if (!u->m->def->fixed) u->fold = open; changed(); }); }
+  btn("NOTEPAD", padOpen ? 4 : 9, [this] { padOpen = !padOpen; if (!padOpen && noteEdit == PAD_ID) noteEdit = 0; padDirty = true; });
   btn("?", helpOn ? 4 : 18, [this] { helpOn = !helpOn; hoverT = -1; if (onHelpToggle) onHelpToggle(helpOn); status(helpOn ? "HELP ON: REST THE POINTER ON ANYTHING FOR A NOTE ON IT" : "HELP OFF (THE ? BRINGS IT BACK)", 3); });
   const std::string fs = isFullscreen ? "WINDOW" : "FULLSCREEN"; const int fx = c.W - Canvas::tw(fs) - 4; c.text(fs, fx, 3, 9); barHits.push_back({fx, fx + Canvas::tw(fs), [this] { wantFullscreen = !isFullscreen; }, fs});
   int ix0 = fx;
@@ -847,10 +849,17 @@ void Ui::draw(Canvas& c, float dt) {
       if (sessionChanged) c.rect(x + Canvas::tw(t) + 3, 5, 2, 2, 9); barHits.push_back({x, x + w, [] {}, "SESSION NAME"}); } }
   if (statusT > 0) { statusT -= dt; std::string s = statusMsg; const int room = (ix - bx - 4) / 4; if ((int)s.size() > room) s = s.substr(0, std::max(0, room)); c.text(s, bx + 4, 3, 17); }
   else if (infoX0 > bx) c.text(info, infoX0, 3, 18);
+  // the NOTEPAD: drawn as a module is (so it suits every theme), with a title of its own, kept on screen
+  if (padOpen) if (UiMod* p = padMod()) {
+    const Geom g = geom(*p); if (padX < 0) { padX = c.W - g.w - 8; padY = TOP + 8; }
+    padX = std::max(0, std::min(padX, c.W - g.w)); padY = std::max(TOP + 1, std::min(padY, c.H - 12));
+    const uint8_t* ink0 = c.ink; const uint8_t* tink0 = c.textInk; p->x = padX + viewX; p->y = padY + viewY; drawModule(c, *p, dt);
+    c.ink = nullptr; c.textInk = nullptr; c.rect(padX, padY, g.w, HEAD, catCol(Cat::Out)); c.text("NOTEPAD", padX + 2, padY + 2, 15); c.text("x", padX + g.w - 6, padY + 2, 15);
+    c.ink = ink0; c.textInk = tink0; }
   // the ADD menu
   menuItems.clear();
   if (menuOpen) {
-    // four columns, RHYTHM, VOICES, PROCESS, MOD, each A to Z
+    // five columns, RHYTHM, VOICES, PROCESS, MOD, MISC, each A to Z
     std::vector<std::vector<const ModuleDef*>> colsD; std::vector<int> ws; int tot = 4;
     for (auto& cat : MENU) { std::vector<const ModuleDef*> v; for (auto& t : cat.second) if (const ModuleDef* d = findDef(t)) v.push_back(d);
       std::sort(v.begin(), v.end(), [](const ModuleDef* a, const ModuleDef* b) { return a->name < b->name; }); int w = Canvas::tw(cat.first);
@@ -990,6 +999,13 @@ void Ui::typed(const std::string& t) {
   if (!ask && noteEdit) { std::string ok; for (char ch : t) if ((unsigned char)ch >= 32 && (unsigned char)ch < 127) ok += ch; notePaste(ok); return; }
   if (!ask) return; for (char ch : t) { const char u = (char)std::toupper((unsigned char)ch);
     if (((u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') || std::string(" #-/+.").find(u) != std::string::npos) && ask->text.size() < 24) ask->text += u; } }
+// ---- NOTEPAD ----
+UiMod* Ui::padMod() {
+  if (!pad) { Module* m = eng->create("notes", PAD_ID); if (!m) return nullptr; pad = std::make_unique<UiMod>(); pad->m = m; pad->noteW = 150; pad->noteH = 110; }   // (never added to an engine: no sound)
+  return pad.get(); }
+bool Ui::padAt(float sx, float sy) const {
+  if (!padOpen || !pad || padX < 0) return false; const Geom g = geom(*pad); return sx >= padX && sx < padX + g.w && sy >= padY && sy < padY + g.h; }
+
 // ---- NOTES ----
 std::vector<Ui::NoteLine> Ui::noteLines(const UiMod& u) const {   // word-wrapped to the box (a word too long for a line is cut)
   std::vector<NoteLine> L; const int cpl = std::max(1, (geom(u).w - 6 - 4) / 4); const std::string& t = u.text; size_t i = 0;
@@ -1000,12 +1016,12 @@ std::vector<Ui::NoteLine> Ui::noteLines(const UiMod& u) const {   // word-wrappe
   if (L.empty()) L.push_back({0, 0}); return L; }
 std::string Ui::noteText() const { const UiMod* u = byId(noteEdit); return u ? u->text : std::string(); }
 void Ui::notePaste(const std::string& in) { UiMod* u = byId(noteEdit); if (!u || in.empty()) return; std::string t; for (char ch : in) if (ch == '\n' || ((unsigned char)ch >= 32 && (unsigned char)ch < 127)) t += ch; else if (ch == '\t') t += "  ";
-  noteCur = std::min(noteCur, u->text.size()); u->text.insert(noteCur, t); noteCur += t.size(); changed(); }
-void Ui::noteCut() { UiMod* u = byId(noteEdit); if (!u) return; u->text.clear(); noteCur = 0; changed(); }
+  noteCur = std::min(noteCur, u->text.size()); u->text.insert(noteCur, t); noteCur += t.size(); noteChanged(); }
+void Ui::noteCut() { UiMod* u = byId(noteEdit); if (!u) return; u->text.clear(); noteCur = 0; noteChanged(); }
 void Ui::noteKey(int k) {
   UiMod* u = byId(noteEdit); if (!u || k == 27) { noteEdit = 0; return; } std::string& t = u->text; noteCur = std::min(noteCur, t.size());
   if (k == 3) { if (noteCur) noteCur--; } else if (k == 4) { if (noteCur < t.size()) noteCur++; }
-  else if (k == 5) { if (noteCur) { t.erase(noteCur - 1, 1); noteCur--; changed(); } } else if (k == 6) { if (noteCur < t.size()) { t.erase(noteCur, 1); changed(); } }
+  else if (k == 5) { if (noteCur) { t.erase(noteCur - 1, 1); noteCur--; noteChanged(); } } else if (k == 6) { if (noteCur < t.size()) { t.erase(noteCur, 1); noteChanged(); } }
   else if (k == 7) notePaste("\n");
   else { const auto L = noteLines(*u); int li = 0; for (size_t i = 0; i < L.size(); i++) if (noteCur >= L[i].start && noteCur <= L[i].start + L[i].len) li = (int)i; const size_t col = noteCur - L[li].start;
     if (k == 8) noteCur = L[li].start; else if (k == 9) noteCur = L[li].start + L[li].len;
@@ -1138,6 +1154,14 @@ void Ui::pointerDown(float sx, float sy) {
   if (sy < TOP && blendBarX1 > blendBarX0 && sx >= blendBarX0 - 3 && sx <= blendBarX1 + 3) {   // the blend's bar: drag it (the blend goes there, and waits)
     drag.kind = D_BLEND; if (onBlendSet) onBlendSet(clampf((sx - blendBarX0) / (float)(blendBarX1 - blendBarX0), 0, 1)); return; }
   if (sy < TOP) { for (auto& b : barHits) if (sx >= b.x0 - 2 && sx <= b.x1 + 2) { b.fn(); return; } return; }
+  if (padAt(sx, sy)) { UiMod* p = padMod(); const Geom g = geom(*p); const int lx = (int)sx - padX, ly = (int)sy - padY;
+    if (ly < HEAD) { if (lx >= g.w - 10) { padOpen = false; padDirty = true; return; } drag.kind = D_PADMOVE; drag.sx = sx; drag.sy = sy; drag.vx0 = padX; drag.vy0 = padY; return; }
+    if (ly >= g.h - FOOT) { if (lx < 13) { p->fold = !p->fold; padDirty = true; } else if (lx >= g.w - 9 && !p->fold) { drag.kind = D_NOTESIZE; drag.m = p; drag.sx = sx; drag.sy = sy; drag.vx0 = p->noteW; drag.vy0 = p->noteH; } return; }
+    if (p->fold) { p->fold = false; padDirty = true; }
+    const auto L = noteLines(*p); const int row = (int)p->noteScroll + std::max(0, ly - g.vy) / 8; noteEdit = PAD_ID;
+    if (L.empty() || row >= (int)L.size()) noteCur = p->text.size();
+    else { const NoteLine& nl = L[row]; noteCur = nl.start + (size_t)std::max(0, std::min((int)nl.len, (lx - 5 + 2) / 4)); }
+    return; }
   // jacks: drag a cable out of an output. A plugged input or socket: tap to pick its cable (then UNPLUG), or drag the cable to another jack.
   // Nothing comes out by accident: a cable dropped anywhere else springs back to where it was
   const JackHit j = jackAt(wx, wy);
@@ -1309,7 +1333,8 @@ void Ui::pointerMove(float sx, float sy) {
   if (std::fabs(sx - hoverX) + std::fabs(sy - hoverY) > 1.5f) { hoverX = sx; hoverY = sy; hoverT = 0; }   // the pointer moved: the note goes, and the wait starts again
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; drag.wx = wx; drag.wy = wy;
   if (drag.kind == D_PAN) { viewX = drag.vx0 - (int)(sx - drag.sx); viewY = drag.vy0 - (int)(sy - drag.sy); }
-  else if (drag.kind == D_NOTESIZE && drag.m) { drag.m->noteW = std::max(50, std::min(480, drag.vx0 + (int)std::lround(sx - drag.sx))); drag.m->noteH = std::max(16, std::min(480, drag.vy0 + (int)std::lround(sy - drag.sy))); }
+  else if (drag.kind == D_PADMOVE) { padX = drag.vx0 + (int)std::lround(sx - drag.sx); padY = drag.vy0 + (int)std::lround(sy - drag.sy); padDirty = true; }
+  else if (drag.kind == D_NOTESIZE && drag.m) { if (drag.m == pad.get()) padDirty = true; drag.m->noteW = std::max(50, std::min(480, drag.vx0 + (int)std::lround(sx - drag.sx))); drag.m->noteH = std::max(16, std::min(480, drag.vy0 + (int)std::lround(sy - drag.sy))); }
   else if (drag.kind == D_BLEND) { if (onBlendSet && blendBarX1 > blendBarX0) onBlendSet(clampf((sx - blendBarX0) / (float)(blendBarX1 - blendBarX0), 0, 1)); }
   else if (drag.kind == D_MOVE) { drag.m->x = wx - drag.ox; drag.m->y = std::max(viewY + TOP + 1, wy - drag.oy);
     // an unpatched effect dragged over an audio cable can be dropped into it
