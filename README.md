@@ -21,9 +21,7 @@ https://github.com/teamoth/timbient-modules/releases/tag/latest
 
 **SESSIONS > BLEND TO...** picks the next session. It loads while the current one plays on, then fades in as the current one
 fades out, keeping the overall level steady (**BLEND LENGTH**: 10 seconds to 4 minutes). The screen shows the new session
-straight away, so it can be adjusted as it rises; its tempo glides from the old session's to its own. **NOW** in the top bar
-finishes the blend in a few seconds, **CANCEL** fades back to the session you came from, just as it was. A recording carries
-straight on through a blend.
+straight away, so it can be adjusted as it rises; its tempo glides from the old session's to its own.
 
 ## MIDI controllers
 
