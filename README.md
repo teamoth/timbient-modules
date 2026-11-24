@@ -10,11 +10,11 @@ Every change is built automatically. Get the newest version from the **Latest bu
 https://github.com/teamoth/timbient-modules/releases/tag/latest
 
 - **Mac** (Intel and Apple Silicon, macOS 10.13 or later): unzip, drag *Timbient Modules.app* into Applications, then
-  run this once in Terminal (the app isn't signed with an Apple developer certificate):
+  **run this once in Terminal (the app isn't signed with an Apple developer certificate):**
   ```
   xattr -cr "/Applications/Timbient Modules.app"
   ```
-- **Windows**: unzip and run *Timbient Modules.exe*. If Windows warns, click *More info*, then *Run anyway*.
+- **Windows**: unzip and run *Timbient Modules.exe*. **If Windows warns**, click *More info*, then ***Run anyway***.
 - **Linux**: unpack and run `timbient-modules`.
 
 ## Blending between sessions
@@ -41,7 +41,7 @@ kept for every session.
 ## Web player
 
 To listen to a session on a phone, a tablet or any computer without installing anything, open
-**https://teamoth.github.io/timbient-modules/** and open a session file. It plays sessions **only**; it doesn't change them. Sessions up to 50 MB can be opened using the Web player.
+https://teamoth.github.io/timbient-modules/player/ and load up a session file. At this stage it only plays sessions (so they can't be edited). I might add more functionality to the web player in time. Session files up to 50 MB (that would be a lot of samples!) can be opened using the Web player.
 
 ## Credits
 
