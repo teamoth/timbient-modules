@@ -48,6 +48,25 @@
   footer { border-top: 1px solid var(--line); padding: 22px 0 40px; color: var(--mid); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 24px; }
   footer a { color: var(--mid); }
   footer a:hover { color: var(--ink); }
+  /* Send feedback: a small form over the page */
+  .linkbtn { font: inherit; color: var(--mid); background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
+  .linkbtn:hover { color: var(--ink); }
+  .modal { position: fixed; inset: 0; z-index: 20; background: rgba(31, 35, 41, 0.45); display: grid; place-items: center; padding: 16px; }
+  .modal[hidden] { display: none; }
+  .modalcard { width: min(520px, 100%); max-height: 100%; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 8px 30px rgba(31, 35, 41, 0.25); }
+  .modalcard h2 { margin: 0; font-size: 19px; display: flex; justify-content: space-between; align-items: center; }
+  .modalcard .x { font: inherit; font-size: 18px; background: none; border: 0; color: var(--mid); cursor: pointer; min-width: 44px; min-height: 44px; }
+  .modalcard p { margin: 0; font-size: 14px; color: var(--mid); }
+  .modalcard label { font-size: 14px; font-weight: 700; margin-top: 4px; }
+  .modalcard textarea, .modalcard input[type=text], .modalcard input[type=email] { font: inherit; font-size: 15px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; width: 100%; }
+  .modalcard textarea { min-height: 140px; resize: vertical; }
+  .modalcard .details { font-size: 13px; background: #eef2f7; border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; }
+  .modalcard .details label { font-weight: 400; display: flex; gap: 8px; align-items: flex-start; margin: 0; }
+  .modalcard .btns { display: flex; gap: 10px; margin-top: 6px; }
+  .modalcard .btns button { font: inherit; font-weight: 700; min-height: 44px; padding: 10px 20px; border-radius: 4px; cursor: pointer; border: 1px solid var(--line); background: #fff; color: var(--ink); }
+  .modalcard .btns button.send { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .modalcard .btns button:disabled { opacity: 0.6; cursor: default; }
+  .hp { position: absolute; left: -9999px; opacity: 0; }
   @media (max-width: 700px) {
     header { grid-template-columns: 1fr; gap: 18px; padding-top: 36px; }
     header img { width: 96px; height: 96px; }
@@ -84,7 +103,73 @@
     <span>Timbient Modules</span>
     <a href="https://github.com/teamoth/timbient-modules">Source on GitHub</a>
     <a href="CREDITS.md">Credits</a>
+    <button type="button" class="linkbtn" id="feedbackbtn">Send feedback</button>
   </footer>
 </div>
+
+<div class="modal" id="feedback" hidden role="dialog" aria-modal="true" aria-labelledby="fbtitle">
+  <form class="modalcard" id="fbform" novalidate>
+    <h2><span id="fbtitle">Send feedback</span><button type="button" class="x" id="fbclose" aria-label="Close">&#x2715;</button></h2>
+    <p>Comments, ideas or bugs: they go straight to the developer. Add your email if you'd like a reply.</p>
+    <div id="fbfields" style="display: flex; flex-direction: column; gap: 6px">
+      <label for="fbmsg">Message</label>
+      <textarea id="fbmsg" name="message" required maxlength="4000" placeholder="What's on your mind?"></textarea>
+      <label for="fbname">Name (optional)</label>
+      <input id="fbname" name="name" type="text" maxlength="80" autocomplete="name">
+      <label for="fbemail">Email, for a reply (optional)</label>
+      <input id="fbemail" name="email" type="email" maxlength="120" autocomplete="email">
+      <div class="details" id="fbdetails" hidden><label><input type="checkbox" id="fbincl" checked> <span>Include these details from the app (they help with bugs): <span id="fbdtext"></span></span></label></div>
+      <input type="checkbox" name="botcheck" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <div class="h-captcha" data-captcha="true"></div>
+    </div>
+    <p id="fbstatus" role="status"></p>
+    <div class="btns"><button type="submit" class="send" id="fbsend">Send</button><button type="button" id="fbcancel">Cancel</button></div>
+  </form>
+</div>
+<script>
+/* Send feedback: messages go through Web3Forms (web3forms.com), which forwards them to the developer's inbox.
+   The access key is public by design: it can only send messages to that inbox, and hCaptcha keeps bots out.
+   The app opens this page as .../#feedback?v=...&os=... with its version and set-up, shown and sent if left ticked. */
+(function () {
+  const FEEDBACK = { key: "99f7be95-088b-49ac-a1e2-81d2666c06c5", endpoint: "https://api.web3forms.com/submit" };
+  const $ = (id) => document.getElementById(id);
+  let captchaLoaded = false, details = "";
+  function open() {
+    $("feedback").hidden = false; $("fbstatus").textContent = "";
+    if (!captchaLoaded) { captchaLoaded = true; const sc = document.createElement("script"); sc.src = "https://web3forms.com/client/script.js"; sc.async = true; sc.defer = true; document.body.append(sc); }
+    setTimeout(() => $("fbmsg").focus(), 50);
+  }
+  function close() { $("feedback").hidden = true; if (location.hash.startsWith("#feedback")) history.replaceState(null, "", location.pathname); }
+  // from the app: its details (version, system, sound, MIDI), after #feedback?
+  const h = location.hash;
+  if (h.startsWith("#feedback")) {
+    const q = new URLSearchParams(h.slice(h.indexOf("?") + 1)); const parts = [];
+    for (const [k, label] of [["v", "version"], ["os", "system"], ["audio", "sound"], ["buf", "buffer"], ["rate", "rate"], ["midi", "MIDI devices"]]) { const v = q.get(k); if (v) parts.push(label + " " + v.slice(0, 80)); }
+    details = parts.join(", ");
+    if (details) { $("fbdetails").hidden = false; $("fbdtext").textContent = details; }
+    open();
+  }
+  $("feedbackbtn").onclick = open; $("fbclose").onclick = close; $("fbcancel").onclick = close;
+  $("feedback").addEventListener("click", (e) => { if (e.target.id === "feedback") close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("feedback").hidden) close(); });
+  $("fbform").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target, st = $("fbstatus"), send = $("fbsend");
+    if (!f.message.value.trim()) { st.textContent = "Please write a message first."; f.message.focus(); return; }
+    const fd = new FormData(f);
+    if (!fd.get("h-captcha-response")) { st.textContent = "Please complete the check above the Send button."; return; }
+    fd.append("access_key", FEEDBACK.key); fd.append("subject", "Timbient Modules feedback"); fd.append("from_name", "Timbient Modules");
+    if (details && $("fbincl").checked) fd.append("app_details", details);
+    send.disabled = true; st.textContent = "Sending…";
+    try {
+      const r = await fetch(FEEDBACK.endpoint, { method: "POST", body: fd, headers: { Accept: "application/json" } });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.success !== false) { st.textContent = "Thanks! Your message has been sent."; f.reset(); if (window.hcaptcha) try { hcaptcha.reset(); } catch (_) {} setTimeout(close, 1800); }
+      else st.textContent = "That didn't send (" + (j.message || ("error " + r.status)) + "). Please try again.";
+    } catch (err) { st.textContent = "That didn't send. Check your connection and try again."; }
+    send.disabled = false;
+  });
+})();
+</script>
 </body>
 </html>

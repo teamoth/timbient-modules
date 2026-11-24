@@ -23,7 +23,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.54.2";
+static const char* VERSION = "0.55.0";
 static std::atomic<Engine*> gEngine{nullptr};   // the engine the sound card renders: the session on the screen (while blending, it plays the last one too)
 
 // ---------------- sound ----------------
@@ -541,7 +541,7 @@ int main(int argc, char** argv) {
     Dropdown d; d.x = x0; d.y = 11;
     char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround((*curEng).tempo.bpm.load()));
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / (*curEng).sr);
-    d.items = {std::string("KEY  ") + KEY_NAMES[(*curEng).key.root.load()], std::string("SCALE  ") + scales()[(*curEng).key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround((*curEng).sr / 100) / 10) + "." + std::to_string((int)std::lround((*curEng).sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS", "MIDI"};
+    d.items = {std::string("KEY  ") + KEY_NAMES[(*curEng).key.root.load()], std::string("SCALE  ") + scales()[(*curEng).key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround((*curEng).sr / 100) / 10) + "." + std::to_string((int)std::lround((*curEng).sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS", "MIDI", "SEND FEEDBACK"};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -581,6 +581,13 @@ int main(int argc, char** argv) {
         ui.status(ui.cableMotion ? "CABLE MOTION ON: PULSES AND FLOW ALONG THE CABLES" : "CABLE MOTION OFF: A LITTLE LIGHTER ON OLDER COMPUTERS", 4); return; }
       else if (i == 9) { openTheme(x0); return; }
       else if (i == 11) { ui.openMidiMenu(x0, 11); return; }   // MIDI: DEVICES, MONITOR, MIDI MAP
+      else if (i == 12) {   // SEND FEEDBACK: the form on the website, with this copy's version and set-up filled in (nothing personal)
+        auto enc = [](const std::string& v) { std::string o; char b[4]; for (unsigned char ch : v) { if (std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_') o += (char)ch; else { std::snprintf(b, sizeof b, "%%%02X", ch); o += b; } } return o; };
+        int midiIns = 0; for (auto& md : ui.midiDevs) if (md.input && md.open) midiIns++;
+        const std::string os = std::string(SDL_GetPlatform()) + (sizeof(void*) == 4 ? " 32-bit" : " 64-bit");
+        const std::string url = "https://teamoth.github.io/timbient-modules/#feedback?v=" + enc(VERSION) + "&os=" + enc(os) + "&audio=" + enc(sound.name) + "&buf=" + std::to_string(BUFFERS[sound.bufIdx])
+          + "&rate=" + std::to_string((int)std::lround((*curEng).sr)) + "&midi=" + std::to_string(midiIns);
+        SDL_OpenURL(url.c_str()); ui.status("OPENING THE FEEDBACK FORM IN YOUR BROWSER", 3); return; }
       else if (i == 10) { q.items = {std::string("TIMBIENT MODULES ") + VERSION, "DESIGNED BY TIM MEDLICOTT,", "  BUILT WITH CLAUDE, ANTHROPIC'S AI", "BUILT ON THESE OPEN-SOURCE PROJECTS,", "  EACH USED AS ITS LICENCE ALLOWS:",
           "MI VOICES: MUTABLE INSTRUMENTS' PLAITS,", "RINGS (PLUCK, RESONATOR): MUTABLE INSTRUMENTS' RINGS,", "  BY EMILIE GILLET (MIT LICENCE)", "  NOT MADE BY OR AFFILIATED WITH MUTABLE INSTRUMENTS",
           "SDL 3: WINDOW AND DRAWING", "  BY SAM LANTINGA (ZLIB LICENCE)", "MINIAUDIO: SOUND IN AND OUT", "  BY DAVID REID (PUBLIC DOMAIN / MIT-0)",

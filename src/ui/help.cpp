@@ -688,6 +688,7 @@ static const std::map<std::string, std::string> OTHER = {
   {"OPEN ALL", "Open All|Opens every folded module."},
   {"?", "Help|These little notes. Tap to switch them off (or on again)."},
   {"FULLSCREEN", "Fullscreen|Fills the screen with the app."},
+  {"SEND FEEDBACK", "Send Feedback|Opens a form in your browser to send comments, ideas or bugs to the developer, with this copy's version and sound set-up filled in (you can leave those out)."},
   {"NOTEPAD", "Notepad|A note of your own that isn't part of any session (a set list, say): it stays whatever you open, and the app keeps it. Click in it to type; drag its title to move it, its corner to resize it."},
   {"SESSION NAME", "Session|The session you're working on (NEW SESSION until it's first saved). A dot after it: there are changes not saved yet."},
   {"BLEND", "Blend|How far the blend to the next session has got: the last one fades out as this one fades in, keeping the overall level steady."},
