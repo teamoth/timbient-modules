@@ -16,7 +16,7 @@ struct Level : Module {
 };
 // ---------------- NOTES: a box to type into (no sound; the screen keeps the text and its size, saved with the session) ----------------
 struct Notes : Module { void render(int, int) override {} };
-static Reg rNotes(new ModuleDef{"notes", "NOTES", Cat::Out, {}, {}, {}, 40, 98, false, [] { return new Notes(); }});
+static Reg rNotes(new ModuleDef{"notes", "NOTES", Cat::Misc, {}, {}, {}, 40, 98, false, [] { return new Notes(); }});
 static Reg rLevel(new ModuleDef{"level", "LEVEL", Cat::Proc, {{"IN", PType::Audio}}, {{"OUT", PType::Audio}}, {pctX("level", "LEVEL", 2, 1)}, 13, 58, false, [] { return new Level(); }});
 
 // ---------------- CROSSFADER: A to B ----------------

@@ -454,6 +454,23 @@ int main(int argc, char** argv) {
     { const int w = std::min(700 - 10, 150), x = (700 - w) / 2, y = 10 + 30; /* the name box: TOP + 30 */ ui.pointerDown((float)(x + 8), (float)(y + 26)); ui.pointerUp(0, 0); } const bool ticked = ui.ask && ui.ask->check == 1; ui.keyEnter();
     chk(ticked && ui.askChecked == 1, "tick box");
     ui.clearPatch(); run(eng, 0.1f); if (!ok) fails++; std::printf("notes: %d lines wrapped%s%s\n", (int)L.size(), ok ? "" : "  WRONG", res.c_str()); }
+  // NOTES as a text editor: Shift + arrows select, by word with the word mod; typing replaces a selection; cut and select all;
+  // a double click selects a word; dragging selects; undo and redo of the typing; the wheel scrolls a long note
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    ui.clearPatch(); ui.viewX = ui.viewY = 0; UiMod* n = ui.add("notes", 40, 40); n->noteW = 200; n->noteH = 40; Canvas c; c.fine = true; c.resize(700, 400);
+    auto frame = [&] { c.beginFrame(); ui.draw(c, 0.016f); }; frame(); Ui::Geom g = ui.geom(*n);
+    auto press = [&](int col, int row) { const float px = (float)(n->x + 2 + 3 + col * 4), py = (float)(n->y + g.vy + 3 + row * 8); ui.pointerDown(px, py); ui.pointerUp(px, py); };
+    press(0, 0); ui.typed("calm example in db"); chk(ui.noteEdit == n->m->id && n->text == "calm example in db", "typing");
+    ui.noteKey(3, Ui::NK_SHIFT | Ui::NK_WORD); chk(ui.noteText() == "db", "shift+word left selects a word"); ui.typed("g"); chk(n->text == "calm example in g", "typing replaces the selection");
+    ui.noteKey(8); ui.noteKey(4, Ui::NK_WORD); ui.noteKey(4, Ui::NK_SHIFT | Ui::NK_WORD); chk(ui.noteText() == " example", "word right, then select the next");
+    ui.noteSelectAll(); chk(ui.noteText() == n->text, "select all"); ui.noteCut(); chk(n->text.empty(), "cut");
+    ui.noteUndo(); chk(n->text == "calm example in g", "undo the cut"); ui.noteUndo(); chk(n->text == "calm example in db", "undo the replacing"); ui.noteUndo(false); ui.noteUndo(true); ui.noteUndo(true);
+    chk(n->text == "calm example in g", "redo");
+    frame(); press(7, 0); frame(); press(7, 0); chk(ui.noteText() == "example", "double click: " + ui.noteText());
+    frame(); { const float y = (float)(n->y + g.vy + 3); ui.pointerDown((float)(n->x + 5), y); ui.pointerMove((float)(n->x + 5 + 4 * 4), y); ui.pointerUp(0, 0); } chk(ui.noteText() == "calm", "drag selects: " + ui.noteText());
+    n->text = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10"; ui.noteEdit = 0; frame(); const bool wheeled = ui.noteWheel((float)(n->x + 10), (float)(n->y + g.vy + 5), -2); frame();
+    chk(wheeled && n->noteScroll >= 4, "wheel scrolls");
+    ui.clearPatch(); if (!ok) fails++; std::printf("notes editor:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
   // NOTEPAD: the top bar's button opens it; typing goes into it (not marking the session as changed); a new session leaves it be;
   // its title moves it, its X closes it
   { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };

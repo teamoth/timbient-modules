@@ -132,6 +132,7 @@ inline void applyTheme(Canvas& cv, const Theme& t, int menus = 0) {
   // the module headers (and highlights) follow the cable colours, so a theme hangs together; a dark one is lightened for them
   cv.setColour(17, headerOf(t.audio).c_str()); cv.setColour(24, headerOf(t.trig).c_str()); cv.setColour(11, headerOf(t.modc).c_str());
   cv.setColour(46, mixHex(t.trig, "#ffffff", 0.55f).c_str());
+  cv.setColour(54, headerOf(mixHex(md, lum(md) > 0.5f ? "#6c7380" : "#9aa1ad", 0.7f)).c_str());   // MISC (NOTES, the notepad): a quiet grey header, from the modules' own colour
   cv.setColour(7, headerOf(mixHex(t.audio, lum(bg) > 0.45f ? "#000000" : "#ffffff", 0.18f)).c_str());   // sound makers' headers and the slider fills: from the theme too (they were a fixed brown)
   cv.setColour(47, lightMod ? "#a8560c" : "#ece6cf");   /* what's active: a deeper orange, readable on pale modules */ cv.setColour(48, (lightMod ? mixHex(t.audio, "#000000", 0.45f) : t.audio).c_str());
   { const bool paleBg = lum(bg) > 0.45f;

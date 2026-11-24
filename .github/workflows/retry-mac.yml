@@ -1,0 +1,35 @@
+# When a build fails only because GitHub had no Mac machine free (the Mac part waited, was cancelled and never started),
+# run the failed parts again, once. Anything else that fails is left for a person to look at.
+name: Retry when no Mac was free
+
+on:
+  workflow_run:
+    workflows: [build]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Was it the Mac that never started?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/jobs" -q '.jobs[] | "\(.name)|\(.conclusion)|\(.steps | length)"')
+          echo "$jobs"
+          # failed parts other than a Mac that never got a machine: leave it
+          others=$(echo "$jobs" | awk -F'|' '($2 == "failure" || $2 == "cancelled" || $2 == "timed_out") && !($1 ~ /mac/ && $2 == "cancelled" && $3 == 0)')
+          stuck=$(echo "$jobs" | awk -F'|' '$1 ~ /mac/ && $2 == "cancelled" && $3 == 0')
+          if [ -n "$stuck" ] && [ -z "$others" ]; then echo "retry=yes" >> "$GITHUB_OUTPUT"; else echo "retry=no" >> "$GITHUB_OUTPUT"; fi
+      - name: Run the failed parts again
+        if: steps.check.outputs.retry == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.event.workflow_run.id }}
+        run: gh run rerun "$RUN" --failed -R "$GITHUB_REPOSITORY"

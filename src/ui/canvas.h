@@ -13,7 +13,7 @@
 namespace tb {
 
 // the MENUS colours (set by the theme): the top bar, menus, dropdowns and panels
-enum { MENU_BG = 49, MENU_HI = 50, MENU_TEXT = 51, MENU_MID = 52, MENU_LINE = 53 };
+enum { MENU_BG = 49, MENU_HI = 50, MENU_TEXT = 51, MENU_MID = 52, MENU_LINE = 53 };   // (54: MISC's header)
 struct Canvas {
   int W = 0, H = 0;
   std::vector<uint8_t> buf;                 // palette index per pixel

@@ -15,7 +15,7 @@
 namespace tb {
 
 enum class PType { Audio, Trig, Mod };
-enum class Cat { Trig, Voice, Proc, Mod, Out };
+enum class Cat { Trig, Voice, Proc, Mod, Out, Misc };
 
 struct PortDef { std::string name; PType type; };
 

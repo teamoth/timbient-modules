@@ -187,7 +187,8 @@ public:
   struct Ask { std::string title, text; std::function<void(const std::string&)> done; bool dice = false; int check = -1; std::string checkLabel; };   // check: a tick box (-1: none)
   int askChecked = -1;
   // NOTES: the one being typed into (its id; 0: none), where the cursor is, and the editing keys (the app's own keys wait meanwhile)
-  int noteEdit = 0; size_t noteCur = 0;
+  // Editing works as in a text editor: noteAnc is the other end of the selection (the same as noteCur: none)
+  int noteEdit = 0, noteWas = 0; size_t noteCur = 0, noteAnc = 0; bool noteFollow = true;
   bool typing() const { return ask || noteEdit; }
   // NOTEPAD: one note of your own, not in any session (a set list, reminders): a panel floating over the patch, shown or hidden
   // from the top bar, moved by its title, resized by its corner; it stays whatever session is opened. The app saves it
@@ -196,10 +197,20 @@ public:
   UiMod* padMod();                        // (made the first time it's needed)
   void noteChanged() { if (noteEdit == PAD_ID) padDirty = true; else changed(); }
   bool padAt(float sx, float sy) const;   // is this point on the panel
-  void noteKey(int k);                    // 1 up 2 down 3 left 4 right 5 backspace 6 delete 7 enter 8 home 9 end 27 escape (stop)
-  std::string noteText() const;           // its text (to copy)
-  void notePaste(const std::string& t);   // typed in at the cursor
-  void noteCut();
+  enum { NK_SHIFT = 1, NK_WORD = 2, NK_LINE = 4 };   // noteKey's mods: extend the selection; by word (Alt/Option); to the line or note's ends (Cmd/Ctrl)
+  void noteKey(int k, int mods = 0);      // 1 up 2 down 3 left 4 right 5 backspace 6 delete 7 enter 8 home 9 end 27 escape (stop)
+  std::string noteText() const;           // what's selected (to copy)
+  void notePaste(const std::string& t);   // typed or pasted in, in place of the selection
+  void noteCut();                         // the selection out
+  void noteSelectAll();
+  void noteUndo(bool redo = false);       // the typing in this note (while it's open: the patch's own undo waits)
+  bool noteWheel(float sx, float sy, float dy);   // the mouse wheel over a note scrolls it (false: not over one)
+  struct NoteStep { std::string text; size_t cur; };
+  std::vector<NoteStep> noteUndos, noteRedos; int noteLastKind = 0; int noteClickId = 0; size_t noteClickPos = 0; float noteClickT = -9;
+  size_t notePosAt(const UiMod& u, int lx, int ly, int vy) const;   // the place in a note's text nearest a point (lx, ly from the module's corner)
+  void noteRecord(int kind);              // (keep the text as it was, before a change: typing joins up, other changes stand alone)
+  void noteBegin(int id, size_t pos);     // start typing in a note, the cursor here
+  void notePress(UiMod* u, int id, int lx, int ly, int vy);   // a press in a note's text (a second, quickly: a word)
   struct NoteLine { size_t start, len; };
   std::vector<NoteLine> noteLines(const UiMod& u) const;   // wrapped to the box's width   // the tick box as the name box closed with OK (for its done)
   std::unique_ptr<Ask> ask;
@@ -263,7 +274,7 @@ private:
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE, D_PADMOVE };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE, D_PADMOVE, D_NOTESEL };
   UiMod* tapM = nullptr; int tapK = -1; std::vector<double> tapTimes;   // TAP on speed rows
   float wanderTapT = -9; int wanderTapK = -1; UiMod* wanderTapM = nullptr;   // the Tracker's column numbers: a second tap soon after sets RANDOM NOTE back to 0
   // cables as curves you can touch

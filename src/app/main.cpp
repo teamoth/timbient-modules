@@ -23,7 +23,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.55.0";
+static const char* VERSION = "0.56.0";
 static std::atomic<Engine*> gEngine{nullptr};   // the engine the sound card renders: the session on the screen (while blending, it plays the last one too)
 
 // ---------------- sound ----------------
@@ -201,6 +201,7 @@ int main(int argc, char** argv) {
     histDirty = true; histT = 0.1f; markSaved = true;   // (opened as it was saved: no changes yet)
   };
   auto restoreStep = [&](int to) {   // go back (or forward) to a remembered step, keeping the view where it is
+    if (curEng->blending()) { ui.status(to < hpos ? "UNDO WAITS FOR THE BLEND TO FINISH" : "REDO WAITS FOR THE BLEND TO FINISH", 2); return; }   // (a blend is two sessions: undo leaves it alone)
     if (histDirty) { snapshot(); histDirty = false; }
     if (to < 0 || to >= (int)hist.size() || to == hpos) { ui.status(to < hpos ? "NOTHING TO UNDO" : "NOTHING TO REDO"); return; }
     const bool back = to < hpos; hpos = to; Json j; if (!Json::parse(hist[hpos], j)) return;
@@ -381,14 +382,15 @@ int main(int argc, char** argv) {
       if (fn.empty()) fn = "session"; saveName = fn + ".tmbnt";
       std::string start = saveName; if (!curFile.empty()) { const size_t sl = curFile.find_last_of("/\\"); if (sl != std::string::npos) start = curFile.substr(0, sl + 1) + saveName; }
       SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, start.c_str()); });
-    if (ui.ask) { ui.ask->check = settings.num("keyInName", 0) > 0.5 ? 1 : 0; ui.ask->checkLabel = "ADD KEY AND SCALE"; } };
+    if (ui.ask) { ui.ask->check = settings.num("keyInName", 0) > 0.5 ? 1 : 0; ui.ask->checkLabel = "ADD KEY AND SCALE";
+      if (!curFile.empty()) { std::string n = fileName(curFile); const size_t dot = n.rfind('.'); if (dot != std::string::npos && dot > 0) n.resize(dot); ui.ask->text = n; } } };   // a saved session: its own name to start from (NEW NAME: a random one)
   // ---- BLEND TO: the next session loads into the other engine, then fades in as this one fades out (equal loudness) ----
   // The session being left keeps playing in its own engine (the new one plays it inside itself), and its screen is set aside,
   // so CANCEL can fade back to it just as it was. The new one's tempo glides from the old one's to its own over the blend
   static const int BLEND_SECS[6] = {10, 30, 60, 120, 240, 8};   // the last: MANUAL (it moves only by hand; 8 s is how its NOW and CANCEL are timed)
   int blendIdx = std::max(0, std::min(5, (int)settings.num("blendLength", 1))); const int MANUAL = 5; float blendRest = 0;
   struct BlendLoad { std::thread th; std::atomic<int> state{0}; std::string path, err; Json data; };   // state: 0 none, 1 reading, 2 ready, 3 failed
-  static BlendLoad bl; Ui::Stash blendStash; std::string blendOldFile, blendOldSnap; bool blendOldNever = true; float blendBpm0 = 0, blendBpm1 = 0, blendClearT = -1; bool blendGlide = false;
+  static BlendLoad bl; Ui::Stash blendStash; std::string blendOldFile, blendOldSnap; bool blendOldNever = true; std::vector<std::string> blendOldHist; int blendOldHpos = -1; float blendBpm0 = 0, blendBpm1 = 0, blendClearT = -1; bool blendGlide = false;
   auto blendLabel = [&](int k) { if (k == MANUAL) return std::string("MANUAL"); const int v = BLEND_SECS[k]; return v < 60 ? std::to_string(v) + " S" : std::to_string(v / 60) + " MIN"; };
   auto otherEng = [&]() -> Engine& { return curEng == &engA ? engB : engA; };
   auto blendBusy = [&](bool say) { const bool b = curEng->blending() != nullptr || bl.state.load() == 1 || bl.state.load() == 2;
@@ -410,7 +412,8 @@ int main(int argc, char** argv) {
     blendOldFile = curFile; blendBpm0 = from.tempo.bpm.load(); ui.stashPatch(blendStash);
     handRecording(from, to); to.blendFrom(&from, BLEND_SECS[blendIdx]); curEng = &to; ui.setEngine(to); gEngine.store(&to, std::memory_order_release); midi.setTarget(to);
     if (capture.open) capture.start(to, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);
-    blendOldSnap = savedSnap; blendOldNever = neverSaved; loadData(bl.data, fileName(bl.path)); curFile = bl.path; neverSaved = false; bl.data = Json();
+    blendOldSnap = savedSnap; blendOldNever = neverSaved; blendOldHist.swap(hist); blendOldHpos = hpos; hist.clear(); hpos = -1;   // the new session's undo starts with it
+    loadData(bl.data, fileName(bl.path)); curFile = bl.path; neverSaved = false; bl.data = Json();
     blendBpm1 = to.tempo.bpm.load(); to.tempo.bpm.store(blendBpm0); blendGlide = std::fabs(blendBpm1 - blendBpm0) > 0.01f;
     if (blendIdx != MANUAL) to.blendGo(); ui.blendAt = 0; ui.blendName = fileName(bl.path); blendClearT = -1; blendRest = 0;
     ui.status(blendIdx == MANUAL ? "BLEND BY HAND TO " + fileName(bl.path) + ": DRAG THE BAR (OR A MIDI KNOB)" : "BLENDING TO " + fileName(bl.path) + " OVER " + blendLabel(blendIdx), 5); };
@@ -424,8 +427,8 @@ int main(int argc, char** argv) {
     ui.unstashPatch(blendStash); handRecording(now, *back);
     back->blendFrom(&now, rest / p, 1 - p); back->blendGo(); curEng = back; gEngine.store(back, std::memory_order_release); now.blendRelease(); midi.setTarget(*back);
     if (capture.open) capture.start(*back, settings.str("inputDevice"), BUFFERS[sound.bufIdx]);
-    curFile = blendOldFile; savedSnap = blendOldSnap; neverSaved = blendOldNever; markSaved = false; blendGlide = false; ui.blendName = fileName(blendOldFile); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.1f; ui.status("BACK TO " + (blendOldFile.empty() ? std::string("THE LAST SESSION") : fileName(blendOldFile)), 3); };
-  auto blendFrame = [&] {   // each frame: start a blend that's ready, follow one that's going, and tidy up after one that's done
+    curFile = blendOldFile; savedSnap = blendOldSnap; neverSaved = blendOldNever; markSaved = false; blendGlide = false; hist.swap(blendOldHist); hpos = blendOldHpos; blendOldHist.clear(); /* its own undo, as it was */ ui.blendName = fileName(blendOldFile); dirty = true; saveT = 0.5f; histDirty = true; histT = 0.1f; ui.status("BACK TO " + (blendOldFile.empty() ? std::string("THE LAST SESSION") : fileName(blendOldFile)), 3); };
+  auto blendFrame = [&](float dt) {   // each frame (dt: the time since the last, in seconds): start a blend that's ready, follow one that's going, and tidy up after one that's done
     const int st = bl.state.load(); if (st == 3) { bl.state.store(0); ui.status(bl.err, 5); } else if (st == 2) { bl.state.store(0); blendStart(); }
     Engine* src = curEng->blending(); if (!src) { ui.blendAt = -1; return; }
     const float p = curEng->blendAt.load();
@@ -433,9 +436,9 @@ int main(int argc, char** argv) {
       ui.blendAt = std::max(0.f, p); if (blendGlide) curEng->tempo.bpm.store(blendBpm0 + (blendBpm1 - blendBpm0) * std::max(0.f, p));
       if (curEng->cpuLoad.load() > 0.92f) ui.status("THE TWO SESSIONS TOGETHER ARE A LOT FOR THIS COMPUTER", 2);
       ui.blendPaused = !curEng->blendRunning();
-      blendRest = p >= 0.999f && !curEng->blendRunning() ? blendRest + 1.f / 60 : 0;   // by hand at the far end: it finishes once it has rested there 2 s
+      blendRest = p >= 0.999f && !curEng->blendRunning() ? blendRest + dt : 0;   // by hand at the far end: it finishes once it has rested there 2 s
       if ((p >= 1 && curEng->blendRunning()) || blendRest >= 2) { if (blendGlide) curEng->tempo.bpm.store(blendBpm1); src->clear(); blendClearT = 0.4f; blendStash = Ui::Stash(); ui.blendAt = -1; ui.status("BLENDED: " + ui.blendName, 3); } }
-    else if ((blendClearT -= 1.f / 60) <= 0) { curEng->blendRelease(); blendClearT = -1; } };
+    else if ((blendClearT -= dt) <= 0) { curEng->blendRelease(); blendClearT = -1; } };
 
   std::function<void(int)> openSessions = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
@@ -654,14 +657,21 @@ int main(int argc, char** argv) {
         case SDL_EVENT_TEXT_INPUT: ui.typed(ev.text.text); break;
         case SDL_EVENT_KEY_DOWN:
           if (ui.ask) { if (ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) ui.keyEnter(); else if (ev.key.key == SDLK_BACKSPACE) ui.keyBackspace(); else if (ev.key.key == SDLK_ESCAPE) ui.keyEscape(); break; }
-          if (ui.noteEdit) {   // NOTES: typing into one (letters come as text); Cmd/Ctrl+C, X and V copy, cut and paste the whole note; other Cmd/Ctrl keys still work
-            const SDL_Keycode k = ev.key.key; const bool cmd = ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL);
-            if (cmd && k == SDLK_C) { SDL_SetClipboardText(ui.noteText().c_str()); ui.status("NOTE COPIED", 1.5f); break; }
-            if (cmd && k == SDLK_X) { SDL_SetClipboardText(ui.noteText().c_str()); ui.noteCut(); ui.status("NOTE CUT", 1.5f); break; }
+          if (ui.noteEdit) {   // NOTES and the NOTEPAD, as in a text editor (letters come as text). Shift extends the selection; by word with
+            // Option (Mac) or Ctrl (Windows), to the line's or note's ends with Cmd (Mac); Cmd/Ctrl+A, C, X, V, Z (Shift+Z or Ctrl+Y: redo)
+            const SDL_Keycode k = ev.key.key; const SDL_Keymod km = ev.key.mod; static const bool mac = std::string(SDL_GetPlatform()) == "macOS";
+            const bool cmd = km & (SDL_KMOD_GUI | SDL_KMOD_CTRL);
+            if (cmd && k == SDLK_A) { ui.noteSelectAll(); break; }
+            if (cmd && k == SDLK_C) { const std::string t = ui.noteText(); if (!t.empty()) SDL_SetClipboardText(t.c_str()); break; }
+            if (cmd && k == SDLK_X) { const std::string t = ui.noteText(); if (!t.empty()) { SDL_SetClipboardText(t.c_str()); ui.noteCut(); } break; }
             if (cmd && k == SDLK_V) { if (char* t = SDL_GetClipboardText()) { ui.notePaste(t); SDL_free(t); } break; }
+            if (cmd && k == SDLK_Z) { ui.noteUndo(km & SDL_KMOD_SHIFT); break; }
+            if ((km & SDL_KMOD_CTRL) && k == SDLK_Y) { ui.noteUndo(true); break; }
             const int nk = k == SDLK_UP ? 1 : k == SDLK_DOWN ? 2 : k == SDLK_LEFT ? 3 : k == SDLK_RIGHT ? 4 : k == SDLK_BACKSPACE ? 5 : k == SDLK_DELETE ? 6 : (k == SDLK_RETURN || k == SDLK_KP_ENTER) ? 7 : k == SDLK_HOME ? 8 : k == SDLK_END ? 9 : k == SDLK_ESCAPE ? 27 : 0;
-            if (nk) { ui.noteKey(nk); break; }
-            if (!cmd) break; }   // (anything else: typed text, which comes as its own event)
+            if (nk) { int m = (km & SDL_KMOD_SHIFT) ? Ui::NK_SHIFT : 0;
+              if (mac) { if (km & SDL_KMOD_ALT) m |= Ui::NK_WORD; if (km & SDL_KMOD_GUI) m |= Ui::NK_LINE; } else if (km & SDL_KMOD_CTRL) m |= Ui::NK_WORD;
+              ui.noteKey(nk, m); break; }
+            if (!cmd) break; }   // (anything else: typed text, which comes as its own event; other Cmd/Ctrl keys still reach the app)
           if (ui.qwLearn >= 0) {   // QWERTY MIDI: the key for the note picked
             const int i = ui.qwLearn; ui.qwLearn = -1; static const char* NM[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
             const std::string nn = std::string(NM[i % 12]) + std::to_string(i / 12);
@@ -706,6 +716,7 @@ int main(int argc, char** argv) {
           if (SDL_GetModState() & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) { wheelAcc += ev.wheel.y; if (std::fabs(wheelAcc) >= 1) { pendingZoom += wheelAcc > 0 ? 1 : -1; wheelAcc = 0; } }
           else if (ui.ed.open) ui.editorWheel(ev.wheel.mouse_x * dens / scale, ev.wheel.y);   // the sound editor: zoom
           else if (ui.br.open) ui.browserScroll(-ev.wheel.y * 2);   // over the sound browser: scroll its list
+          else if (ui.noteWheel(ev.wheel.mouse_x * dens / scale, ev.wheel.mouse_y * dens / scale, ev.wheel.y)) {}   // over a note: scroll it
           else { ui.viewX -= (int)std::lround(ev.wheel.x * 12); ui.viewY -= (int)std::lround(ev.wheel.y * 12); }
           break;
         case SDL_EVENT_PINCH_UPDATE:   // a trackpad pinch
@@ -757,8 +768,8 @@ int main(int argc, char** argv) {
         else { std::string p = r.path; const size_t sl = p.find_last_of("/\\"); if (p.find('.', sl == std::string::npos ? 0 : sl) == std::string::npos) p += ".tmbnt";
           if (writeFile(p, sessionFile(serializePatch(ui)))) { curFile = p; savedNow(); ui.status("SAVED " + fileName(p), 4); } else ui.status("COULD NOT SAVE THE FILE", 5); }
       } }
-    engA.collectGarbage(); engB.collectGarbage(); blendFrame();
-    if (ui.padDirty) { ui.padDirty = false; padSaveT = 1.0f; } if (padSaveT > 0 && (padSaveT -= 1.f / 60) <= 0) savePad();
+    engA.collectGarbage(); engB.collectGarbage(); blendFrame(ldt);
+    if (ui.padDirty) { ui.padDirty = false; padSaveT = 1.0f; } if (padSaveT > 0 && (padSaveT -= ldt) <= 0) savePad();
     { std::string t = curFile.empty() ? std::string("NEW SESSION") : fileName(curFile); const size_t dot = t.rfind('.'); if (!curFile.empty() && dot != std::string::npos && dot > 0) t = t.substr(0, dot);
       ui.sessionTitle = t; ui.sessionChanged = sessionChanged(); }
     pumpInfo();
