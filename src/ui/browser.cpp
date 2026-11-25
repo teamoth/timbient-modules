@@ -29,6 +29,7 @@ static std::string parentOf(std::string d) {   // the folder above ("/a/b/" -> "
 }
 
 void Ui::browseTo(const std::string& dir) {
+  if (!br.dir.empty() && !br.items.empty()) br.where[br.dir] = {br.scroll, br.sel >= 0 && br.sel < (int)br.items.size() ? br.items[br.sel].name : std::string()};   // where you were in this folder
   br.items.clear(); br.sel = -1; br.scroll = 0; br.err.clear();
   if (br.playing >= 0 && onPreview) onPreview(""); br.playing = -1;
   br.dir = dir;
@@ -40,6 +41,10 @@ void Ui::browseTo(const std::string& dir) {
   if (!parentOf(dir).empty()) br.items.push_back({"..", true});
   br.items.insert(br.items.end(), folders.begin(), folders.end()); br.items.insert(br.items.end(), files.begin(), files.end());
   if (files.empty() && folders.empty()) br.err = "NO SOUND FILES HERE";
+  // back in a folder you've looked through: the list where you left it, with the sound you last picked there picked again
+  auto w = br.where.find(dir); if (w != br.where.end()) {
+    for (size_t i = 0; i < br.items.size(); i++) if (!w->second.second.empty() && br.items[i].name == w->second.second) br.sel = (int)i;
+    const float most = std::max(0.f, (float)br.items.size() - std::max(1, brRows)); br.scroll = std::max(0.f, std::min(most, w->second.first)); }
 }
 
 void Ui::browserScroll(float rows) {

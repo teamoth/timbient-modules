@@ -165,6 +165,7 @@ public:
   struct Browser { bool open = false; std::string dir; struct Entry { std::string name; bool folder; }; std::vector<Entry> items;
     int target = 0, slot = 0, sel = -1, playing = -1; float scroll = 0; std::string err;
     // about the picked sound (worked out on another thread): how long, mono or stereo, its rate, and what analyseSound found
+    std::map<std::string, std::pair<float, std::string>> where;   // each folder looked through: how far down, and the sound picked there
     bool autoPreview = true, wide = false;   // PREVIEW: tapping a sound plays it. <>: the wide browser, for long names
     std::string infoPath; bool infoReady = false, infoFailed = false; SoundInfo info; int channels = 0; float fileRate = 0; double secs = 0; } br;
   std::function<void(const std::string&)> onInfo;

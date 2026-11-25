@@ -539,6 +539,14 @@ int main(int argc, char** argv) {
     ui.picked = {l->m->id}; frame(); ui.pointerDown(850, 580); ui.pointerUp(850, 580); chk(ui.picked.empty(), "a tap on empty space lets go");
     ui.pickAll(); chk(ui.picked.size() == ui.mods.size(), "select all");
     ui.clearPatch(); run(eng, 0.2f); if (!ok) fails++; std::printf("selecting, copy and paste, groups:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
+  // the sound browser: back in a folder (reopened, or out of a folder inside it), the list is where you left it, the sound picked again
+  { ui.onList = [](const std::string& d, std::vector<Ui::Browser::Entry>& v) { v.clear(); if (d == "/s/sub") { v.push_back({"a.wav", false}); return true; }
+      v.push_back({"sub", true}); for (int i = 0; i < 200; i++) { char b[16]; std::snprintf(b, 16, "s%03d.wav", i); v.push_back({b, false}); } return true; };
+    ui.clearPatch(); UiMod* sm = ui.add("sample", 40, 40); Canvas c; c.fine = true; c.resize(700, 400);
+    ui.openBrowser(sm->m->id, 0, "/s"); c.beginFrame(); ui.draw(c, 0.016f); ui.browserScroll(120); ui.br.sel = 130; const float at = ui.br.scroll; ui.closeBrowser();
+    ui.openBrowser(sm->m->id, 0, "/s"); const bool back = ui.br.scroll == at && ui.br.sel == 130 && at > 100;
+    ui.browseTo("/s/sub"); const bool inner = ui.br.scroll == 0; ui.browseTo("/s"); const bool out = ui.br.scroll == at && ui.br.sel == 130; ui.closeBrowser(); ui.onList = nullptr; ui.clearPatch();
+    const bool ok = back && inner && out; if (!ok) fails++; std::printf("sound browser keeps its place:%s\n", ok ? " all fine" : "  WRONG"); }
   // PITCH SHIFT's SHIFT jumps by octaves on a tap, like the other pitch settings
   { const bool ok = Ui::octaveJumps(findDef("pitchshift"), "shift") && Ui::octaveJumps(findDef("pad"), "pitch") && !Ui::octaveJumps(findDef("pitchshift"), "fine");
     if (!ok) fails++; std::printf("pitch shift octave jumps:%s\n", ok ? " all fine" : "  WRONG"); }
