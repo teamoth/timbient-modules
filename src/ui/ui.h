@@ -148,7 +148,8 @@ public:
   void pickToggle(int id);
   void pickAll();
   std::vector<int> pickedOrTouched() const;   // the selection, or else the module last touched (OUTPUT is never copied or deleted)
-  void deletePicked();                        // asks first
+  void deletePicked();
+  static bool octaveJumps(const ModuleDef* d, const std::string& key);   // a tap on this setting offers -24, -12, 0, +12, +24                        // asks first
   std::function<void(const std::vector<int>&)> onDuplicateMany, onCopy, onSaveGroup;   // the app: copies with the cables between them; the clipboard; a group file
   std::function<void()> onPaste;              // Cmd/Ctrl+V, or PASTE in the right-click menu: the copied modules, at the pointer
   std::function<void(int, int)> onGroups;     // ADD > GROUPS: the app's list of saved groups

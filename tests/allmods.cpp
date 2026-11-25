@@ -539,6 +539,9 @@ int main(int argc, char** argv) {
     ui.picked = {l->m->id}; frame(); ui.pointerDown(850, 580); ui.pointerUp(850, 580); chk(ui.picked.empty(), "a tap on empty space lets go");
     ui.pickAll(); chk(ui.picked.size() == ui.mods.size(), "select all");
     ui.clearPatch(); run(eng, 0.2f); if (!ok) fails++; std::printf("selecting, copy and paste, groups:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
+  // PITCH SHIFT's SHIFT jumps by octaves on a tap, like the other pitch settings
+  { const bool ok = Ui::octaveJumps(findDef("pitchshift"), "shift") && Ui::octaveJumps(findDef("pad"), "pitch") && !Ui::octaveJumps(findDef("pitchshift"), "fine");
+    if (!ok) fails++; std::printf("pitch shift octave jumps:%s\n", ok ? " all fine" : "  WRONG"); }
   // EXPORT WAV: on SAMPLER (always), GRAIN LOOPER (HELD) and STRETCH (FILE), and in the sound editor; SAVE TAKE has gone
   { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
     for (const char* ty : {"sample", "looper", "stretch"}) { const ModuleDef* d = findDef(ty); const int k = d->paramIndex("export"); chk(k >= 0 && d->params[k].act && d->params[k].label == "EXPORT WAV", ty); }

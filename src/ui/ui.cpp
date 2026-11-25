@@ -79,6 +79,8 @@ void Ui::remove(UiMod* u) {
   mods.erase(std::remove_if(mods.begin(), mods.end(), [&](const std::unique_ptr<UiMod>& p) { return p.get() == u; }), mods.end());
   drag = Drag(); picked.erase(std::remove(picked.begin(), picked.end(), id), picked.end());
 }
+// the pitch settings a tap (not a drag) opens octave jumps on: PITCH everywhere, TRANSPOSE on MIDI OUT and NOTE LOOPER, PITCH SHIFT's SHIFT
+bool Ui::octaveJumps(const ModuleDef* d, const std::string& k) { return k == "pitch" || ((d->type == "midiout" || d->type == "nloop") && k == "trans") || (d->type == "pitchshift" && k == "shift"); }
 // ---- the selection ----
 void Ui::pickToggle(int id) { if (isPicked(id)) picked.erase(std::remove(picked.begin(), picked.end(), id), picked.end()); else picked.push_back(id);
   status(picked.empty() ? std::string("NOTHING SELECTED") : std::to_string(picked.size()) + " SELECTED: DRAG A TITLE TO MOVE THEM, RIGHT-CLICK FOR MORE", 2.5f); }
@@ -937,7 +939,7 @@ std::string Ui::helpAt(float sx, float sy) {
     const ParamDef& q = d->params[j]; std::string s = helpParam(d, q); if (s.empty() || q.act) return s; const int root = eng->key.root.load();
     if (!q.opts.empty()) { s += " ("; for (size_t i = 0; i < q.opts.size() && i < 6; i++) s += (i ? ", " : "") + q.opts[i]; s += q.opts.size() > 6 ? "...)" : ")"; }
     else s += " (" + fmtParam(q, q.min, root) + " TO " + fmtParam(q, q.max, root) + ")";
-    if (q.key == "pitch" || ((d->type == "midiout" || d->type == "nloop") && q.key == "trans"))   // a tap (not a drag) on these opens the octave jumps
+    if (octaveJumps(d, q.key))   // a tap (not a drag) on these opens the octave jumps
       s += d->type == "sample" ? " TAP IT (WITHOUT DRAGGING) TO JUMP STRAIGHT TO QUARTER, HALF, NORMAL, DOUBLE OR 4X SPEED." : " TAP IT (WITHOUT DRAGGING) TO JUMP STRAIGHT TO -24, -12, 0, +12 OR +24.";
     return s; };
   auto modNote = [&](UiMod* u, int j) {   // a green ring: how to modulate it, and what does now
@@ -1487,7 +1489,7 @@ void Ui::pointerUp(float sx, float sy) {
     Dropdown q; q.items = {"INSERT INTO THIS CABLE?", "YES, INSERT IT", "NO, JUST PUT IT HERE"}; q.title = 0; q.x = (int)sx + 4; q.y = (int)sy + 4;
     q.pick = [this, c0, mid](int i) { if (i == 1) insertInto(c0, mid); };
     openDropdown(q); return; }
-  if (d.kind == D_PARAM && !d.moved && !d.held && (d.m->m->def->params[d.k].key == "pitch" || ((d.m->m->def->type == "midiout" || d.m->m->def->type == "nloop") && d.m->m->def->params[d.k].key == "trans"))) {
+  if (d.kind == D_PARAM && !d.moved && !d.held && octaveJumps(d.m->m->def, d.m->m->def->params[d.k].key)) {
     // a tap on PITCH: jump by octaves (on Sample, pitch is speed, so the speeds are named too)
     const ModuleDef* df = d.m->m->def; const int k = d.k, id = d.m->m->id; const bool smp = df->type == "sample", grains = df->type == "looper";
     static const int V[5] = {-24, -12, 0, 12, 24};
