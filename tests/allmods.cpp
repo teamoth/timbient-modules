@@ -8,6 +8,7 @@
 #include "../src/ui/session.h"
 #include "../src/ui/help.h"
 #include "../src/engine/fft.h"
+#include "../src/engine/params.h"
 namespace tb { bool euclidHit(int i, int steps, int hits, int rot); }
 #include "../src/ui/theme.h"
 #include <random>
@@ -165,7 +166,7 @@ int main(int argc, char** argv) {
     ui.ed.a = 0.5; ui.ed.b = 1.0; press(11); const float f1 = ui.ed.d[36000]; press(11); const float f2 = ui.ed.d[36000];   // halfway through the fade: 1/2, then 1/4
     press(6); press(6); ui.ed.a = 0.25; ui.ed.b = 0.5; press(13); const size_t n1 = ui.ed.d.size(); float jump = 0; for (size_t i = 1; i < n1; i++) jump = std::max(jump, std::fabs(ui.ed.d[i] - ui.ed.d[i - 1]));
     ui.ed.a = 0; ui.ed.b = 0.2; press(9); const float nm = ui.ed.d[4800]; press(6); const float un = ui.ed.d[4800];
-    ui.pointerDown(5, 3); const bool stillOpen = ui.ed.open; press(16); const bool asks = ui.ed.open; press(16); const bool shut = !ui.ed.open;
+    ui.pointerDown(5, 3); const bool stillOpen = ui.ed.open; press(17); const bool asks = ui.ed.open; press(17);   /* (17: CLOSE) */ const bool shut = !ui.ed.open;
     const bool ok = std::fabs(f1 - 0.125f) < 0.01f && std::fabs(f2 - 0.0625f) < 0.01f && std::abs((long)n1 - 36000) < 400 && jump < 0.01f && std::fabs(nm - 0.95f) < 0.01f && std::fabs(un - 0.25f) < 0.01f && stillOpen && asks && shut;
     if (!ok) fails++;
     std::printf("sound editor: fades %.3f %.3f, delete -> %zu (biggest step %.4f), normalise %.2f, undo %.2f, open after bar tap %d, close asks %d then closes %d%s\n", f1, f2, n1, jump, nm, un, stillOpen, asks, shut, ok ? "" : "  WRONG"); }
@@ -485,6 +486,71 @@ int main(int argc, char** argv) {
       const int x0 = ui.padX, y0 = ui.padY; ui.pointerDown((float)x0 + 20, (float)y0 + 3); ui.pointerMove((float)x0 - 80, (float)y0 + 43); ui.pointerUp(0, 0); frame();
       chk(ui.padX == x0 - 100 && ui.padY == y0 + 40, "moves"); ui.pointerDown((float)ui.padX + g.w - 5, (float)ui.padY + 3); ui.pointerUp(0, 0); chk(!ui.padOpen, "X closes"); }
     ui.onChange = oc; ui.padOpen = false; ui.pad.reset(); ui.padX = ui.padY = -1; ui.clearPatch(); if (!ok) fails++; std::printf("notepad:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
+  // HALF BPMs: tempos go in halves (72.5), shown without .5 when whole; the shared tempo's - and + move half a BPM; a module's own BPM
+  // steps by halves too
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    chk(bpmText(72) == "72" && bpmText(72.5f) == "72.5" && bpmText(72.3f) == "72.5" && bpmText(72.2f) == "72" && halfBpm(99.76f) == 100, "text and rounding");
+    const ModuleDef* cd = findDef("clock"); const ParamDef& q = cd->params[cd->paramIndex("bpm")]; chk(q.step == 0.5f && fmtParam(q, 72.5f, 0) == "72.5" && fmtParam(q, 90, 0) == "90", "clock BPM");
+    const ModuleDef* hd = findDef("hops"); const ParamDef& hq = hd->params[hd->paramIndex("rate")]; chk(fmtParam(hq, 72.5f / 60, 0) == "72.5 BPM", "steps a second shown as BPM");
+    ui.clearPatch(); ui.add("out", 300, 30); Canvas c; c.fine = true; c.resize(700, 400); auto frame = [&] { c.beginFrame(); ui.draw(c, 0.016f); };
+    eng.tempo.bpm.store(72); ui.openTempo(100, 40); frame(); ui.pointerDown(100 + 126 - 9, 40 + 14); ui.pointerUp(100 + 126 - 9, 40 + 14); const float up = eng.tempo.bpm.load();
+    ui.pointerDown(100 + 8, 40 + 14); ui.pointerUp(100 + 8, 40 + 14); ui.pointerDown(100 + 8, 40 + 14); ui.pointerUp(100 + 8, 40 + 14); const float down = eng.tempo.bpm.load();
+    frame(); bool shown = false; for (auto& r : c.runs) if (r.s == "71.5 BPM") shown = true;
+    chk(up == 72.5f && down == 71.5f && shown, "tempo panel +, - (" + bpmText(up) + ", " + bpmText(down) + ")");
+    // a CLOCK at 72.5 BPM ticks at 72.5 (not 72 or 73)
+    ui.closeList(); ui.pointerDown(5, 300); ui.pointerUp(5, 300); ui.clearPatch(); eng.tempo.bpm.store(72.5f); UiMod* ck = ui.add("clock", 40, 40); ui.set(ck, "sync", 1); ui.set(ck, "div", 2);
+    const unsigned f0 = ck->m->fires[0].load(); run(eng, 60.f); const int ticks = (int)(ck->m->fires[0].load() - f0);
+    chk(std::abs(ticks - 290) <= 1, "clock at 72.5, 1/16: " + std::to_string(ticks) + " ticks in 60 s (72 would be 288, 73 292)");
+    eng.tempo.bpm.store(72); ui.clearPatch(); if (!ok) fails++; std::printf("half bpms:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
+  // SELECTING several modules: a Shift-drag box picks the modules it touches, Shift-click on a title adds one; dragging one title
+  // moves them all; a group of them (and the cables between them) copies, pastes as new modules wired the same way, OUTPUT
+  // meaning this session's own; deleting asks, then takes them all; a tap on empty space lets go. Ctx menus offer it all
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    ui.clearPatch(); ui.viewX = ui.viewY = 0; UiMod* o = ui.add("out", 600, 30); UiMod* p = ui.add("pad", 40, 40); UiMod* e = ui.add("echo", 200, 40); UiMod* l = ui.add("lfo", 600, 300);
+    ui.connect(p, "OUT", e, "IN"); ui.connect(e, "OUT", o, "IN"); ui.modulate(l, e, e->m->def->paramIndex("time"));
+    Canvas c; c.fine = true; c.resize(900, 600); auto frame = [&] { c.beginFrame(); ui.draw(c, 0.016f); }; frame();
+    ui.shiftHeld = true; ui.pointerDown(20, 25); ui.pointerMove(200, 100); ui.pointerMove(380, 200); frame(); ui.pointerUp(380, 200);
+    chk(ui.picked.size() == 2 && ui.isPicked(p->m->id) && ui.isPicked(e->m->id), "box picks two (" + std::to_string(ui.picked.size()) + ")");
+    ui.pointerDown((float)l->x + 8, (float)l->y + 3); ui.pointerUp((float)l->x + 8, (float)l->y + 3); chk(ui.picked.size() == 3, "shift-click a title adds");
+    ui.pointerDown((float)l->x + 8, (float)l->y + 3); ui.pointerUp((float)l->x + 8, (float)l->y + 3); chk(ui.picked.size() == 2, "and again takes it out");
+    ui.shiftHeld = false; frame(); ui.pointerDown((float)p->x + 8, (float)p->y + 3); ui.pointerMove((float)p->x + 58, (float)p->y + 23); ui.pointerUp(0, 0);
+    chk(p->x == 90 && p->y == 60 && e->x == 250 && e->y == 60 && l->x == 600, "a title moves them all");
+    int x0, y0; Json g = groupOf(ui, ui.picked, x0, y0); chk(x0 == 90 && y0 == 60 && g.get("mods") && g.get("mods")->a.size() == 2 && g.get("cables")->a.size() == 1, "the group: two modules, one cable");
+    { Json f; chk(Json::parse(g.dump(), f), "as text"); g = f; }   // (as it goes through the clipboard)
+    std::vector<std::pair<UiMod*, int>> sc; bool unk = false; const size_t nm0 = ui.mods.size(), nc0 = ui.cables.size();
+    std::vector<int> made = addGroup(ui, g, 100, 300, sc, unk);
+    UiMod *p2 = nullptr, *e2 = nullptr; for (int id : made) if (UiMod* u = ui.byId(id)) (u->m->def->type == "pad" ? p2 : e2) = u;
+    chk(p2 && e2 && p2->m->def->type == "pad" && e2->m->def->type == "echo" && p2->x == 100 && p2->y == 300 && e2->x == 260 && e2->y == 300, "pasted where asked");
+    bool wired = false; for (auto& cb : ui.cables) if (p2 && e2 && cb.from == p2->m->id && cb.to == e2->m->id) wired = true;
+    chk(ui.mods.size() == nm0 + 2 && ui.cables.size() == nc0 + 1 && wired && ui.picked == made, "wired the same, and selected");
+    chk(e2 && std::fabs(e2->m->p[e2->m->def->paramIndex("time")].load() - e->m->p[e->m->def->paramIndex("time")].load()) < 1e-6f, "settings come too");
+    // with OUTPUT in it: cables into OUTPUT go into this session's
+    g = groupOf(ui, {e->m->id, o->m->id}, x0, y0); made = addGroup(ui, g, 400, 400, sc, unk); bool toOut = false;
+    for (auto& cb : ui.cables) if (made.size() == 1 && cb.from == made[0] && cb.to == o->m->id) toOut = true; int outs = 0; for (auto& u : ui.mods) if (u->m->def->type == "out") outs++;
+    chk(made.size() == 1 && toOut && outs == 1, "OUTPUT: this session's own");
+    chk(groupOf(ui, {o->m->id}, x0, y0).t != Json::OBJ, "OUTPUT alone: nothing to copy");
+    // the right-click menus
+    ui.picked = {p->m->id, e->m->id}; ui.contextAt((float)p->x + 8, (float)p->y + 3); const Dropdown* d = ui.openList(); bool many = false; if (d) for (auto& it : d->items) if (it == "COPY THE 2 SELECTED") many = true;
+    chk(many, "right-click a selected one"); ui.closeList();
+    ui.contextAt(800, 500); d = ui.openList(); chk(d && !d->items.empty() && d->items[0] == "PASTE HERE", "right-click empty space"); ui.closeList();
+    // delete asks, then takes them; a tap on empty space lets go
+    const int pid = p->m->id, eid = e->m->id; ui.deletePicked(); d = ui.openList(); chk(d && d->items[0] == "DELETE 2 MODULES?", "asks"); if (d) d->pick(1); ui.closeList();
+    chk(!ui.byId(pid) && !ui.byId(eid) && ui.picked.empty(), "deleted both");
+    ui.picked = {l->m->id}; frame(); ui.pointerDown(850, 580); ui.pointerUp(850, 580); chk(ui.picked.empty(), "a tap on empty space lets go");
+    ui.pickAll(); chk(ui.picked.size() == ui.mods.size(), "select all");
+    ui.clearPatch(); run(eng, 0.2f); if (!ok) fails++; std::printf("selecting, copy and paste, groups:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
+  // EXPORT WAV: on SAMPLER (always), GRAIN LOOPER (HELD) and STRETCH (FILE), and in the sound editor; SAVE TAKE has gone
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    for (const char* ty : {"sample", "looper", "stretch"}) { const ModuleDef* d = findDef(ty); const int k = d->paramIndex("export"); chk(k >= 0 && d->params[k].act && d->params[k].label == "EXPORT WAV", ty); }
+    chk(findDef("sample")->paramIndex("savetake") < 0, "save take gone");
+    ui.clearPatch(); UiMod* gl = ui.add("looper", 40, 40); const auto rowsLive = ui.shownRows(*gl); ui.set(gl, "src", 1); const auto rowsHeld = ui.shownRows(*gl); const int ek = gl->m->def->paramIndex("export");
+    chk(std::find(rowsLive.begin(), rowsLive.end(), ek) == rowsLive.end() && std::find(rowsHeld.begin(), rowsHeld.end(), ek) != rowsHeld.end(), "grain looper: only when HELD");
+    UiMod* sm = ui.add("sample", 300, 40); const auto sr = ui.shownRows(*sm); chk(std::find(sr.begin(), sr.end(), sm->m->def->paramIndex("export")) != sr.end(), "sampler: always");
+    std::string got; ui.onEditExport = [&](const std::string& n, const std::vector<float>& dd, const std::vector<float>&, float) { got = n + ":" + std::to_string(dd.size()); };
+    Canvas c; c.fine = true; c.resize(700, 400); ui.openEditor(sm->m->id, 0, "KICK", std::vector<float>(4800, 0.1f), 48000); c.beginFrame(); ui.draw(c, 0.016f);
+    for (auto& b : ui.edBtns) if (b.id == 16) { ui.pointerDown((float)b.x + 2, (float)b.y + 2); ui.pointerUp((float)b.x + 2, (float)b.y + 2); break; }   // (16: EXPORT WAV)
+    chk(got == "KICK:4800", "the editor's EXPORT WAV (" + got + ")"); ui.closeEditor(); ui.onEditExport = nullptr;
+    ui.clearPatch(); if (!ok) fails++; std::printf("export wav:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
   // dragging a module over a sound cable offers to insert it, CROSSFADER and MIXER included (they have no IN/OUT by those names)
   { std::string res; bool ok = true;
     for (const char* ty : {"xfade", "mixer", "echo"}) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 30); UiMod* v = ui.add("pad", 0, 30); ui.connect(v, "OUT", o, "IN");

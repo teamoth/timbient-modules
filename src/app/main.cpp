@@ -23,7 +23,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.56.0";
+static const char* VERSION = "0.57.0";
 static std::atomic<Engine*> gEngine{nullptr};   // the engine the sound card renders: the session on the screen (while blending, it plays the last one too)
 
 // ---------------- sound ----------------
@@ -89,7 +89,7 @@ struct Sound {
 };
 
 // ---------------- results from the system file dialogs (they may arrive on another thread) ----------------
-struct DialogResult { bool open; std::string path; int target = 0, slot = 0; bool folder = false; std::string recFrom; bool recording = false; };   // recording: where a just-stopped recording should go (path empty: cancelled)   // target: the module a sound file is for
+struct DialogResult { bool open; std::string path; int target = 0, slot = 0; bool folder = false; std::string recFrom; bool recording = false; bool exporting = false, temp = false; };   // exporting: EXPORT WAV (recFrom the sound; temp: made just for this)   // recording: where a just-stopped recording should go (path empty: cancelled)   // target: the module a sound file is for
 static std::mutex dlgMx; static std::vector<DialogResult> dlgResults;
 static const SDL_DialogFileFilter JSON_FILTER[] = {{"Timbient session", "tmbnt;json;txt"}};
 static void onOpenDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back({true, files[0]}); } }
@@ -108,6 +108,11 @@ static void onSaveDialog(void*, const char* const* files, int) { if (files && fi
 static void onFolderDialog(void* ud, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.folder = true; r.target = ud ? -1 : 0; dlgResults.push_back(r); } }
 static const SDL_DialogFileFilter AUDIO_FILTER[] = {{"Sound files", "wav;wave;aif;aiff;flac;mp3"}};
 static const SDL_DialogFileFilter WAV_FILTER[] = {{"WAV sound file", "wav"}};
+static const SDL_DialogFileFilter GROUP_FILTER[] = {{"Timbient group", "tmgroup"}};
+static void onGroupDialog(void*, const char* const* files, int) { if (files && files[0]) { std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, files[0]}; r.target = -3; dlgResults.push_back(r); } }   // ADD > GROUPS > OPEN A GROUP FILE
+// EXPORT WAV: where it goes (ud: the sound's file, and whether that was made just for this; a heap pair, freed here)
+static void onExportDialog(void* ud, const char* const* files, int) { auto* from = (std::pair<std::string, bool>*)ud; DialogResult r{false, files && files[0] ? files[0] : ""}; r.exporting = true; r.recFrom = from->first; r.temp = from->second; delete from;
+  std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back(r); }
 // where to save a recording that has just stopped: ud is the recording as it was made (a heap string, freed here)
 static void onRecDialog(void* ud, const char* const* files, int) { std::string* from = (std::string*)ud; DialogResult r{false, files && files[0] ? files[0] : ""}; r.recording = true; r.recFrom = *from; delete from;
   std::lock_guard<std::mutex> l(dlgMx); dlgResults.push_back(r); }
@@ -137,6 +142,8 @@ static std::string b64(const unsigned char* d, size_t n) {
 static std::string fileUrl(std::string p) { for (auto& c : p) if (c == '\\') c = '/'; return p.size() && p[0] == '/' ? "file://" + p : "file:///" + p; }
 
 int main(int argc, char** argv) {
+  // Mac: fullscreen simply covers the screen (not a Space of its own), so the menu bar never drops down over the top bar
+  SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0"); SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY, "0");
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError()); return 1; }
 
   // the app's own folder for sessions, the autosave and settings
@@ -292,6 +299,13 @@ int main(int argc, char** argv) {
     std::vector<std::string> v; for (auto& k : ks->a) v.push_back(k.t == Json::STR ? k.s : ""); qwMine.push_back({nm->s, v}); }
   auto qwMineSave = [&] { Json a = Json::array(); for (auto& [nm, ks] : qwMine) { Json o = Json::object(); o.set("name", Json::string(nm)); Json k = Json::array(); for (auto& x : ks) k.push(Json::string(x)); o.set("keys", k); a.push(o); }
     settings.set("qwertyLayouts", a); saveSettings(); };
+  // ---- EXPORT WAV: a module's sound (or the editor's, edits and all) to a WAV file, wherever you choose ----
+  auto exportWav = [&](const std::string& from, std::string name, bool temp) {
+    for (auto& ch : name) ch = (ch == '/' || ch == '\\' || ch == ':') ? ' ' : (char)std::tolower((unsigned char)ch);
+    if (name.size() > 4 && name.substr(name.size() - 4) == ".wav") name.resize(name.size() - 4); if (name.empty()) name = "sound";
+    std::string dir = settings.str("exportDir"); if (dir.empty()) dir = recDir; if (dir.back() != '/' && dir.back() != '\\') dir += "/";
+    const std::string start = dir + name + ".wav";
+    SDL_ShowSaveFileDialog(onExportDialog, new std::pair<std::string, bool>(from, temp), win, WAV_FILTER, 1, start.c_str()); };
   ui.onAction = [&](UiMod* u, const std::string& k) -> bool {
     const std::string& ty = u->m->def->type;
     if (ty == "qwerty" && k == "reset") {   // KEY LAYOUTS: the ready-made ones to choose from (your own changes are kept until you pick one)
@@ -330,12 +344,11 @@ int main(int argc, char** argv) {
       q.pick = [&, devs](int j) { if (j > (int)devs.size()) return; const std::string nm = j == 0 ? std::string() : devs[j - 1].first; settings.set("inputDevice", Json::string(nm)); saveSettings();
         if (!capture.start(*curEng, nm, BUFFERS[sound.bufIdx])) ui.status("COULD NOT OPEN THAT INPUT", 5); else ui.status("INPUT: " + capture.name + " (FOR EVERY AUDIO IN)", 3); };
       ui.openDropdown(q); return true; }
-    if (ty == "sample" && k == "savetake") {   // SAVE TAKE: the sound as a WAV, in the recordings folder
-      const UiMod::Snd& sd = u->snd[0]; if (sd.id.empty()) { ui.status("NOTHING RECORDED OR LOADED YET", 3); return true; }
-      char ts[32]; const std::time_t tt = std::time(nullptr); std::strftime(ts, 32, "%Y-%m-%d %H%M%S", std::localtime(&tt)); std::string nm = sd.name.empty() ? std::string("TAKE") : sd.name;
-      for (auto& ch : nm) if (ch == '/' || ch == '\\' || ch == ':' || ch == '.') ch = ' ';
-      const std::string to = recDir + nm + " " + ts + ".wav";
-      ui.status(SDL_CopyFile((audioDir + sd.id + ".wav").c_str(), to.c_str()) ? "SAVED: " + to : std::string("COULD NOT SAVE THE TAKE"), 5); return true; }
+    if ((ty == "sample" || ty == "looper" || ty == "stretch") && k == "export") {   // EXPORT WAV: the sound (for SAMPLE, the place on show) to a file
+      const UiMod::Snd& sd = u->snd[ty == "sample" ? std::max(0, std::min(UiMod::SLOTS - 1, u->shown)) : 0];
+      if (sd.id.empty()) { ui.status("THERE'S NO SOUND TO EXPORT YET", 3); return true; }
+      std::string nm = sd.name; if (nm.empty()) { char ts[32]; const std::time_t tt = std::time(nullptr); std::strftime(ts, 32, "take %Y-%m-%d %H%M", std::localtime(&tt)); nm = ts; }
+      exportWav(audioDir + sd.id + ".wav", nm, false); return true; }
     if (ty == "out" && k == "rec") {
       if (!rec.on()) { std::time_t tt = std::time(nullptr); char nm[64]; std::strftime(nm, 64, "timbient-%Y%m%d-%H%M%S.wav", std::localtime(&tt));
         if (rec.start(*curEng, recDir + nm)) ui.status("RECORDING"); else ui.status("COULD NOT START A RECORDING IN " + recDir, 6); }
@@ -361,8 +374,7 @@ int main(int argc, char** argv) {
   std::string curFile;   // the file this session was opened from or last saved to: SAVE writes there
   auto sessionChanged = [&] { return !markSaved && (savedSnap.empty() || (hpos >= 0 && hist[hpos] != savedSnap)); };   // (changed since it was opened, saved or started)
   auto autosaveData = [&] { Json j = serializePatch(ui); j.set("file", Json::string(curFile)); j.set("changed", Json::number(sessionChanged() ? 1 : 0)); return j; };
-  auto sessionFile = [&](const Json& data) {
-    Json f = Json::object(); f.set("timbient", Json::string("patch")); f.set("data", data);
+  auto soundPack = [&](const Json& data) {   // every sound a patch (or a group) uses, packed in base64 (to go inside its file)
     std::vector<std::string> ids; auto want = [&](const std::string& id) { if (!id.empty() && std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id); };
     if (const Json* ms = data.get("mods")) if (ms->t == Json::ARR) for (auto& m : ms->a) if (const Json* p = m.get("p")) { want(p->str("audio"));
       if (const Json* sn = p->get("sounds")) if (sn->t == Json::ARR) for (auto& e : sn->a) if (e.t == Json::ARR && !e.a.empty() && e.a[0].t == Json::STR) want(e.a[0].s); }
@@ -370,7 +382,13 @@ int main(int argc, char** argv) {
       std::string err; AudioBuf* b = decodeAudio(audioDir + id + ".wav", 3600, err, true); if (!b) continue; const int ch = b->stereo() ? 2 : 1;   // a stereo sound: left and right, interleaved
       std::vector<unsigned char> raw(b->d.size() * 2 * ch); for (size_t i = 0; i < b->d.size() * ch; i++) { const float x = ch == 2 ? (i & 1 ? b->r[i / 2] : b->d[i / 2]) : b->d[i]; const int16_t v = (int16_t)std::lround(clampf(x, -1, 1) * 32767); raw[i * 2] = (unsigned char)v; raw[i * 2 + 1] = (unsigned char)(v >> 8); }
       Json a = Json::object(); a.set("sr", Json::number(b->sr)); if (ch == 2) a.set("ch", Json::number(2)); a.set("b64", Json::string(b64(raw.data(), raw.size()))); pack.set(id, a); delete b; }
-    if (!pack.o.empty()) f.set("audio", pack);
+    return pack; };
+  auto unpackSounds = [&](const Json& f) {   // a file's packed sounds into the app's folder (any already here are left as they are)
+    if (const Json* pack = f.get("audio")) if (pack->t == Json::OBJ) for (auto& kv : pack->o) { const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
+      AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000), (int)kv.second.num("ch", 1)); if (b) { writeWavMono16(fn, *b); delete b; } } };
+  auto sessionFile = [&](const Json& data) {
+    Json f = Json::object(); f.set("timbient", Json::string("patch")); f.set("data", data);
+    Json pack = soundPack(data); if (!pack.o.empty()) f.set("audio", pack);
     return f.dump();
   };
   auto fileName = [](std::string p) { const size_t sl = p.find_last_of("/\\"); if (sl != std::string::npos) p = p.substr(sl + 1); const size_t dt = p.rfind('.'); if (dt != std::string::npos && dt > 0) p = p.substr(0, dt);
@@ -384,6 +402,63 @@ int main(int argc, char** argv) {
       SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, start.c_str()); });
     if (ui.ask) { ui.ask->check = settings.num("keyInName", 0) > 0.5 ? 1 : 0; ui.ask->checkLabel = "ADD KEY AND SCALE";
       if (!curFile.empty()) { std::string n = fileName(curFile); const size_t dot = n.rfind('.'); if (dot != std::string::npos && dot > 0) n.resize(dot); ui.ask->text = n; } } };   // a saved session: its own name to start from (NEW NAME: a random one)
+  // ---- GROUPS: several modules together, with the cables between them. COPY puts them on the clipboard (as text), PASTE adds
+  // them to whatever session is open, at the pointer; SAVE AS A GROUP keeps them as a file (with their sounds) in the groups folder,
+  // and ADD > GROUPS lists those. OUTPUT is never copied, but cables into it are: pasted, they go into this session's OUTPUT ----
+  static const bool isMac = std::string(SDL_GetPlatform()) == "macOS"; const std::string cmdKey = isMac ? "CMD" : "CTRL";
+  const std::string groupsDir = recDir + "groups/";
+  // the modules (positions from the group's top left corner) and the cables between them; x0, y0: where that corner was
+  auto groupData = [&](const std::vector<int>& ids, int& x0, int& y0) -> Json { return groupOf(ui, ids, x0, y0); };
+  // add a group's modules to the patch on screen, their top left corner at (wx, wy), as one change; they become the selection
+  auto pasteGroup = [&](const Json& g, int wx, int wy) -> int {
+    if (histDirty) { snapshot(); histDirty = false; }
+    std::vector<std::pair<UiMod*, int>> sc; bool unknown = false; const std::vector<int> made = addGroup(ui, g, wx, wy, sc, unknown);
+    if (made.empty()) { ui.status(unknown ? "THOSE MODULES AREN'T IN THIS VERSION" : "NOTHING TO PASTE", 3); return 0; }
+    for (auto& [u, k] : sc) { UiMod::Snd& sd = u->snd[k]; if (sd.id.empty()) continue;
+      std::string err; AudioBuf* b = decodeAudio(audioDir + sd.id + ".wav", 600, err, true); if (b) giveSound(u, b, false, k); else sd.missing = true; }
+    dirty = true; saveT = 0.5f; histDirty = true; histT = 0.1f;
+    return (int)made.size(); };
+  auto here = [&](int& wx, int& wy) { wx = (int)ui.lastPX + ui.viewX; wy = std::max(ui.viewY + 12, (int)ui.lastPY + ui.viewY); };   // the pointer, on the patch (below the top bar)
+  auto nMods = [](int n) { return std::to_string(n) + (n == 1 ? " MODULE" : " MODULES"); };
+  ui.onDuplicateMany = [&](const std::vector<int>& ids) {
+    int x0, y0; const Json g = groupData(ids, x0, y0); if (g.t != Json::OBJ) return;
+    const int n = pasteGroup(g, x0 + 12, y0 + 12); if (n) ui.status("DUPLICATED " + nMods(n) + " (THE COPIES ARE SELECTED)", 3); };
+  ui.onCopy = [&](const std::vector<int>& ids) {
+    int x0, y0; const Json g = groupData(ids, x0, y0); if (g.t != Json::OBJ) { ui.status("NOTHING TO COPY (OUTPUT STAYS WITH ITS SESSION)", 3); return; }
+    Json f = Json::object(); f.set("timbient", Json::string("group")); f.set("data", g); SDL_SetClipboardText(f.dump().c_str());
+    ui.status("COPIED " + nMods((int)g.get("mods")->a.size()) + ": " + cmdKey + "+V PASTES THEM HERE OR IN ANOTHER SESSION", 4); };
+  ui.onPaste = [&] {
+    char* t = SDL_GetClipboardText(); Json f; const bool ok = t && Json::parse(t, f); if (t) SDL_free(t);
+    if (!ok || f.str("timbient") != "group" || !f.get("data")) { ui.status("NOTHING TO PASTE: COPY SOME MODULES FIRST (" + cmdKey + "+C)", 3); return; }
+    unpackSounds(f); int wx, wy; here(wx, wy); const int n = pasteGroup(*f.get("data"), wx, wy); if (n) ui.status("PASTED " + nMods(n), 2); };
+  auto addGroupFile = [&](const std::string& path) {   // ADD > GROUPS: a group file, added near the top left of the view
+    Json f; if (!Json::parse(readFile(path), f) || f.str("timbient") != "group" || !f.get("data")) { ui.status("THAT IS NOT A TIMBIENT GROUP", 4); return; }
+    unpackSounds(f); const int n = pasteGroup(*f.get("data"), ui.viewX + 40, ui.viewY + 30);
+    std::string nm = path.substr(path.find_last_of("/\\") + 1); const size_t dot = nm.rfind('.'); if (dot != std::string::npos && dot > 0) nm.resize(dot);
+    for (auto& ch : nm) ch = (char)std::toupper((unsigned char)ch); if (n) ui.status("ADDED THE GROUP " + nm + " (" + nMods(n) + ", SELECTED: DRAG A TITLE TO MOVE THEM)", 4); };
+  ui.onSaveGroup = [&](const std::vector<int>& ids) {
+    int x0, y0; const Json g = groupData(ids, x0, y0); if (g.t != Json::OBJ) { ui.status("NOTHING TO SAVE (OUTPUT STAYS WITH ITS SESSION)", 3); return; }
+    ui.askName("NAME THIS GROUP", [&, g](const std::string& n) { std::string fn; for (char ch : n) fn += (ch == '/' || ch == '\\' || ch == ':') ? '-' : (char)std::tolower((unsigned char)ch);
+      while (!fn.empty() && fn.back() == ' ') fn.pop_back(); if (fn.empty()) fn = "group";
+      SDL_CreateDirectory(groupsDir.c_str()); std::string path = groupsDir + fn + ".tmgroup"; for (int k = 2; !readFile(path).empty(); k++) path = groupsDir + fn + " " + std::to_string(k) + ".tmgroup";
+      Json f = Json::object(); f.set("timbient", Json::string("group")); f.set("data", g); Json pack = soundPack(g); if (!pack.o.empty()) f.set("audio", pack);
+      std::string shown = path.substr(path.find_last_of("/\\") + 1); shown.resize(shown.size() - 8); for (auto& ch : shown) ch = (char)std::toupper((unsigned char)ch);
+      ui.status(writeFile(path, f.dump()) ? "SAVED THE GROUP " + shown + ": IT'S IN ADD > GROUPS" : std::string("COULD NOT SAVE THE GROUP"), 5); }); };
+  ui.onGroups = [&](int x, int y) {   // the saved groups, A to Z; then a file from anywhere, and the folder itself
+    std::vector<std::string> names; SDL_EnumerateDirectory(groupsDir.c_str(), [](void* ud, const char*, const char* name) -> SDL_EnumerationResult {
+      const std::string n = name; if (n.size() > 8 && n.substr(n.size() - 8) == ".tmgroup") ((std::vector<std::string>*)ud)->push_back(n.substr(0, n.size() - 8)); return SDL_ENUM_CONTINUE; }, &names);
+    std::sort(names.begin(), names.end());
+    Dropdown q; q.x = x; q.y = y; q.title = 0; q.items = {names.empty() ? "NO GROUPS SAVED YET (RIGHT-CLICK MODULES: SAVE AS A GROUP)" : "GROUPS"};
+    for (auto& n : names) { std::string s2 = n; for (auto& ch : s2) ch = (char)std::toupper((unsigned char)ch); q.items.push_back(s2); }
+    const int nn = (int)names.size(); q.items.push_back("OPEN A GROUP FILE..."); q.items.push_back("SHOW THE GROUPS FOLDER");
+    q.pick = [&, names, nn](int i) { if (i >= 1 && i <= nn) { addGroupFile(groupsDir + names[i - 1] + ".tmgroup"); return; }
+      if (i == nn + 1) { SDL_ShowOpenFileDialog(onGroupDialog, nullptr, win, GROUP_FILTER, 1, groupsDir.c_str(), false); return; }
+      if (i == nn + 2) { SDL_CreateDirectory(groupsDir.c_str()); SDL_OpenURL(fileUrl(groupsDir).c_str()); ui.status("OPENING THE GROUPS FOLDER"); } };
+    ui.openDropdown(q); };
+  ui.onEditExport = [&](const std::string& name, const std::vector<float>& d, const std::vector<float>& r, float sr) {
+    AudioBuf b; b.sr = sr; b.d = d; b.r = r; const std::string tmp = store.dir + "export-" + std::to_string(SDL_GetTicks()) + ".wav";
+    if (!writeWavMono16(tmp, b)) { ui.status("COULD NOT EXPORT THE SOUND", 4); return; }
+    exportWav(tmp, name.empty() ? "edited" : name, true); };
   // ---- BLEND TO: the next session loads into the other engine, then fades in as this one fades out (equal loudness) ----
   // The session being left keeps playing in its own engine (the new one plays it inside itself), and its screen is set aside,
   // so CANCEL can fade back to it just as it was. The new one's tempo glides from the old one's to its own over the blend
@@ -542,7 +617,7 @@ int main(int argc, char** argv) {
   // ---- SETTINGS menu: key, scale, shared tempo, audio buffer, theme ----
   std::function<void(int)> openSettings = [&](int x0) {
     Dropdown d; d.x = x0; d.y = 11;
-    char bpm[32]; std::snprintf(bpm, 32, "BPM  %d", (int)std::lround((*curEng).tempo.bpm.load()));
+    const std::string bpm = "BPM  " + bpmText((*curEng).tempo.bpm.load());
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / (*curEng).sr);
     d.items = {std::string("KEY  ") + KEY_NAMES[(*curEng).key.root.load()], std::string("SCALE  ") + scales()[(*curEng).key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround((*curEng).sr / 100) / 10) + "." + std::to_string((int)std::lround((*curEng).sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS", "MIDI", "SEND FEEDBACK"};
     d.title = -1;
@@ -683,6 +758,8 @@ int main(int argc, char** argv) {
             int i = -1; for (int j = 0; j < 36; j++) if (qwMap[j] && qwMap[j] == ev.key.key) i = j;
             if (i >= 0) { if (!ev.key.repeat) ui.qwertyPlay(i); break; } }
           if ((ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) && !ui.ask && ui.unplugSelected()) break;   // a picked cable
+          if ((ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) && !ui.ask && !ui.br.open && !ui.ed.open && !ui.picked.empty()) { ui.deletePicked(); break; }   // the selected modules (asks first)
+          if (ev.key.key == SDLK_ESCAPE && !ui.picked.empty() && !ui.br.open && !ui.ed.open && !ui.learning()) { ui.picked.clear(); ui.status("NOTHING SELECTED", 1); break; }
           if (!ui.ask && !ui.br.open && !ui.ed.open) {   // the Tracker last touched: arrows move its cursor, Delete empties the step
             const int tk = ev.key.key == SDLK_UP ? 1 : ev.key.key == SDLK_DOWN ? 2 : ev.key.key == SDLK_LEFT ? 3 : ev.key.key == SDLK_RIGHT ? 4 : (ev.key.key == SDLK_DELETE || ev.key.key == SDLK_BACKSPACE) ? 5 : 0;
             if (tk && ui.trackerKey(tk)) break; }
@@ -697,6 +774,14 @@ int main(int argc, char** argv) {
           if (ev.key.key == SDLK_ESCAPE && ui.isFullscreen) ui.wantFullscreen = false;
           if (ev.key.key == SDLK_S && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) {   // Cmd/Ctrl+S saves to the session's file (Shift: SAVE AS)
             if (curFile.empty() || (ev.key.mod & SDL_KMOD_SHIFT)) saveAs(); else if (writeFile(curFile, sessionFile(serializePatch(ui)))) { savedNow(); ui.status("SAVED " + fileName(curFile), 4); } else ui.status("COULD NOT SAVE THE FILE", 4); break; }
+          { const bool cmd = ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL); const bool free = !ui.ask && !ui.br.open && !ui.ed.open;
+            if (cmd && free && ev.key.key == SDLK_C) { const auto ids = ui.pickedOrTouched(); if (!ids.empty()) ui.onCopy(ids); else ui.status("SELECT SOME MODULES TO COPY (SHIFT-DRAG A BOX ROUND THEM)", 3); break; }
+            if (cmd && free && ev.key.key == SDLK_V) { ui.onPaste(); break; }
+            if (cmd && free && ev.key.key == SDLK_A) { ui.pickAll(); break; }
+            if (cmd && free && ev.key.key == SDLK_D && ui.picked.size() > 1) { ui.onDuplicateMany(ui.picked); break; }
+            if (cmd && free && ev.key.key == SDLK_O) { if (!blendBusy(true)) SDL_ShowOpenFileDialog(onOpenDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); break; }   // Cmd/Ctrl+O: OPEN
+            if (cmd && free && ev.key.key == SDLK_B) {   // Cmd/Ctrl+B: BLEND TO (while a blend goes on: pause it, or let it carry on)
+              if (curEng->blending() && blendClearT < 0 && ui.blendAt >= 0) ui.onBlendPause(); else if (!blendBusy(true)) SDL_ShowOpenFileDialog(onBlendDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); break; } }
           if (ev.key.key == SDLK_D && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) { if (UiMod* u = ui.byId(ui.lastTouched)) if (!u->m->def->fixed) ui.onDuplicate(u); break; }   // Cmd/Ctrl+D: duplicate
           if (ui.ed.open && ((ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) || (ev.key.key == SDLK_Y && (ev.key.mod & SDL_KMOD_CTRL)))) {   // the editor open: its own undo
             ui.editorUndo(ev.key.key == SDLK_Y || (ev.key.mod & SDL_KMOD_SHIFT) ? 1 : -1); break; }
@@ -709,7 +794,7 @@ int main(int argc, char** argv) {
           break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:   // right click, or Ctrl-click (a Mac trackpad): the module's menu
           if (ev.button.button == SDL_BUTTON_RIGHT || (ev.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & SDL_KMOD_CTRL))) { ui.contextAt(ev.button.x * dens / scale, ev.button.y * dens / scale); ctxClick = true; break; }
-          if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerDown(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
+          if (ev.button.button == SDL_BUTTON_LEFT) { ui.shiftHeld = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0; ui.pointerDown(ev.button.x * dens / scale, ev.button.y * dens / scale); } break;
         case SDL_EVENT_MOUSE_MOTION: ui.pointerMove(ev.motion.x * dens / scale, ev.motion.y * dens / scale); break;
         case SDL_EVENT_MOUSE_BUTTON_UP: if (ctxClick) { ctxClick = false; break; } if (ev.button.button == SDL_BUTTON_LEFT) ui.pointerUp(ev.button.x * dens / scale, ev.button.y * dens / scale); break;
         case SDL_EVENT_MOUSE_WHEEL:   // with Ctrl or Cmd held: zoom. Otherwise: move around the patch
@@ -742,6 +827,14 @@ int main(int argc, char** argv) {
           if (!ok) { std::ifstream a(r.recFrom, std::ios::binary); std::ofstream b(to, std::ios::binary); b << a.rdbuf(); ok = a.good() && b.good(); b.close(); if (ok) std::remove(r.recFrom.c_str()); }   // another drive: copied across
           std::string shown = to.substr(to.find_last_of("/\\") + 1); for (auto& ch : shown) ch = (char)std::toupper((unsigned char)ch);
           ui.status(ok ? "SAVED " + shown : "COULDN'T SAVE THERE: KEPT " + nm + " IN MUSIC / TIMBIENT MODULES", 6); continue; }
+        if (r.exporting) {   // EXPORT WAV: copied where it was asked to go
+          if (r.path.empty()) { if (r.temp) std::remove(r.recFrom.c_str()); continue; }
+          std::string to = r.path; if (to.size() < 4 || (to.substr(to.size() - 4) != ".wav" && to.substr(to.size() - 4) != ".WAV")) to += ".wav";
+          const bool ok = SDL_CopyFile(r.recFrom.c_str(), to.c_str()); if (r.temp) std::remove(r.recFrom.c_str());
+          const size_t sl = to.find_last_of("/\\"); if (ok && sl != std::string::npos) { settings.set("exportDir", Json::string(to.substr(0, sl + 1))); saveSettings(); }
+          std::string shown = to.substr(sl == std::string::npos ? 0 : sl + 1); for (auto& ch : shown) ch = (char)std::toupper((unsigned char)ch);
+          ui.status(ok ? "EXPORTED " + shown : std::string("COULD NOT EXPORT THERE"), 5); continue; }
+        if (r.target == -3) { addGroupFile(r.path); continue; }   // a group file
         if (r.folder && r.target == -1) {   // the old in-app sessions, each as its own .tmbnt in this folder
           int n = 0; for (auto& ss : store.list) { std::string nm; for (char ch : ss.name) nm += (std::isalnum((unsigned char)ch) || ch == ' ' || ch == '-' || ch == '_') ? ch : '_';
             if (nm.empty()) nm = "SESSION"; std::string path = r.path + "/" + nm + ".tmbnt"; for (int k = 2; !readFile(path).empty(); k++) path = r.path + "/" + nm + " " + std::to_string(k) + ".tmbnt";
@@ -759,9 +852,7 @@ int main(int argc, char** argv) {
           const int secs = (int)std::lround(b->dur()); giveSound(u, b, true, slot, nm);
           ui.status("LOADED " + std::to_string(secs) + "S" + (u->m->def->type == "sample" && u->m->p[1].load() >= 2 ? " INTO PLACE " + std::to_string(slot + 1) + (rn >= 0 ? ", ROOT " + noteName(rn) : "") : "")); continue; }
         if (r.open) { Json f; if (!Json::parse(readFile(r.path), f)) { ui.status("THAT FILE COULD NOT BE READ", 5); continue; }
-          if (const Json* pack = f.get("audio")) if (pack->t == Json::OBJ) for (auto& kv : pack->o) {   // a web export with its sounds packed in
-            const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
-            AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000), (int)kv.second.num("ch", 1)); if (b) { writeWavMono16(fn, *b); delete b; } }
+          unpackSounds(f);   // its sounds, packed in
           const Json* data = patchIn(f); if (!data) { ui.status("THAT IS NOT A TIMBIENT SESSION", 5); continue; }
           loadData(*data, fileName(r.path)); curFile = r.path; neverSaved = false;
           if (f.str("timbient") == "sessions") ui.status("THAT FILE HOLDS " + std::to_string(f.get("sessions")->a.size()) + " SESSIONS: THIS IS THE FIRST", 6); }

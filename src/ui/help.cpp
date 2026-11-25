@@ -147,7 +147,7 @@ static const std::map<std::string, std::string> PARAMS = {
   {"sample.recmode", "Rec Mode|REPLACE makes a new take; OVERDUB lays what comes in over the sound, round and round."},
   {"sample.keep", "Keep|In OVERDUB, how much of what was there stays each time round: lower lets the old layers fade away."},
   {"sample.mon", "Monitor|Whether you hear IN through it: OFF never, REC ONLY while it records, ALWAYS all the time."},
-  {"sample.savetake", "Save Take|Saves the sound as a WAV file in Music > Timbient Modules."},
+  {"export", "Export WAV|Saves the sound as a WAV file, wherever you choose (EXPORT WAV in the sound editor saves it with your edits, kept or not)."},
   // GRAIN LOOPER
   {"looper.src", "Source|LIVE takes grains from the last LENGTH seconds coming in; HELD from a sound it caught or loaded."},
   {"looper.catch", "Catch|Grabs the last LENGTH seconds coming in, and holds them (SOURCE becomes HELD)."},
@@ -696,6 +696,7 @@ static const std::map<std::string, std::string> OTHER = {
   {"BLEND PAUSE", "Pause|Holds the blend where it is, both sessions playing. GO carries on from there."},
   {"BLEND NOW", "Blend Now|Finishes the blend in a few seconds."},
   {"BLEND CANCEL", "Cancel|Back to the session you were blending from, fading the new one out again."},
+  {"GROUPS", "Groups|Modules you saved together (right-click one, or a selection: SAVE AS A GROUP). Pick one to add it, wired up as it was. Groups are files that keep their sounds, so you can share them too."},
   {"WINDOW", "Window|Back to a window."},
   {"ZOOM", "Zoom|Smaller or bigger (Ctrl or Cmd and the mouse wheel too)."},
   {"AUDIO", "Audio|How much of the time the sound has, the modules are using. Near 100% it may crackle: a bigger AUDIO BUFFER helps."},

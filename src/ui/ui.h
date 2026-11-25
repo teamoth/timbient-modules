@@ -140,6 +140,19 @@ public:
   // a right click (or Ctrl-click): a module's own menu (DUPLICATE)
   void contextAt(float x, float y);
   std::function<void(UiMod*)> onDuplicate;   // the app copies it (settings, contents, sounds; no cables)
+  // SELECTING several modules: Shift-drag on empty space draws a box round them, Shift-click a title adds one or takes it away.
+  // Dragging any of their titles moves them all; Delete, Cmd/Ctrl+D (duplicate), C (copy) and the right-click menu work on them
+  // together. A tap on empty space lets them go
+  std::vector<int> picked;
+  bool isPicked(int id) const { for (int p : picked) if (p == id) return true; return false; }
+  void pickToggle(int id);
+  void pickAll();
+  std::vector<int> pickedOrTouched() const;   // the selection, or else the module last touched (OUTPUT is never copied or deleted)
+  void deletePicked();                        // asks first
+  std::function<void(const std::vector<int>&)> onDuplicateMany, onCopy, onSaveGroup;   // the app: copies with the cables between them; the clipboard; a group file
+  std::function<void()> onPaste;              // Cmd/Ctrl+V, or PASTE in the right-click menu: the copied modules, at the pointer
+  std::function<void(int, int)> onGroups;     // ADD > GROUPS: the app's list of saved groups
+  float lastPX = 0, lastPY = 0;               // where the pointer last was (canvas pixels): pasting goes there
   int lastTouched = -1;                      // the module last tapped (Ctrl/Cmd + D duplicates it)
   void pointerMove(float x, float y);
   void pointerUp(float x, float y);
@@ -170,6 +183,7 @@ public:
   // play the sound from a to e (samples), going round if loop (empty: stop)
   std::function<void(const std::vector<float>&, const std::vector<float>&, float, double, double, bool)> onEditPlay;
   std::function<void(int, int, std::vector<float>&&, std::vector<float>&&, float, const std::string&)> onEditCrop;   // KEEP: this becomes the module's sound
+  std::function<void(const std::string&, const std::vector<float>&, const std::vector<float>&, float)> onEditExport;   // EXPORT WAV: the sound as it is in the editor, to a file
   void openBrowser(int targetId, int slot, const std::string& dir);   // slot -1: the next empty place (KIT / MULTI)
   void browseTo(const std::string& dir);
   void browserScroll(float rows);
@@ -273,8 +287,9 @@ private:
   void trackerWatch(UiMod& u);
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
-    JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{}; } drag;
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE, D_PADMOVE, D_NOTESEL };
+    JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{};
+    struct At { int id, x, y; }; std::vector<At> group; } drag;   // group: the selection being moved, where each started
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE, D_PADMOVE, D_NOTESEL, D_BOX };
   UiMod* tapM = nullptr; int tapK = -1; std::vector<double> tapTimes;   // TAP on speed rows
   float wanderTapT = -9; int wanderTapK = -1; UiMod* wanderTapM = nullptr;   // the Tracker's column numbers: a second tap soon after sets RANDOM NOTE back to 0
   // cables as curves you can touch

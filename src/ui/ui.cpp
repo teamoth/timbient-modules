@@ -18,7 +18,7 @@ static const int HEAD = 8, ROW = 7, FOOT = 9, TOP = 10;
 static int catCol(Cat c) { switch (c) { case Cat::Trig: return 24; case Cat::Voice: return 7; case Cat::Proc: return 17; case Cat::Mod: return 11; case Cat::Misc: return 54; default: return 9; } }
 // TRACKER, NOTE LOOPER: moving BPM while TEMPO is SHARED makes it OWN, starting from the session's tempo
 static void takeOwnTempo(UiMod* u, int k, Engine& eng) { const ModuleDef* d = u->m->def; if (d->type == "clock" || d->params[k].key != "bpm") return; const int si = d->paramIndex("sync");
-  if (si < 0 || u->m->p[si].load() < 0.5f || u->m->clockedIn.load()) return; u->m->p[si].store(0); u->m->p[k].store(std::round(eng.tempo.bpm.load())); }
+  if (si < 0 || u->m->p[si].load() < 0.5f || u->m->clockedIn.load()) return; u->m->p[si].store(0); u->m->p[k].store(halfBpm(eng.tempo.bpm.load())); }
 static void clockToTempo(UiMod* u, int k, Engine& eng);
 // TAP: the speed controls follow taps in rhythm (three or more). What a tap gap means for each:
 // 0 not tappable, 1 BPM, 2 steps a second (shown as BPM), 3 seconds, 4 Hz
@@ -41,9 +41,9 @@ bool Ui::tapRow(UiMod* u, int k) {
   if (nn < 2 || med < 0.05) return false;
   const double gap = sum / nn; float v = 0;
   switch (kind) { case 1: v = (float)(60 / gap); break; case 2: v = (float)(1 / gap); break; case 3: v = (float)gap; break; default: v = (float)(1 / gap); break; }
-  v = clampf(v, q.min, q.max); if (kind == 1) v = std::round(v);
+  v = clampf(v, q.min, q.max); if (kind == 1) v = halfBpm(v); else if (kind == 2) v = halfBpm(v * 60) / 60;   // tempos in halves
   takeOwnTempo(u, k, *eng); u->m->p[k].store(v); clockToTempo(u, k, *eng);
-  char b[48]; if (kind <= 2) std::snprintf(b, 48, "TAP %d BPM", (int)std::lround(kind == 1 ? v : v * 60)); else if (kind == 3) std::snprintf(b, 48, "TAP %.2f S", v); else std::snprintf(b, 48, "TAP %.2f HZ", v);
+  char b[48]; if (kind <= 2) std::snprintf(b, 48, "TAP %s BPM", bpmText(kind == 1 ? v : v * 60).c_str()); else if (kind == 3) std::snprintf(b, 48, "TAP %.2f S", v); else std::snprintf(b, 48, "TAP %.2f HZ", v);
   status(d->name + "  " + q.label + "  " + b, 1.5f); changed(); return true;
 }
 static bool euclidHit(int i, int steps, int hits, int rot) { if (steps < 1 || hits < 1) return false; if (hits >= steps) return true; const int k = ((i - rot) % steps + steps) % steps; return (k * hits) % steps < hits; }   // as EUCLID DRUMS plays it
@@ -77,8 +77,17 @@ void Ui::remove(UiMod* u) {
   cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const UiCable& c) { return c.from == id || c.to == id; }), cables.end());
   eng->remove(id);   // the engine frees the module once it has stopped using it
   mods.erase(std::remove_if(mods.begin(), mods.end(), [&](const std::unique_ptr<UiMod>& p) { return p.get() == u; }), mods.end());
-  drag = Drag();
+  drag = Drag(); picked.erase(std::remove(picked.begin(), picked.end(), id), picked.end());
 }
+// ---- the selection ----
+void Ui::pickToggle(int id) { if (isPicked(id)) picked.erase(std::remove(picked.begin(), picked.end(), id), picked.end()); else picked.push_back(id);
+  status(picked.empty() ? std::string("NOTHING SELECTED") : std::to_string(picked.size()) + " SELECTED: DRAG A TITLE TO MOVE THEM, RIGHT-CLICK FOR MORE", 2.5f); }
+void Ui::pickAll() { picked.clear(); for (auto& u : mods) picked.push_back(u->m->id); status(std::to_string(picked.size()) + " SELECTED", 1.5f); }
+std::vector<int> Ui::pickedOrTouched() const { if (!picked.empty()) return picked; if (byId(lastTouched) && lastTouched != PAD_ID) return {lastTouched}; return {}; }
+void Ui::deletePicked() {
+  std::vector<int> ids; for (int id : picked) if (const UiMod* u = byId(id)) if (!u->m->def->fixed) ids.push_back(id); if (ids.empty()) return;
+  Dropdown q; q.items = {"DELETE " + std::to_string(ids.size()) + (ids.size() > 1 ? " MODULES?" : " MODULE?"), "YES, DELETE", "NO, KEEP THEM"}; q.title = 0; q.danger = 1; q.x = (int)lastPX + 4; q.y = (int)lastPY + 4;
+  q.pick = [this, ids](int i) { if (i != 1) return; for (int id : ids) if (UiMod* u = byId(id)) removeGently(u); picked.clear(); status("REMOVED " + std::to_string(ids.size()) + (ids.size() > 1 ? " MODULES" : " MODULE")); changed(); }; openDropdown(q); }
 bool Ui::connect(UiMod* a, int fp, UiMod* b, int tp) {
   if (!a || !b || a == b || fp < 0 || tp < 0) return false;
   if (tp == SWITCH_PORT && (a->m->def->outs[fp].type != PType::Trig || !hasSwitch(*b))) return false;
@@ -110,19 +119,19 @@ void Ui::removeGently(UiMod* u) {
   cables.erase(std::remove_if(cables.begin(), cables.end(), [&](const UiCable& c) { return c.from == id || c.to == id; }), cables.end());
   eng->retire(id);
   mods.erase(std::remove_if(mods.begin(), mods.end(), [&](const std::unique_ptr<UiMod>& p) { return p.get() == u; }), mods.end());
-  drag = Drag(); selOn = false;
+  drag = Drag(); selOn = false; picked.erase(std::remove(picked.begin(), picked.end(), id), picked.end());
 }
 void Ui::set(UiMod* m, const std::string& k, float v) { const int i = m->m->def->paramIndex(k); if (i >= 0) m->m->p[i].store(v); }
-void Ui::clearPatch() { for (auto& u : mods) eng->remove(u->m->id); mods.clear(); cables.clear(); drag = Drag(); dd.reset(); menuOpen = false;
+void Ui::clearPatch() { for (auto& u : mods) eng->remove(u->m->id); mods.clear(); cables.clear(); drag = Drag(); picked.clear(); dd.reset(); menuOpen = false;
   midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [](const MidiMap& m) { return !m.global; }), midiMaps.end()); for (auto& m : midiMaps) { m.mod = 0; m.engaged = false; m.fb = -1; } cancelLearn(); }   // (EVERY SESSION mappings stay)
 
 void Ui::stashPatch(Stash& s) {
-  s.mods = std::move(mods); s.cables = std::move(cables); mods.clear(); cables.clear(); s.viewX = viewX; s.viewY = viewY; s.nextId = nextId; s.eng = eng; s.held = true;
+  s.mods = std::move(mods); s.cables = std::move(cables); mods.clear(); cables.clear(); picked.clear(); s.viewX = viewX; s.viewY = viewY; s.nextId = nextId; s.eng = eng; s.held = true;
   s.maps.clear(); for (auto& m : midiMaps) if (!m.global) s.maps.push_back(m);
   midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [](const MidiMap& m) { return !m.global; }), midiMaps.end()); for (auto& m : midiMaps) { m.mod = 0; m.engaged = false; m.fb = -1; }
   drag = Drag(); dd.reset(); menuOpen = false; cancelLearn(); }
 void Ui::unstashPatch(Stash& s) {
-  if (!s.held) return; mods = std::move(s.mods); cables = std::move(s.cables); s.mods.clear(); s.cables.clear(); viewX = s.viewX; viewY = s.viewY; nextId = s.nextId; if (s.eng) eng = s.eng;
+  if (!s.held) return; picked.clear(); mods = std::move(s.mods); cables = std::move(s.cables); s.mods.clear(); s.cables.clear(); viewX = s.viewX; viewY = s.viewY; nextId = s.nextId; if (s.eng) eng = s.eng;
   for (auto& m : midiMaps) { m.mod = 0; m.engaged = false; m.fb = -1; } for (auto& m : s.maps) midiMaps.push_back(m); s.maps.clear(); s.held = false;
   drag = Drag(); dd.reset(); menuOpen = false; cancelLearn(); }
 
@@ -160,7 +169,7 @@ static const Layout& layoutOf(const ModuleDef* d) {
   auto put = [&](int j, int part) { if (j >= 0 && j < n && !used[j]) { used[j] = 1; L.order.push_back(j); L.part.push_back(part); } };
   auto key = [&](const char* k) { return d->paramIndex(k); };
   static const std::map<std::string, std::vector<std::string>> SPEC = {   // modules laid out by hand ("|": a line)
-    {"sample", {"poly", "rec", "|", "reclen", "recmode", "keep", "mon", "savetake", "|", "load", "edit", "kind", "slices", "mode", "notes", "every", "start", "len", "pitch", "rev", "atk", "rel", "fade", "drift", "cut", "res", "vsens", "|", "chan", "|", "pan", "width", "level"}},
+    {"sample", {"poly", "rec", "|", "reclen", "recmode", "keep", "mon", "|", "load", "edit", "export", "kind", "slices", "mode", "notes", "every", "start", "len", "pitch", "rev", "atk", "rel", "fade", "drift", "cut", "res", "vsens", "|", "chan", "|", "pan", "width", "level"}},
     {"nloop", {"rec", "thru", "sync", "bpm", "|", "undo", "rrhythm", "rorder", "urand", "clear", "|", "start", "lenb", "dir", "trans", "quant", "drift", "vel", "chance"}},
   };
   auto sp = SPEC.find(d->type);
@@ -174,8 +183,9 @@ static const Layout& layoutOf(const ModuleDef* d) {
     if (auto m = MODES.find(d->type); m != MODES.end()) for (auto& k : m->second) put(key(k.c_str()), 0);
     if (keyed) { put(d->keyIdx, 0); put(d->scaleIdx, 0); }
     const int ld = key("load"), ed = key("edit");   // the buttons, together: EDIT SOUND under LOAD FILE, the ones that wipe things last
-    for (int j = 0; j < n; j++) if (d->params[j].act && d->params[j].key != "clear" && d->params[j].key != "del" && j != ed) { put(j, 1); if (j == ld) put(ed, 1); }
-    put(ed, 1); put(key("del"), 1); put(key("clear"), 1);
+    const int ex = key("export");   // (EXPORT WAV after them)
+    for (int j = 0; j < n; j++) if (d->params[j].act && d->params[j].key != "clear" && d->params[j].key != "del" && j != ed && j != ex) { put(j, 1); if (j == ld) { put(ed, 1); put(ex, 1); } }
+    put(ed, 1); put(ex, 1); put(key("del"), 1); put(key("clear"), 1);
     std::set<int> tail = {key("chan"), key("pan"), key("width"), key("level"), d->lpCut, d->lpRes}; const int gl = std::max(key("glide"), key("pglide"));
     if (d->type != "tone") tail.insert(gl);   // TONE's own GLIDE stays where it is (after WAVE)
     const int pitch = key("pitch");
@@ -202,7 +212,7 @@ static bool hiddenRow(const UiMod& u, int j, const std::vector<UiCable>* cables 
   if (q.only == "own") { const int si = d->paramIndex("sync"); if (si >= 0 && d->params[si].tog && u.m->p[si].load() > 0.5f) return true; }   // BPM: not while it follows the session's tempo
   if (d->type == "sample") { const int kind = (int)P("kind"); const bool once = P("mode") > 0.5f;   // what doesn't apply to this kind of sound or way of playing
     if ((q.only == "slices" && kind != 1) || (q.only == "one" && kind != 0) || (q.only == "region" && kind == 1) || (q.only == "once" && !once) || (q.only == "loop" && once)) return true;
-    static const std::set<std::string> REC = {"rec", "reclen", "recmode", "keep", "mon", "savetake"};   // recording: once something comes into IN (or REC), or while it records
+    static const std::set<std::string> REC = {"rec", "reclen", "recmode", "keep", "mon"};   // recording: once something comes into IN (or REC), or while it records
     if (REC.count(q.key) && cables && P("rec") < 0.5f && u.m->disp[40].load() < 0.5f) { bool in = false; for (auto& c : *cables) if (c.to == u.m->id && (c.toPort == 2 || c.toPort == 3)) in = true; if (!in) return true; } }
   return false; }
 static std::vector<int> rowOrder(const UiMod& u) { std::vector<int> o; for (int j : layoutOf(u.m->def).order) if (!hiddenRow(u, j, u.cables)) o.push_back(j); return o; }
@@ -789,7 +799,11 @@ void Ui::draw(Canvas& c, float dt) {
       if (cb.pulses.size() > 24) cb.pulses.erase(cb.pulses.begin(), cb.pulses.end() - 24); }
   }
   flowT += dt * 7.f;
-  for (auto& u : mods) drawModule(c, *u, dt);
+  for (auto& u : mods) { drawModule(c, *u, dt);
+    if (!picked.empty() && isPicked(u->m->id)) { const Geom g = geom(*u); const int x = u->x - viewX, y = u->y - viewY; c.frame(x - 3, y - 3, g.w + 6, g.h + 6, 12); c.frame(x - 2, y - 2, g.w + 4, g.h + 4, 12); } }   // selected: a bright line round it
+  if (drag.kind == D_BOX) {   // the box being drawn (dotted)
+    const int x0 = std::min(drag.vx0, drag.wx) - viewX, x1 = std::max(drag.vx0, drag.wx) - viewX, y0 = std::min(drag.vy0, drag.wy) - viewY, y1 = std::max(drag.vy0, drag.wy) - viewY;
+    for (int x = x0; x <= x1; x += 2) { c.px(x, y0, 4); c.px(x, y1, 4); } for (int y = y0; y <= y1; y += 2) { c.px(x0, y, 4); c.px(x1, y, 4); } }
   if (selOn) { selT = 1;   // a picked cable: its UNPLUG button, until you tap anywhere else
     bool alive = false; for (auto& cb : cables) if (sameCable(cb, sel)) alive = true; if (!alive) selOn = false; }
   selT = std::max(0.f, selT - dt);
@@ -866,11 +880,12 @@ void Ui::draw(Canvas& c, float dt) {
     std::vector<std::vector<const ModuleDef*>> colsD; std::vector<int> ws; int tot = 4;
     for (auto& cat : MENU) { std::vector<const ModuleDef*> v; for (auto& t : cat.second) if (const ModuleDef* d = findDef(t)) v.push_back(d);
       std::sort(v.begin(), v.end(), [](const ModuleDef* a, const ModuleDef* b) { return a->name < b->name; }); int w = Canvas::tw(cat.first);
-      for (auto* d : v) w = std::max(w, Canvas::tw(d->name) + 6); ws.push_back(w + 8); tot += w + 8; colsD.push_back(v); }
+      for (auto* d : v) w = std::max(w, Canvas::tw(d->name) + 6); if (&cat == &MENU.back()) w = std::max(w, Canvas::tw("GROUPS...") + 6); ws.push_back(w + 8); tot += w + 8; colsD.push_back(v); }
     size_t most = 0; for (auto& v : colsD) most = std::max(most, v.size()); const int mh = (int)most * 8 + 16;
     c.rect(1, TOP + 1, tot, mh, MENU_BG); c.frame(1, TOP + 1, tot, mh, 21);
     int x = 4; for (size_t k = 0; k < colsD.size(); k++) { c.text(MENU[k].first, x, TOP + 4, 18);
       for (size_t r = 0; r < colsD[k].size(); r++) { const ModuleDef* d = colsD[k][r]; const int y = TOP + 13 + (int)r * 8; c.rect(x, y + 1, 3, 3, catCol(d->cat)); c.text(d->name, x + 6, y, 9); menuItems.push_back({d->type, x, y, ws[k] - 6}); }
+      if (k + 1 == colsD.size() && onGroups) { const int y = TOP + 13 + (int)colsD[k].size() * 8; c.text("GROUPS...", x + 6, y, 9); menuItems.push_back({"#groups", x, y, ws[k] - 6}); }   // saved groups of modules
       x += ws[k]; }
   }
   // a dropdown list
@@ -889,9 +904,9 @@ void Ui::draw(Canvas& c, float dt) {
   }
   // the tempo panel
   if (tp.open) {
-    tp.x = std::max(2, std::min(tp.x, c.W - TPW - 2)); tp.y = std::max(TOP + 1, std::min(tp.y, c.H - TPH - 2)); const int x = tp.x, y = tp.y, bpm = (int)std::lround(eng->tempo.bpm.load());
+    tp.x = std::max(2, std::min(tp.x, c.W - TPW - 2)); tp.y = std::max(TOP + 1, std::min(tp.y, c.H - TPH - 2)); const int x = tp.x, y = tp.y; const float bpm = halfBpm(eng->tempo.bpm.load());
     c.rect(x + 2, y + 2, TPW, TPH, 26); c.rect(x, y, TPW, TPH, MENU_BG); c.frame(x, y, TPW, TPH, 21);
-    c.text("SHARED TEMPO", x + 4, y + 3, 18); const std::string v = std::to_string(bpm) + " BPM"; c.text(v, x + TPW - 4 - Canvas::tw(v), y + 3, 4);
+    c.text("SHARED TEMPO", x + 4, y + 3, 18); const std::string v = bpmText(bpm) + " BPM"; c.text(v, x + TPW - 4 - Canvas::tw(v), y + 3, 4);
     auto btn = [&](int bx, int by, int w, const char* l) { c.frame(bx, by, w, 7, 18); c.text(l, bx + (w - Canvas::tw(l)) / 2, by + 1, 9); };
     btn(x + 4, y + 11, 9, "-"); btn(x + TPW - 13, y + 11, 9, "+");
     const int tx = x + 17, tw = TPW - 34, fx = tx + (int)std::lround((bpm - 20) / 220.f * (tw - 1));
@@ -929,7 +944,7 @@ std::string Ui::helpAt(float sx, float sy) {
     const ModuleDef* d = u->m->def; std::string body = helpOther("MODRING"); body = body.substr(body.find('|') + 1);
     for (auto& cb : cables) if (cb.to == u->m->id && cb.toParam == j) if (UiMod* a = byId(cb.from)) body += " NOW: MOVED BY " + a->m->def->name + " (DRAG THE CABLE'S END AWAY TO UNPLUG IT).";
     return "MODULATE " + d->params[j].label + "|" + body; };
-  if (menuOpen) { for (auto& it : menuItems) if (sx >= it.x - 1 && sx < it.x + it.w && sy >= it.y - 1 && sy < it.y + 7) return helpModule(it.type);   // the ADD menu: what each module is
+  if (menuOpen) { for (auto& it : menuItems) if (sx >= it.x - 1 && sx < it.x + it.w && sy >= it.y - 1 && sy < it.y + 7) return it.type == "#groups" ? helpOther("GROUPS") : helpModule(it.type);   // the ADD menu: what each module is
     if (sy >= TOP) return {}; }
   if (sy < TOP) { for (auto& b : barHits) if (!b.label.empty() && sx >= b.x0 - 2 && sx <= b.x1 + 2) return helpOther(b.label);
     return sx >= infoX0 && sx <= infoX1 && statusT <= 0 ? helpOther("AUDIO") : std::string(); }
@@ -1133,12 +1148,12 @@ void Ui::keysPress(UiMod& u, int x, int y) {
   eng->trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;
 }
 
-void Ui::setBpm(float v) { const float b = std::round(clampf(v, 20, 240)); eng->tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); changed(); }
+void Ui::setBpm(float v) { const float b = halfBpm(clampf(v, 20, 240)); eng->tempo.bpm.store(b); status("SHARED TEMPO " + bpmText(b) + " BPM", 1.5f); changed(); }   // in halves
 bool Ui::tempoDown(float sx, float sy) {   // true if the tap was inside the panel
   const int x = tp.x, y = tp.y; if (sx < x || sx >= x + TPW || sy < y || sy >= y + TPH) return false;
   const float bpm = eng->tempo.bpm.load();
   if (sy >= y + 10 && sy < y + 19) {
-    if (sx < x + 15) setBpm(bpm - 1); else if (sx >= x + TPW - 15) setBpm(bpm + 1);
+    if (sx < x + 15) setBpm(bpm - 0.5f); else if (sx >= x + TPW - 15) setBpm(bpm + 0.5f);   // - and +: half a BPM
     else { drag.kind = D_TEMPO; pointerMove(sx, sy); }
   } else if (sy >= y + 20 && sy < y + 29) {
     if (sx >= x + 4 && sx < x + 25) { taps.erase(std::remove_if(taps.begin(), taps.end(), [&](float t) { return blink - t > 3; }), taps.end()); taps.push_back(blink);
@@ -1155,8 +1170,11 @@ void Ui::contextAt(float sx, float sy) {
     q.pick = [this](int i) { if (i == 0) startLearnBlend(); else if (i == 1) { midiMaps.erase(std::remove_if(midiMaps.begin(), midiMaps.end(), [](const MidiMap& m) { return m.gType == "#app" && m.key == "#blend"; }), midiMaps.end());
       if (onGlobalMaps) onGlobalMaps(); status("MIDI: THE BLEND LET GO", 2); } }; openDropdown(q); return; }
   if (ask || br.open || ed.open || sy < TOP) return;
-  const int wx = (int)sx + viewX, wy = (int)sy + viewY; int lx, ly; UiMod* u = hit(wx, wy, lx, ly); dd.reset(); menuOpen = false;
-  if (!u) return; lastTouched = u->m->id; const int id = u->m->id;
+  const int wx = (int)sx + viewX, wy = (int)sy + viewY; int lx, ly; UiMod* u = hit(wx, wy, lx, ly); dd.reset(); menuOpen = false; lastPX = sx; lastPY = sy;
+  if (!u) {   // empty space: paste what was copied here, or select everything
+    Dropdown q; q.items = {"PASTE HERE", "SELECT ALL"}; if (!picked.empty()) q.items.push_back("SELECT NONE"); q.x = (int)sx + 2; q.y = (int)sy + 2;
+    q.pick = [this](int i) { if (i == 0 && onPaste) onPaste(); else if (i == 1) pickAll(); else if (i == 2) { picked.clear(); status("NOTHING SELECTED", 1); } }; openDropdown(q); return; }
+  lastTouched = u->m->id; const int id = u->m->id;
   // what it offers: MIDI LEARN for the row under the pointer (or, on the title or the foot, for M, B and S), FORGET MIDI if it has one, and DUPLICATE
   std::vector<std::pair<std::string, std::function<void()>>> it; const ModuleDef* d = u->m->def; const Geom g = geom(*u);
   std::vector<std::pair<std::string, std::string>> rows; const int pj = paramAt(u, ly);
@@ -1166,13 +1184,23 @@ void Ui::contextAt(float sx, float sy) {
   for (auto& r : rows) { const std::string key = r.first, lab = r.second;
     it.push_back({"MIDI LEARN: " + lab, [this, id, key] { if (UiMod* m = byId(id)) startLearn(m, key); }});
     if (mapFor(*u, key)) it.push_back({"FORGET MIDI: " + lab, [this, id, key, lab] { if (UiMod* m = byId(id)) { forgetMap(*m, key); status("MIDI: " + lab + " LET GO", 2); } }}); }
-  if (!d->fixed) it.push_back({"DUPLICATE", [this, id] { if (UiMod* m = byId(id)) if (onDuplicate) onDuplicate(m); }});
+  if (isPicked(id) && picked.size() > 1) {   // one of a selection: what can be done to them all
+    const std::string n = std::to_string(picked.size());
+    it.push_back({"DUPLICATE THE " + n + " SELECTED", [this] { if (onDuplicateMany) onDuplicateMany(picked); }});
+    it.push_back({"COPY THE " + n + " SELECTED", [this] { if (onCopy) onCopy(picked); }});
+    it.push_back({"SAVE THE " + n + " SELECTED AS A GROUP...", [this] { if (onSaveGroup) onSaveGroup(picked); }});
+    it.push_back({"DELETE THE " + n + " SELECTED...", [this] { deletePicked(); }}); }
+  else if (!d->fixed) {
+    it.push_back({"DUPLICATE", [this, id] { if (UiMod* m = byId(id)) if (onDuplicate) onDuplicate(m); }});
+    it.push_back({"COPY", [this, id] { if (onCopy) onCopy({id}); }});
+    it.push_back({"SAVE AS A GROUP...", [this, id] { if (onSaveGroup) onSaveGroup({id}); }}); }
   if (it.empty()) return;
   Dropdown q; for (auto& e : it) q.items.push_back(e.first); q.x = (int)sx + 2; q.y = (int)sy + 2;
   q.pick = [it](int i) { if (i >= 0 && i < (int)it.size()) it[i].second(); }; openDropdown(q);
 }
 void Ui::pointerDown(float sx, float sy) {
   hoverT = -1;   // a tap hides the note until the pointer moves on
+  lastPX = sx; lastPY = sy;
   noteWas = noteEdit; noteEdit = 0;   // (NOTES: a press anywhere but in a note's text stops the typing; a press in one starts it again below)
   const int wx = (int)sx + viewX, wy = (int)sy + viewY;
   { int lx0, ly0; if (sy >= TOP && !ask) if (UiMod* hu = hit(wx, wy, lx0, ly0)) lastTouched = hu->m->id; }
@@ -1198,6 +1226,7 @@ void Ui::pointerDown(float sx, float sy) {
     return;
   }
   if (menuOpen) { for (auto& it : menuItems) if (sx >= it.x - 1 && sx < it.x + it.w && sy >= it.y - 1 && sy < it.y + 7) {
+      if (it.type == "#groups") { menuOpen = false; if (onGroups) onGroups(it.x, it.y + 8); return; }
       UiMod* u = add(it.type, viewX + 120 + (int)(std::rand() % 40), viewY + TOP + 20 + (int)(std::rand() % 30)); if (u) status("ADDED " + u->m->def->name); changed(); break; }
     menuOpen = false; return; }
   if (sy < TOP && blendBarX1 > blendBarX0 && sx >= blendBarX0 - 3 && sx <= blendBarX1 + 3) {   // the blend's bar: drag it (the blend goes there, and waits)
@@ -1221,6 +1250,8 @@ void Ui::pointerDown(float sx, float sy) {
   }
   int lx, ly; UiMod* u = hit(wx, wy, lx, ly);
   trFocus = u && u->m->def->type == "tracker" ? u->m->id : 0;   // the arrow keys work on a Tracker once you touch it
+  if (shiftHeld && !u) { drag.kind = D_BOX; drag.vx0 = wx; drag.vy0 = wy; return; }   // Shift-drag on empty space: a box round the modules to select
+  if (shiftHeld && u && ly < HEAD) { pickToggle(u->m->id); return; }                  // Shift-click a title: into the selection, or out of it
   // a cable under the pointer: tap to see it, pull it away to unplug it. Title bars and a module's own controls still win
   if (!u) {   // cables run behind modules, so only where you can see them
     bool onControl = false;
@@ -1237,7 +1268,10 @@ void Ui::pointerDown(float sx, float sy) {
     if (!d->fixed && (outInHead(*u) && !jacksIn ? lx >= g.w - 12 && lx < g.w - 4 : lx >= g.w - 8)) {   // delete, after asking (the x moves left of an OUT on the edge)
       Dropdown q; q.items = {"DELETE " + d->name + "?", "YES, DELETE", "NO, KEEP IT"}; q.title = 0; q.danger = 1; q.x = u->x - viewX + g.w - 40; q.y = u->y - viewY + HEAD;
       q.pick = [this, u](int i) { if (i == 1) { status("REMOVED " + u->m->def->name); removeGently(u); changed(); } }; openDropdown(q); return; }
-    drag.kind = D_MOVE; drag.m = u; drag.ox = wx - u->x; drag.oy = wy - u->y; return; }
+    drag.kind = D_MOVE; drag.m = u; drag.ox = wx - u->x; drag.oy = wy - u->y;
+    if (isPicked(u->m->id) && picked.size() > 1) { for (int id : picked) if (UiMod* p = byId(id)) drag.group.push_back({id, p->x, p->y}); }   // one of the selection: they all go
+    else if (!picked.empty() && !isPicked(u->m->id)) picked.clear();   // another module: the selection lets go
+    return; }
   if (d->type == "notes") {
     if (ly >= g.h - FOOT) { if (lx < 13) { u->fold = !u->fold; noteEdit = 0; changed(); return; }
       if (lx >= g.w - 9 && !u->fold && !viewOnly) { drag.kind = D_NOTESIZE; drag.m = u; drag.vx0 = u->noteW; drag.vy0 = u->noteH; return; } }
@@ -1319,7 +1353,7 @@ void Ui::pointerDown(float sx, float sy) {
         z.pick = [this, u](int i) { if (i == 1) { eng->action(u->m->id, "clear"); u->scroll = 0; status("TRACKER CLEARED"); } }; openDropdown(z); return; }
       if (d->type == "listen" && q.key == "usetempo") {   // the session's tempo to what it hears
         const float bp = u->m->disp[19].load(); if (bp <= 0) { status("NO CLEAR TEMPO HEARD YET (IT NEEDS A FEW SECONDS OF A BEAT)", 3); return; }
-        setBpm(bp); status("TEMPO " + std::to_string((int)std::lround(bp)) + " BPM: CLOCKS AND SEQUENCERS ON SHARED TEMPO FOLLOW IT", 4); changed(); return; }
+        setBpm(bp); status("TEMPO " + bpmText(bp) + " BPM: CLOCKS AND SEQUENCERS ON SHARED TEMPO FOLLOW IT", 4); changed(); return; }
       if (d->type == "listen" && q.key == "use") {   // set the app's key and scale to what it hears
         if (u->m->disp[2].load() <= 0) { status("NOTHING HEARD YET"); return; }
         const int r = (int)u->m->disp[0].load(), sc = (int)u->m->disp[1].load(); eng->key.root.store(r); eng->key.scale.store(sc);
@@ -1345,7 +1379,7 @@ void Ui::pointerDown(float sx, float sy) {
 }
 
 // a CLOCK on SHARED tempo: its BPM is the session's tempo, shown on the top bar
-static void clockToTempo(UiMod* u, int k, Engine& eng) { if (u->m->def->type == "clock" && u->m->def->params[k].key == "bpm" && u->m->p[0].load() > 0.5f) eng.tempo.bpm.store(std::round(u->m->p[k].load())); }
+static void clockToTempo(UiMod* u, int k, Engine& eng) { if (u->m->def->type == "clock" && u->m->def->params[k].key == "bpm" && u->m->p[0].load() > 0.5f) eng.tempo.bpm.store(halfBpm(u->m->p[k].load())); }
 // - and +: one step for settings that move in steps, otherwise about a hundredth of the way along
 void Ui::nudge(UiMod* u, int k, int dir) { u->valK = k; u->valT = 1.2f;   /* - and +: the value shows where the name was, for a moment */
   takeOwnTempo(u, k, *eng);
@@ -1375,13 +1409,17 @@ static bool soundThrough(const ModuleDef* md, int& ii, int& oi) {
 void Ui::pointerMove(float sx, float sy) {
   if (std::fabs(sx - hoverX) + std::fabs(sy - hoverY) > 1.5f) { hoverX = sx; hoverY = sy; hoverT = 0; }   // the pointer moved: the note goes, and the wait starts again
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; drag.wx = wx; drag.wy = wy;
-  if (drag.kind == D_PAN) { viewX = drag.vx0 - (int)(sx - drag.sx); viewY = drag.vy0 - (int)(sy - drag.sy); }
+  lastPX = sx; lastPY = sy;
+  if (drag.kind == D_PAN) { viewX = drag.vx0 - (int)(sx - drag.sx); viewY = drag.vy0 - (int)(sy - drag.sy); if (std::fabs(sx - drag.sx) + std::fabs(sy - drag.sy) > 2) drag.moved = true; }
   else if (drag.kind == D_NOTESEL && drag.m) {   // dragging in a note: the selection follows (the cursor at the pointer)
     const bool isPad = drag.m == pad.get(); const float ox = isPad ? (float)padX : (float)(drag.m->x - viewX), oy = isPad ? (float)padY : (float)(drag.m->y - viewY);
     noteCur = notePosAt(*drag.m, (int)std::lround(sx - ox), (int)std::lround(sy - oy), drag.vy0); noteFollow = true; }
   else if (drag.kind == D_PADMOVE) { padX = drag.vx0 + (int)std::lround(sx - drag.sx); padY = drag.vy0 + (int)std::lround(sy - drag.sy); padDirty = true; }
   else if (drag.kind == D_NOTESIZE && drag.m) { if (drag.m == pad.get()) padDirty = true; drag.m->noteW = std::max(50, std::min(480, drag.vx0 + (int)std::lround(sx - drag.sx))); drag.m->noteH = std::max(16, std::min(480, drag.vy0 + (int)std::lround(sy - drag.sy))); }
   else if (drag.kind == D_BLEND) { if (onBlendSet && blendBarX1 > blendBarX0) onBlendSet(clampf((sx - blendBarX0) / (float)(blendBarX1 - blendBarX0), 0, 1)); }
+  else if (drag.kind == D_MOVE && !drag.group.empty()) {   // the selection, together (no dropping into cables)
+    const int nx = wx - drag.ox, ny = std::max(viewY + TOP + 1, wy - drag.oy); int dx = 0, dy = 0; for (auto& a : drag.group) if (a.id == drag.m->m->id) { dx = nx - a.x; dy = ny - a.y; }
+    for (auto& a : drag.group) if (UiMod* p = byId(a.id)) { p->x = a.x + dx; p->y = a.y + dy; } drag.splice = -1; }
   else if (drag.kind == D_MOVE) { drag.m->x = wx - drag.ox; drag.m->y = std::max(viewY + TOP + 1, wy - drag.oy);
     // an unpatched effect dragged over an audio cable can be dropped into it
     int ii, oi; bool free = soundThrough(drag.m->m->def, ii, oi);
@@ -1396,7 +1434,7 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_PARAM && drag.held) {}
   else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 && !q.exp ? 40.f : 70.f));
     verbTypeSet(drag.m, drag.k, drag.m->m->p[drag.k].load(), v); drag.m->m->p[drag.k].store(v); clockToTempo(drag.m, drag.k, *eng); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + valueText(*drag.m, drag.k, v, eng->key.root.load()), 1.5f); }
-  else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = std::round(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if ((int)b != (int)std::lround(eng->tempo.bpm.load())) { eng->tempo.bpm.store(b); char t[40]; std::snprintf(t, 40, "SHARED TEMPO %d BPM", (int)b); status(t, 1.5f); } }
+  else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = halfBpm(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if (b != halfBpm(eng->tempo.bpm.load())) { eng->tempo.bpm.store(b); status("SHARED TEMPO " + bpmText(b) + " BPM", 1.5f); } }
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
   else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
@@ -1434,6 +1472,11 @@ void Ui::insertInto(const UiCable& c0, int mid) { UiMod *a = byId(c0.from), *b =
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
   if (d.kind == D_TEMPO) { changed(); return; }
+  if (d.kind == D_PAN && !d.moved && !picked.empty()) { picked.clear(); status("NOTHING SELECTED", 1); return; }   // a tap on empty space lets the selection go
+  if (d.kind == D_BOX) {   // every module the box touches joins the selection
+    const int x0 = std::min(d.vx0, wx), x1 = std::max(d.vx0, wx), y0 = std::min(d.vy0, wy), y1 = std::max(d.vy0, wy); int n = 0;
+    for (auto& up : mods) { const Geom g = geom(*up); if (up->x < x1 && up->x + g.w > x0 && up->y < y1 && up->y + g.h > y0 && !isPicked(up->m->id)) { picked.push_back(up->m->id); n++; } }
+    status(picked.empty() ? std::string("NOTHING SELECTED (THE BOX TOUCHED NO MODULES)") : std::to_string(picked.size()) + " SELECTED: DRAG A TITLE TO MOVE THEM, RIGHT-CLICK FOR MORE", 3); (void)n; return; }
   if (d.kind == D_PARAM && !d.moved && !d.held && d.m) { tapRow(d.m, d.k); }   // a tap that didn't drag: three or more in rhythm set a speed row
   if (d.kind == D_NLOOP) { changed(); return; }
   if (d.kind == D_BROWSE) { if (!d.moved) browserPick(d.k); return; }

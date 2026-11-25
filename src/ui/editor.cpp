@@ -9,9 +9,9 @@
 
 namespace tb {
 static const int TOP = 10, WH = 48;   // the top bar; the waveform's height
-enum { B_ZOUT, B_ZIN, B_VALL, B_VPART, B_PLAY, B_LOOP, B_UNDO, B_REDO, B_REV, B_NORM, B_FIN, B_FOUT, B_SIL, B_DEL, B_KPART, B_KALL, B_CLOSE };
+enum { B_ZOUT, B_ZIN, B_VALL, B_VPART, B_PLAY, B_LOOP, B_UNDO, B_REDO, B_REV, B_NORM, B_FIN, B_FOUT, B_SIL, B_DEL, B_KPART, B_KALL, B_EXPORT, B_CLOSE };
 static const char* B_LABEL[] = {"ZOOM -", "ZOOM +", "VIEW ALL", "VIEW PART", "PLAY", "LOOP", "UNDO", "REDO", "REVERSE", "NORMALISE",
-                                "FADE IN", "FADE OUT", "SILENCE", "DELETE", "KEEP PART", "KEEP ALL", "CLOSE"};
+                                "FADE IN", "FADE OUT", "SILENCE", "DELETE", "KEEP PART", "KEEP ALL", "EXPORT WAV", "CLOSE"};
 static const size_t UNDO_FLOATS = 24u << 20;   // what the editor's undo may hold (about 100 MB)
 
 static std::string tText(double t) { char b[24]; if (t >= 60) std::snprintf(b, 24, "%d:%05.2f", (int)(t / 60), t - 60 * (int)(t / 60)); else std::snprintf(b, 24, "%.2fS", t); return b; }
@@ -105,6 +105,7 @@ static void press(Ui& u, int id) {
     case B_UNDO: u.editorUndo(-1); break;
     case B_REDO: u.editorUndo(1); break;
     case B_CLOSE: u.closeEditor(false); break;
+    case B_EXPORT: if (u.onEditExport) u.onEditExport(e.name, e.d, e.r, e.sr); break;   // the whole sound as it is now, edits and all (kept or not)
     case B_KPART: case B_KALL: {
       size_t i0 = 0, i1 = e.d.size(); if (id == B_KPART) span(e, i0, i1);
       if (i1 - i0 < 64) { u.status("CHOOSE A LONGER PART", 3); return; }
@@ -130,7 +131,7 @@ void Ui::drawEditor(Canvas& c) {
   // the buttons, in two rows (each with some on the right); a narrow window moves the right ones onto rows of their own
   auto lab = [&](int id) -> std::string { return id == B_PLAY && ed.playing ? "STOP" : B_LABEL[id]; };
   auto bw = [&](int id) { return Canvas::tw(id == B_PLAY ? "STOP" : B_LABEL[id]) + 6; };
-  const std::vector<std::pair<std::vector<int>, std::vector<int>>> rows = {{{B_ZOUT, B_ZIN, B_VALL, B_VPART, B_PLAY, B_LOOP}, {B_UNDO, B_REDO}},
+  const std::vector<std::pair<std::vector<int>, std::vector<int>>> rows = {{{B_ZOUT, B_ZIN, B_VALL, B_VPART, B_PLAY, B_LOOP}, {B_EXPORT, B_UNDO, B_REDO}},
                                                                             {{B_REV, B_NORM, B_FIN, B_FOUT, B_SIL, B_DEL}, {B_KPART, B_KALL}}};
   edBtns.clear(); int ry0 = 0;   // rows below the START / END line (placed first, moved down after)
   for (auto& [left, right] : rows) { int bx = wx; for (int id : left) { edBtns.push_back({bx, ry0, bw(id), id}); bx += bw(id) + 3; }

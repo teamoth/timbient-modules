@@ -139,6 +139,30 @@ void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& c
     auto at = [&](const UiCable& c) { for (size_t i = 0; i < want.size(); i++) if (same(c, want[i])) return (int)i; return (int)want.size(); }; return at(x) < at(y); });
 }
 
+Json groupOf(Ui& ui, const std::vector<int>& ids, int& x0, int& y0) {
+  Json all = serializePatch(ui); Json mods = Json::array(), cs = Json::array(); x0 = 1 << 30; y0 = 1 << 30; std::set<int> in;
+  for (int id : ids) if (const UiMod* u = ui.byId(id)) { if (id == Ui::PAD_ID) continue; in.insert(id); if (!u->m->def->fixed) { x0 = std::min(x0, u->x); y0 = std::min(y0, u->y); } }
+  if (x0 == (1 << 30)) return Json();   // nothing but OUTPUT
+  if (const Json* ms = all.get("mods")) for (auto& m : ms->a) if (in.count((int)m.num("id"))) { Json c = m; c.set("x", Json::number(m.num("x") - x0)); c.set("y", Json::number(m.num("y") - y0)); mods.push(c); }
+  if (const Json* cc = all.get("cables")) for (auto& c : cc->a) if (in.count((int)c.num("f")) && in.count((int)c.num("t"))) cs.push(c);
+  Json d = Json::object(); d.set("mods", mods); d.set("cables", cs); return d;
+}
+std::vector<int> addGroup(Ui& ui, const Json& g, int wx, int wy, std::vector<std::pair<UiMod*, int>>& sc, bool& unknown) {
+  std::vector<int> made; unknown = false; const Json* gm = g.get("mods"); if (!gm || gm->t != Json::ARR) return made;
+  Json data = serializePatch(ui); Json* mods = data.getm("mods"); Json* cs = data.getm("cables"); if (!mods || !cs) return made;
+  int next = ui.nextId; for (auto& m : mods->a) next = std::max(next, (int)m.num("id") + 1);
+  std::map<int, int> idm;
+  for (auto& m : gm->a) { const ModuleDef* def = findDef(m.str("type")); if (!def) { unknown = true; continue; }
+    if (def->fixed) { for (auto& up : ui.mods) if (up->m->def == def) idm[(int)m.num("id")] = up->m->id; continue; }
+    Json c = m; const int nid = next++; idm[(int)m.num("id")] = nid; made.push_back(nid);
+    c.set("id", Json::number(nid)); c.set("x", Json::number(wx + m.num("x"))); c.set("y", Json::number(wy + m.num("y"))); mods->push(c); }
+  if (made.empty()) return made;
+  if (const Json* gc = g.get("cables")) if (gc->t == Json::ARR) for (auto& c : gc->a) { auto f = idm.find((int)c.num("f")), t = idm.find((int)c.num("t")); if (f == idm.end() || t == idm.end()) continue;
+    Json k = c; k.set("f", Json::number(f->second)); k.set("t", Json::number(t->second)); cs->push(k); }
+  applyPatch(ui, data, sc);
+  ui.picked = made; ui.lastTouched = made.back(); return made;
+}
+
 const Json* patchIn(const Json& f) {
   if (f.str("timbient") == "patch") return f.get("data");
   if (f.str("timbient") == "sessions") { const Json* s = f.get("sessions"); if (s && s->t == Json::ARR && !s->a.empty()) return s->a[0].get("data"); return nullptr; }

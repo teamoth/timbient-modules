@@ -14,6 +14,12 @@ std::string loadPatch(Ui& ui, const Json& data);
 // undo / redo: change the patch on screen into a remembered one, touching only what differs, so sequencers keep
 // their place and sounds stay loaded. Sound places that changed are listed (module, place) for the app to reload
 void applyPatch(Ui& ui, const Json& data, std::vector<std::pair<UiMod*, int>>& soundsChanged);
+// GROUPS: some of the patch's modules (positions from their top left corner, which is x0, y0) and the cables between them.
+// OUTPUT (fixed) goes in too, so cables into it are kept; empty (not an object) if there's nothing but OUTPUT
+Json groupOf(Ui& ui, const std::vector<int>& ids, int& x0, int& y0);
+// add a group to the patch on screen, its top left corner at (wx, wy), as one change (as undo does: nothing else stops or reloads).
+// New ids; a fixed module in it means the session's own. The new modules become the selection; returns their ids
+std::vector<int> addGroup(Ui& ui, const Json& g, int wx, int wy, std::vector<std::pair<UiMod*, int>>& soundsChanged, bool& unknown);
 // accepts a plain patch, {timbient:'patch', data}, or {timbient:'sessions', sessions:[...]} (the first is loaded)
 const Json* patchIn(const Json& file);
 

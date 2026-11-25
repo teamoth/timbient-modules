@@ -167,7 +167,7 @@ static Reg rSample(new ModuleDef{"sample", "SAMPLER", Cat::Voice, {{"TRIG", PTyp
    only(pctX("drift", "DRIFT", 3, 0), "region"), prHz("cut", "CUTOFF", 40, 20000, 20000), pct("res", "RES", 0), pct("vsens", "VEL SENS", 1), pct("width", "WIDTH", 0), LEVEL(), ACT("edit", "EDIT SOUND"),
    only(OP("every", "RESTART", {"OFF", "BEAT", "BAR", "2 BARS", "4 BARS", "8 BARS"}, 2), "clock"),
    OP("rec", "RECORD", {"OFF", "ON"}, 0), OP("reclen", "REC BARS", {"FREE", "1", "2", "4", "8", "16"}, 0), OP("recmode", "REC MODE", {"REPLACE", "OVERDUB"}, 0),
-   only(pct("keep", "KEEP", 0.8f), "overdub"), OP("mon", "MONITOR", {"OFF", "REC ONLY", "ALWAYS"}, 1), ACT("savetake", "SAVE TAKE")},
+   only(pct("keep", "KEEP", 0.8f), "overdub"), OP("mon", "MONITOR", {"OFF", "REC ONLY", "ALWAYS"}, 1), ACT("export", "EXPORT WAV")},
   12, 68, false, [] { return new Sample(); }});
 
 // ---------------- GRAIN LOOPER: a cloud of grains from what's coming in (LIVE), or from a sound it holds ----------------
@@ -239,7 +239,7 @@ struct Looper : Module {
 };
 static Reg rLooper(new ModuleDef{"looper", "GRAIN LOOPER", Cat::Proc, {{"IN", PType::Audio}, {"FREEZE", PType::Trig}}, {{"OUT", PType::Audio}},
   {OP("src", "SOURCE", {"LIVE", "HELD"}, 0), ACT("catch", "CATCH"), ACT("load", "LOAD FILE"), ST("len", "LENGTH", 2, 16, 8), pct("pos", "POSITION", 0.5f), pct("crawl", "CRAWL", 0.3f),
-   T("size", "SIZE", 0.03f, 2, 0.25f), pctX("dens", "DENSITY", 1.6f, 0.35f), ST("pitch", "GR PITCH", -24, 24, 0), pctX("scatter", "SCATTER", 2, 0.2f), pct("rev", "REVERSE", 0.2f), pctX("tex", "TEXTURE", 2, 0.4f), pct("mix", "MIX", 1), LEVEL(), only(ACT("edit", "EDIT SOUND"), "held"), OP("freeze", "FREEZE", {"OFF", "ON"}, 0)},
+   T("size", "SIZE", 0.03f, 2, 0.25f), pctX("dens", "DENSITY", 1.6f, 0.35f), ST("pitch", "GR PITCH", -24, 24, 0), pctX("scatter", "SCATTER", 2, 0.2f), pct("rev", "REVERSE", 0.2f), pctX("tex", "TEXTURE", 2, 0.4f), pct("mix", "MIX", 1), LEVEL(), only(ACT("edit", "EDIT SOUND"), "held"), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), only(ACT("export", "EXPORT WAV"), "held")},
   12, 68, false, [] { return new Looper(); }});
 
 // ---------------- STRETCH: paulstretch, a random-phase spectral smear of the last few seconds ----------------
@@ -342,7 +342,7 @@ static Reg rStretch(new ModuleDef{"stretch", "STRETCH", Cat::Proc, {{"IN", PType
   {OP("src", "SOURCE", {"LIVE", "FILE"}, 0), only(ACT("load", "LOAD FILE"), "file"),
    fmt([] { ParamDef q = prExp("amt", "STRETCH", 1, 1000, 10); q.step = 1; q.stepper = true; return q; }(), [](float v) { char b[16]; std::snprintf(b, 16, "%.0fX", v); return std::string(b); }),   // whole numbers: - 8X +
    OP("win", "WINDOW", {"0.04S", "0.09S", "0.17S", "0.34S", "0.68S", "1.4S", "2.7S"}, 4), only(pct("pos", "POSITION", 0), "file"), ST("pitch", "PITCH", -24, 24, 0),
-   pct("shim", "SHIMMER", 0), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("mix", "MIX", 1), only(ACT("edit", "EDIT SOUND"), "file")}, 12, 68, false, [] { return new Stretch(); }});
+   pct("shim", "SHIMMER", 0), OP("freeze", "FREEZE", {"OFF", "ON"}, 0), pct("mix", "MIX", 1), only(ACT("edit", "EDIT SOUND"), "file"), only(ACT("export", "EXPORT WAV"), "file")}, 12, 68, false, [] { return new Stretch(); }});
 
 // ---------------- LISTEN: hears which key and scale a sound is in ----------------
 // Every 1/10 s or so it takes the last 8192 samples, measures how strongly each of the 12 note names sounds

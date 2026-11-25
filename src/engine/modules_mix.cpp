@@ -54,7 +54,7 @@ struct Crossfader : Module {
 static Reg rCrossfader(new ModuleDef{"xfade", "CROSSFADER", Cat::Proc, {{"A", PType::Audio}, {"B", PType::Audio}, {"CLOCK", PType::Trig}}, {{"OUT", PType::Audio}},
   {pct("fade", "FADE", 0.5f), noMod(OP("move", "MOVE", {"OFF", "SINE", "TRI", "SQUARE", "RANDOM", "DRIFT"}, 0)),
    only(noMod(OP("cycle", "CYCLE", {"1/4 BEAT", "1/2 BEAT", "1 BEAT", "2 BEATS", "4 BEATS", "8 BEATS", "16 BEATS", "32 BEATS"}, 4)), "v:1,2,3,4,5"), only(pct("range", "RANGE", 1), "v:1,2,3,4,5"),
-   only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt(ST("bpm", "BPM", 20, 240, 90), [](float x) { return std::to_string((int)x); }), "own")},
+   only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.5f; return q; }(), [](float x) { return bpmText(x); }), "own")},
   12, 68, false, [] { return new Crossfader(); }});
 
 }  // namespace tb
