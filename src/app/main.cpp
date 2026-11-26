@@ -502,7 +502,7 @@ int main(int argc, char** argv) {
   auto blendLoad = [&](const std::string& path) {   // read, unpack and check the file away from the screen
     if (blendBusy(true)) return; if (bl.th.joinable()) bl.th.join();
     bl.path = path; bl.err.clear(); bl.state.store(1); ui.status("GETTING " + fileName(path) + " READY TO BLEND...", 30);
-    bl.th = std::thread([&, path] { Json f; if (!Json::parse(readFile(path), f)) { bl.err = "THAT FILE COULD NOT BE READ"; bl.state.store(3); return; }
+    bl.th = std::thread([&, path] { SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW);   /* (reading it never competes with the sound) */ Json f; if (!Json::parse(readFile(path), f)) { bl.err = "THAT FILE COULD NOT BE READ"; bl.state.store(3); return; }
       if (const Json* pack = f.get("audio")) if (pack->t == Json::OBJ) for (auto& kv : pack->o) { const std::string fn = audioDir + kv.first + ".wav"; if (!readFile(fn).empty()) continue;
         AudioBuf* b = fromBase64Pcm16(kv.second.str("b64"), (float)kv.second.num("sr", 48000), (int)kv.second.num("ch", 1)); if (b) { writeWavMono16(fn, *b); delete b; } }
       const Json* data = patchIn(f); if (!data) { bl.err = "THAT IS NOT A TIMBIENT SESSION"; bl.state.store(3); return; }

@@ -95,7 +95,7 @@ void Ui::drawBrowser(Canvas& c) {
   const int x = brX, y = brY, w = brW, h = brH;
   c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, MENU_BG); c.frame(x, y, w, h, 21);
   UiMod* t = byId(br.target);
-  std::string title = br.sessions ? (br.blendFirst ? "SESSIONS: BLEND TO, OR OPEN" : "SESSIONS: OPEN, OR BLEND TO") : "SOUNDS"; if (t && !br.sessions) title += " FOR " + t->m->def->name + (br.slot >= 0 && t->m->def->type == "sample" && t->m->p[1].load() >= 2 ? " PLACE " + std::to_string(br.slot + 1) : "");
+  std::string title = br.sessions ? (br.blendFirst ? "SESSIONS: BLEND TO" : "SESSIONS: OPEN, OR BLEND TO") : "SOUNDS"; if (t && !br.sessions) title += " FOR " + t->m->def->name + (br.slot >= 0 && t->m->def->type == "sample" && t->m->p[1].load() >= 2 ? " PLACE " + std::to_string(br.slot + 1) : "");
   c.text(title, x + 4, y + 3, 18); c.text("x", x + w - 6, y + 3, 9); c.text(br.wide ? "><" : "<>", x + w - 18, y + 3, 9);   // <>: wider, for long names
   std::string d = upper(br.dir); const int room = (w - 8) / 4; if ((int)d.size() > room) d = ".." + d.substr(d.size() - room + 2);
   c.text(d, x + 4, y + 11, 9);
@@ -116,7 +116,7 @@ void Ui::drawBrowser(Canvas& c) {
   // about the picked sound: its shape, then length / rate / channels / loudness, then key, note and tempo
   if (br.sessions) {   // the picked session: its name, and its key and scale (from the name's brackets, as SAVE writes them)
     const int iy = ly + lh + 3, ix = x + 4; const bool file = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
-    if (!file) c.text("TAP A SESSION TO PICK IT", ix, iy + 10, 21);
+    if (!file) c.text("TAP A SESSION TO PICK IT", ix, iy + 10, 18);
     else { std::string n = br.items[br.sel].name; n.resize(n.size() - 6); c.text(upper(n).substr(0, (w - 8) / 4), ix, iy + 4, 9);
       const size_t a = n.rfind('('), b = n.rfind(')'); std::string k;
       if (a != std::string::npos && b != std::string::npos && b > a + 1) { std::string tag = n.substr(a + 1, b - a - 1); const size_t u = tag.find('_');
@@ -147,8 +147,10 @@ void Ui::drawBrowser(Canvas& c) {
   // the buttons
   const int by = y + h - 19; auto btn = [&](int bx, int bw, const std::string& l, int col) { c.frame(bx, by - 1, bw, 9, col); c.text(l, bx + (bw - Canvas::tw(l)) / 2, by + 1, col); };
   const bool can = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
-  if (br.sessions) { btn(x + 4, 27, "OPEN", can ? 4 : 21); btn(x + 34, 43, "BLEND TO", can ? 4 : 21); btn(x + w - 65, 61, "OTHER FOLDER...", 9);
-    c.text(br.blendFirst ? "TAP A SESSION. ENTER BLENDS TO IT" : "TAP A SESSION. ENTER OPENS IT", x + 4, y + h - 9, 21); return; }
+  if (br.sessions) {   // BLEND TO: just that; OPEN: OPEN, or BLEND TO. FILE BROWSER...: the system's own window
+    if (br.blendFirst) btn(x + 4, 43, "BLEND TO", can ? 4 : 18); else { btn(x + 4, 27, "OPEN", can ? 4 : 18); btn(x + 34, 43, "BLEND TO", can ? 4 : 18); }
+    const int fw = Canvas::tw("FILE BROWSER...") + 8; btn(x + w - fw - 4, fw, "FILE BROWSER...", 9);
+    c.text(br.blendFirst ? "TAP A SESSION. ENTER BLENDS TO IT" : "TAP A SESSION. ENTER OPENS IT", x + 4, y + h - 9, 18); return; }
   if (br.autoPreview) { c.rect(x + 4, by - 1, 51, 9, 17); c.text("PREVIEW ON", x + 10, by + 1, 15); } else btn(x + 4, 51, "PREVIEW OFF", 9);   // a switch
   btn(x + 58, 35, "LOAD IT", can ? 4 : 21);
   c.text(br.autoPreview ? "TAP A SOUND TO HEAR IT. ENTER LOADS" : "TAP A SOUND TO PICK IT. ENTER LOADS", x + 4, y + h - 9, 21);
@@ -163,8 +165,10 @@ bool Ui::browserDown(float sx, float sy) {   // true if the tap was inside the b
   const int by = y + h - 19;
   if (sy >= by - 1 && sy < by + 8) {
     const bool can = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
-    if (br.sessions) { if (sx >= x + 4 && sx < x + 31 && can) sessionGo(false); else if (sx >= x + 34 && sx < x + 77 && can) sessionGo(true);
-      else if (sx >= x + w - 65 && sx < x + w - 4) { const bool b = br.blendFirst; closeBrowser(); if (onSessionOther) onSessionOther(b); } return true; }
+    if (br.sessions) { const int fw = Canvas::tw("FILE BROWSER...") + 8;
+      if (br.blendFirst) { if (sx >= x + 4 && sx < x + 47 && can) sessionGo(true); }
+      else if (sx >= x + 4 && sx < x + 31 && can) sessionGo(false); else if (sx >= x + 34 && sx < x + 77 && can) sessionGo(true);
+      if (sx >= x + w - fw - 4 && sx < x + w - 4) { const bool b = br.blendFirst; closeBrowser(); if (onSessionOther) onSessionOther(b); } return true; }
     if (sx >= x + 4 && sx < x + 55) browserPreview();
     else if (sx >= x + 58 && sx < x + 93 && can) { browserLoad(); }
   }
