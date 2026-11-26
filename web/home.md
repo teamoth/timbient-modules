@@ -17,13 +17,14 @@ Also: [Windows 32-bit](https://github.com/teamoth/timbient-modules/releases/down
 
 ## What it is
 
-Where this is different from a DAW is that there isn't just one BPM, and you don't need to input specific notes. Everything can be clock-synced together (and there's a note-entry tracker module), but the idea is that separate voices can have completely different timings from each other, and you choose a scale, key and range in which notes are generated.
+Well, it's sort of growing and developing as I figure out what I want from an ambient music making app, but where this is different from a DAW is that there isn't just one BPM, and you don't need to input specific notes. Everything _can_ be clock-synced together (and there _are_ note-entry modules), but the idea is that separate voices can have completely different timings from each other, and you choose a scale, key and range in which notes are generated.
 
-Sessions can also be blended: while one plays, the next loads in the background, then fades in as the first fades out, keeping the overall level steady. A blend can run over a set time or be moved by hand, by dragging or with a MIDI knob, which makes it easy to drift from one piece to the next in a live set.
+Sessions can be blended!!! While one plays, the next loads in the background, then fades in as the first fades out, keeping the overall level steady. A blend can run over a set time or be moved by hand, by dragging or with a MIDI knob, which makes it easy to drift from one piece to the next in a live set.
 
-It's made to run well on older hardware too, including 32-bit Windows machines.
+The plan is to keep it as CPU light as possible, so that it'll run well on older hardware too, including 32-bit Windows machines.
 
 Things that inspired timbient modules: SunVox, Monome Norns scripts, Polyend Tracker, Modular synths.
+https://www.instagram.com/timbient/ 
 
 ## Installing
 
