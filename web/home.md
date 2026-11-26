@@ -24,7 +24,8 @@ Sessions can be blended!!! While one plays, the next loads in the background, th
 The plan is to keep it as CPU light as possible, so that it'll run well on older hardware too, including 32-bit Windows machines.
 
 Things that inspired timbient modules: SunVox, Monome Norns scripts, Polyend Tracker, Modular synths.
-https://www.instagram.com/timbient/ 
+
+[timbient instagram](https://www.instagram.com/timbient/)
 
 ## Installing
 
