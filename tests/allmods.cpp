@@ -549,6 +549,17 @@ int main(int argc, char** argv) {
     ui.openBrowser(sm->m->id, 0, "/s"); const bool back = ui.br.scroll == at && ui.br.sel == 130 && at > 100;
     ui.browseTo("/s/sub"); const bool inner = ui.br.scroll == 0; ui.browseTo("/s"); const bool out = ui.br.scroll == at && ui.br.sel == 130; ui.closeBrowser(); ui.onList = nullptr; ui.clearPatch();
     const bool ok = back && inner && out; if (!ok) fails++; std::printf("sound browser keeps its place:%s\n", ok ? " all fine" : "  WRONG"); }
+  // SESSIONS: the app's own picker lists sessions (not sounds), shows a picked one's key from its name, and OPEN / BLEND TO hand it on
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    ui.onList = [](const std::string&, std::vector<Ui::Browser::Entry>& v) { v = {{"amber dunes (f_yo).tmbnt", false}, {"kick.wav", false}, {"old", true}, {"moss ferry (c_yo).tmbnt", false}}; return true; };
+    std::string got; bool blended = false; ui.onSessionPick = [&](const std::string& p, bool b) { got = p; blended = b; };
+    Canvas c; c.fine = true; c.resize(700, 400); ui.openSessions("/s", true); c.beginFrame(); ui.draw(c, 0.016f);
+    chk(ui.br.items.size() == 4 && ui.br.items[1].name == "old" && ui.br.items[2].name == "amber dunes (f_yo).tmbnt", "lists folders and sessions only");
+    ui.browserPick(3); c.beginFrame(); ui.draw(c, 0.016f); bool key = false; for (auto& r : c.runs) if (r.s == "KEY C  SCALE YO") key = true; chk(key, "the key from its name");
+    ui.browserLoad(); chk(got == "/s/moss ferry (c_yo).tmbnt" && blended && !ui.br.open, "ENTER: BLEND TO (opened from BLEND TO)");
+    ui.openSessions("/s", false); ui.browserPick(2); ui.browserLoad(); chk(got == "/s/amber dunes (f_yo).tmbnt" && !blended, "ENTER: OPEN");
+    ui.openBrowser(0, 0, "/s"); chk(ui.br.items.size() == 3 && ui.br.items[2].name == "kick.wav", "the sound browser still lists sounds"); ui.closeBrowser();
+    ui.onList = nullptr; ui.onSessionPick = nullptr; if (!ok) fails++; std::printf("sessions picker:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
   // PITCH SHIFT's SHIFT jumps by octaves on a tap, like the other pitch settings
   { const bool ok = Ui::octaveJumps(findDef("pitchshift"), "shift") && Ui::octaveJumps(findDef("pad"), "pitch") && !Ui::octaveJumps(findDef("pitchshift"), "fine");
     if (!ok) fails++; std::printf("pitch shift octave jumps:%s\n", ok ? " all fine" : "  WRONG"); }

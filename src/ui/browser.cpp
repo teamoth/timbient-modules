@@ -12,12 +12,17 @@ static bool isSound(const std::string& n) {
   const size_t d = n.rfind('.'); if (d == std::string::npos) return false; const std::string e = upper(n.substr(d + 1));
   return e == "WAV" || e == "WAVE" || e == "AIF" || e == "AIFF" || e == "FLAC" || e == "MP3";
 }
+static bool isSession(const std::string& n) { const size_t d = n.rfind('.'); return d != std::string::npos && upper(n.substr(d + 1)) == "TMBNT"; }
 static std::string joinPath(const std::string& dir, const std::string& name) {
   if (dir.empty()) return name; const char last = dir.back(); return (last == '/' || last == '\\') ? dir + name : dir + "/" + name;
 }
 
 void Ui::openBrowser(int targetId, int slot, const std::string& dir) {
-  dd.reset(); menuOpen = false; tp.open = false; br.open = true; br.target = targetId; br.slot = slot; browseTo(dir);
+  dd.reset(); menuOpen = false; tp.open = false; br.open = true; br.sessions = false; br.target = targetId; br.slot = slot; browseTo(dir);
+}
+void Ui::openSessions(const std::string& dir, bool blend) {
+  dd.reset(); menuOpen = false; tp.open = false; if (br.playing >= 0 && onPreview) onPreview(""); br.playing = -1;
+  br.open = true; br.sessions = true; br.blendFirst = blend; br.target = 0; br.slot = 0; browseTo(dir);
 }
 void Ui::closeBrowser() { if (onPreview) onPreview(""); br.open = false; br.playing = -1; }   // whatever's previewing stops
 
@@ -35,12 +40,12 @@ void Ui::browseTo(const std::string& dir) {
   br.dir = dir;
   std::vector<Browser::Entry> all, folders, files;
   if (!onList || !onList(dir, all)) { br.err = "THIS FOLDER CAN'T BE READ"; if (!parentOf(dir).empty()) br.items.push_back({"..", true}); return; }
-  for (auto& e : all) { if (e.name.empty() || e.name[0] == '.') continue; if (e.folder) folders.push_back(e); else if (isSound(e.name)) files.push_back(e); }
+  for (auto& e : all) { if (e.name.empty() || e.name[0] == '.') continue; if (e.folder) folders.push_back(e); else if (br.sessions ? isSession(e.name) : isSound(e.name)) files.push_back(e); }
   auto byName = [](const Browser::Entry& a, const Browser::Entry& b) { return upper(a.name) < upper(b.name); };
   std::sort(folders.begin(), folders.end(), byName); std::sort(files.begin(), files.end(), byName);
   if (!parentOf(dir).empty()) br.items.push_back({"..", true});
   br.items.insert(br.items.end(), folders.begin(), folders.end()); br.items.insert(br.items.end(), files.begin(), files.end());
-  if (files.empty() && folders.empty()) br.err = "NO SOUND FILES HERE";
+  if (files.empty() && folders.empty()) br.err = br.sessions ? "NO SESSIONS HERE" : "NO SOUND FILES HERE";
   // back in a folder you've looked through: the list where you left it, with the sound you last picked there picked again
   auto w = br.where.find(dir); if (w != br.where.end()) {
     for (size_t i = 0; i < br.items.size(); i++) if (!w->second.second.empty() && br.items[i].name == w->second.second) br.sel = (int)i;
@@ -54,6 +59,7 @@ void Ui::browserScroll(float rows) {
 void Ui::browserPick(int i) {   // a tap on a row: open a folder, or hear a sound (a second tap stops it)
   if (i < 0 || i >= (int)br.items.size()) return; const auto& e = br.items[i];
   if (e.folder) { if (e.name == "..") browseTo(parentOf(br.dir)); else browseTo(joinPath(br.dir, e.name)); return; }
+  if (br.sessions) { br.sel = i; return; }   // a session: picked (OPEN or BLEND TO then)
   br.sel = i;   // a tap picks it: whatever was playing stops, and with PREVIEW on, this one plays
   if (br.playing >= 0 && onPreview) onPreview(""); br.playing = -1;
   if (br.autoPreview && onPreview) { onPreview(joinPath(br.dir, e.name)); br.playing = i; }
@@ -61,10 +67,14 @@ void Ui::browserPick(int i) {   // a tap on a row: open a folder, or hear a soun
 }
 void Ui::browserLoad() {   // LOAD IT: stop the preview, and put the sound in the module
   if (br.sel < 0 || br.sel >= (int)br.items.size() || br.items[br.sel].folder) return;
+  if (br.sessions) { sessionGo(br.blendFirst); return; }   // (ENTER: as it was opened, OPEN or BLEND TO)
   if (onPreview) onPreview(""); br.playing = -1;   // LOAD always stops the preview
   const int t = br.target, sl = br.slot; const std::string p = joinPath(br.dir, br.items[br.sel].name); closeBrowser();   // loaded: the browser closes
   if (onBrowseLoad) onBrowseLoad(t, sl, p);
 }
+void Ui::sessionGo(bool blend) {   // OPEN or BLEND TO the picked session
+  if (br.sel < 0 || br.sel >= (int)br.items.size() || br.items[br.sel].folder) return;
+  const std::string p = joinPath(br.dir, br.items[br.sel].name); closeBrowser(); if (onSessionPick) onSessionPick(p, blend); }
 void Ui::browserPreview() {   // the PREVIEW switch: whether tapping a sound plays it
   br.autoPreview = !br.autoPreview; if (!br.autoPreview && br.playing >= 0 && onPreview) { onPreview(""); br.playing = -1; }
   else if (br.autoPreview && br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder && onPreview) { onPreview(joinPath(br.dir, br.items[br.sel].name)); br.playing = br.sel; }
@@ -85,7 +95,7 @@ void Ui::drawBrowser(Canvas& c) {
   const int x = brX, y = brY, w = brW, h = brH;
   c.rect(x + 2, y + 2, w, h, 26); c.rect(x, y, w, h, MENU_BG); c.frame(x, y, w, h, 21);
   UiMod* t = byId(br.target);
-  std::string title = "SOUNDS"; if (t) title += " FOR " + t->m->def->name + (br.slot >= 0 && t->m->def->type == "sample" && t->m->p[1].load() >= 2 ? " PLACE " + std::to_string(br.slot + 1) : "");
+  std::string title = br.sessions ? (br.blendFirst ? "SESSIONS: BLEND TO, OR OPEN" : "SESSIONS: OPEN, OR BLEND TO") : "SOUNDS"; if (t && !br.sessions) title += " FOR " + t->m->def->name + (br.slot >= 0 && t->m->def->type == "sample" && t->m->p[1].load() >= 2 ? " PLACE " + std::to_string(br.slot + 1) : "");
   c.text(title, x + 4, y + 3, 18); c.text("x", x + w - 6, y + 3, 9); c.text(br.wide ? "><" : "<>", x + w - 18, y + 3, 9);   // <>: wider, for long names
   std::string d = upper(br.dir); const int room = (w - 8) / 4; if ((int)d.size() > room) d = ".." + d.substr(d.size() - room + 2);
   c.text(d, x + 4, y + 11, 9);
@@ -95,7 +105,7 @@ void Ui::drawBrowser(Canvas& c) {
   const int first = (int)br.scroll;
   for (int r = 0; r < brRows && first + r < (int)br.items.size(); r++) { const int i = first + r; const auto& e = br.items[i]; const int ry = ly + r * 8;
     if (i == br.sel) c.rect(x + 3, ry - 1, w - 6, 8, 18);
-    std::string n = e.name == ".." ? "< UP A FOLDER" : (e.folder ? "> " : "") + upper(e.name); const int nroom = (w - 16) / 4;
+    std::string n = e.name == ".." ? "< UP A FOLDER" : (e.folder ? "> " : "") + upper(br.sessions && !e.folder && isSession(e.name) ? e.name.substr(0, e.name.size() - 6) : e.name); const int nroom = (w - 16) / 4;
     if ((int)n.size() > nroom) { const int tail = std::max(8, nroom * 2 / 5); n = n.substr(0, nroom - tail - 2) + ".." + n.substr(n.size() - tail); }   // long names keep their end, where they differ
     c.text(n, x + 6, ry + 1, i == br.playing ? 4 : e.folder ? 7 : i == br.sel ? 15 : 9);
     if (i == br.playing) { const float at = std::max(0.f, eng->previewAt.load()); c.rect(x + 6, ry + 6, (int)std::lround(at * (w - 14)), 1, 4); } }
@@ -104,7 +114,15 @@ void Ui::drawBrowser(Canvas& c) {
     const int th = std::max(3, lh * brRows / (int)br.items.size()), ty = ly + (int)((lh - th) * br.scroll / std::max(1.f, (float)br.items.size() - brRows));
     c.rect(x + w - 5, ty, 1, th, 9); }
   // about the picked sound: its shape, then length / rate / channels / loudness, then key, note and tempo
-  { const int iy = ly + lh + 3, iw = w - 8, ix = x + 4; const bool file = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
+  if (br.sessions) {   // the picked session: its name, and its key and scale (from the name's brackets, as SAVE writes them)
+    const int iy = ly + lh + 3, ix = x + 4; const bool file = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
+    if (!file) c.text("TAP A SESSION TO PICK IT", ix, iy + 10, 21);
+    else { std::string n = br.items[br.sel].name; n.resize(n.size() - 6); c.text(upper(n).substr(0, (w - 8) / 4), ix, iy + 4, 9);
+      const size_t a = n.rfind('('), b = n.rfind(')'); std::string k;
+      if (a != std::string::npos && b != std::string::npos && b > a + 1) { std::string tag = n.substr(a + 1, b - a - 1); const size_t u = tag.find('_');
+        if (u != std::string::npos) { std::string root = tag.substr(0, u); if (!root.empty()) root[0] = (char)std::toupper((unsigned char)root[0]); k = "KEY " + upper(root.substr(0, 1)) + root.substr(1) + "  SCALE " + upper(tag.substr(u + 1)); } }
+      c.text(k.empty() ? "(NO KEY IN ITS NAME)" : k, ix, iy + 12, 18); } }
+  else { const int iy = ly + lh + 3, iw = w - 8, ix = x + 4; const bool file = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
     if (!file) c.text("TAP A SOUND TO SEE WHAT'S IN IT", ix, iy + 10, 21);
     else if (br.infoFailed) c.text("COULDN'T READ THIS ONE", ix, iy + 10, 14);
     else if (!br.infoReady) c.text("LISTENING TO IT...", ix, iy + 10, 18);
@@ -129,6 +147,8 @@ void Ui::drawBrowser(Canvas& c) {
   // the buttons
   const int by = y + h - 19; auto btn = [&](int bx, int bw, const std::string& l, int col) { c.frame(bx, by - 1, bw, 9, col); c.text(l, bx + (bw - Canvas::tw(l)) / 2, by + 1, col); };
   const bool can = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
+  if (br.sessions) { btn(x + 4, 27, "OPEN", can ? 4 : 21); btn(x + 34, 43, "BLEND TO", can ? 4 : 21); btn(x + w - 65, 61, "OTHER FOLDER...", 9);
+    c.text(br.blendFirst ? "TAP A SESSION. ENTER BLENDS TO IT" : "TAP A SESSION. ENTER OPENS IT", x + 4, y + h - 9, 21); return; }
   if (br.autoPreview) { c.rect(x + 4, by - 1, 51, 9, 17); c.text("PREVIEW ON", x + 10, by + 1, 15); } else btn(x + 4, 51, "PREVIEW OFF", 9);   // a switch
   btn(x + 58, 35, "LOAD IT", can ? 4 : 21);
   c.text(br.autoPreview ? "TAP A SOUND TO HEAR IT. ENTER LOADS" : "TAP A SOUND TO PICK IT. ENTER LOADS", x + 4, y + h - 9, 21);
@@ -143,6 +163,8 @@ bool Ui::browserDown(float sx, float sy) {   // true if the tap was inside the b
   const int by = y + h - 19;
   if (sy >= by - 1 && sy < by + 8) {
     const bool can = br.sel >= 0 && br.sel < (int)br.items.size() && !br.items[br.sel].folder;
+    if (br.sessions) { if (sx >= x + 4 && sx < x + 31 && can) sessionGo(false); else if (sx >= x + 34 && sx < x + 77 && can) sessionGo(true);
+      else if (sx >= x + w - 65 && sx < x + w - 4) { const bool b = br.blendFirst; closeBrowser(); if (onSessionOther) onSessionOther(b); } return true; }
     if (sx >= x + 4 && sx < x + 55) browserPreview();
     else if (sx >= x + 58 && sx < x + 93 && can) { browserLoad(); }
   }

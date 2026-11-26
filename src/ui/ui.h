@@ -170,9 +170,15 @@ public:
     // about the picked sound (worked out on another thread): how long, mono or stereo, its rate, and what analyseSound found
     std::map<std::string, std::pair<float, std::string>> where;   // each folder looked through: how far down, and the sound picked there
     bool autoPreview = true, wide = false;   // PREVIEW: tapping a sound plays it. <>: the wide browser, for long names
+    bool sessions = false, blendFirst = false;   // the SESSIONS picker (sessions, not sounds: OPEN or BLEND TO); blendFirst: ENTER blends (it came from BLEND TO)
     std::string infoPath; bool infoReady = false, infoFailed = false; SoundInfo info; int channels = 0; float fileRate = 0; double secs = 0; } br;
   std::function<void(const std::string&)> onInfo;
   std::function<void()> onBrowseChanged;
+  // SESSIONS: the app's own picker (no Mac or Windows window, so nothing else wakes up): a session to OPEN or BLEND TO, or
+  // OTHER FOLDER... for the system's window
+  void openSessions(const std::string& dir, bool blend);
+  std::function<void(const std::string&, bool)> onSessionPick;   // (its path, true: BLEND TO)
+  std::function<void(bool)> onSessionOther;
   // the sound editor (EDIT SOUND on SAMPLE, GRAIN LOOPER, STRETCH): choose a part, change it (reverse, normalise, fades,
   // silence, delete) with its own undo, hear it (once or looping), and KEEP ALL or KEEP PART as the module's sound
   struct Editor { bool open = false; int target = 0, slot = 0; std::string name; std::vector<float> d, r; float sr = 48000;   // r: the right of a stereo sound (else empty)
@@ -196,6 +202,7 @@ public:
   void closeBrowser();
   void browserPick(int i);
   void browserPreview();   // the PREVIEW switch (and Space)
+  void sessionGo(bool blend);   // SESSIONS: OPEN (or BLEND TO) the one picked
   void browserLoad();      // LOAD IT (and Enter)             // a tap on a row: open a folder, or hear a sound (a second tap stops it)
   std::function<void(const std::string&)> onPreview;                     // play a file to the speakers (empty: stop)
   std::function<void(int, int, const std::string&)> onBrowseLoad;        // put a file in a module's place

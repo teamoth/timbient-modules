@@ -390,6 +390,15 @@ int main(int argc, char** argv) {
   // ---- sessions are files: a .tmbnt holds the patch and every sound it uses (inside it's the web version's
   // session format, so a .json session renamed to .tmbnt opens too, and the web version can open a .tmbnt) ----
   std::string curFile;   // the file this session was opened from or last saved to: SAVE writes there
+  // SESSIONS: the app's own picker opens in the folder sessions last came from (or went to), else beside the current one, else Documents
+  auto sessionsDir = [&]() -> std::string { std::string d = settings.str("sessionDir");
+    if (d.empty() && !curFile.empty()) { const size_t sl = curFile.find_last_of("/\\"); if (sl != std::string::npos) d = curFile.substr(0, sl + 1); }
+    if (d.empty()) { const char* dc = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS); d = dc ? dc : store.dir; } return d; };
+  auto pickSession = [&](bool blend) { ui.openSessions(sessionsDir(), blend); };
+  ui.onSessionPick = [&](const std::string& path, bool blend) {   // as the system's window would have answered (the same way in, below)
+    const size_t sl = path.find_last_of("/\\"); if (sl != std::string::npos) { settings.set("sessionDir", Json::string(path.substr(0, sl + 1))); saveSettings(); }
+    std::lock_guard<std::mutex> l(dlgMx); DialogResult r{true, path}; if (blend) r.target = -2; dlgResults.push_back(r); };
+  ui.onSessionOther = [&](bool blend) { const std::string d = sessionsDir(); SDL_ShowOpenFileDialog(blend ? onBlendDialog : onOpenDialog, nullptr, win, JSON_FILTER, 1, d.c_str(), false); };
   auto sessionChanged = [&] { return !markSaved && (savedSnap.empty() || (hpos >= 0 && hist[hpos] != savedSnap)); };   // (changed since it was opened, saved or started)
   auto autosaveData = [&] { Json j = serializePatch(ui); j.set("file", Json::string(curFile)); j.set("changed", Json::number(sessionChanged() ? 1 : 0)); return j; };
   auto soundPack = [&](const Json& data) {   // every sound a patch (or a group) uses, packed in base64 (to go inside its file)
@@ -540,14 +549,14 @@ int main(int argc, char** argv) {
     if (!store.list.empty()) { d.items.push_back("SAVE THE " + std::to_string(store.list.size()) + " OLD IN-APP SESSIONS AS FILES..."); d.items.push_back("REMOVE THE OLD IN-APP SESSIONS"); }
     d.pick = [&, x0](int i) {
       if (i <= 2 && blendBusy(true)) return;   // (a new session can't come in halfway through a blend)
-      if (i == 3) { SDL_ShowOpenFileDialog(onBlendDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
+      if (i == 3) { pickSession(true); return; }
       if (i == 4) { Dropdown q; q.x = x0; q.y = 11 + 4 * 8; q.title = 0; q.items = {"BLEND LENGTH"}; for (int k = 0; k < 6; k++) q.items.push_back(blendLabel(k)); q.cur = blendIdx + 1;
         q.pick = [&](int j) { if (j < 1) return; blendIdx = j - 1; settings.set("blendLength", Json::number(blendIdx)); saveSettings(); ui.status(blendIdx == MANUAL ? std::string("BLENDS MOVE ONLY BY HAND") : "BLENDS TAKE " + blendLabel(blendIdx), 2); }; ui.openDropdown(q); return; }
       if (i >= 5) i -= 2;
       if (i == 0) { Dropdown q; q.x = x0; q.y = 11; q.items = {"CLEAR EVERYTHING?", "YES, START EMPTY", "NO, KEEP IT"}; q.title = 0; q.danger = 1;
         q.pick = [&](int j) { if (j == 1) { ui.clearPatch(); ui.add("out", 300, 30); curFile.clear(); neverSaved = true; markSaved = true; dirty = true; saveT = 0.3f; histDirty = true; histT = 0.1f; ui.status("NEW EMPTY SESSION"); } }; ui.openDropdown(q); return; }
       if (i == 1) { Json prev; if (Json::parse(readFile(store.path("previous.json")), prev) && prev.get("mods")) { loadData(prev, "YOUR LAST WORK"); curFile = prev.str("file"); neverSaved = curFile.empty(); if (prev.num("changed", 1) > 0.5) { markSaved = false; savedSnap.clear(); } } else ui.status("NOTHING TO RESTORE"); return; }
-      if (i == 2) { SDL_ShowOpenFileDialog(onOpenDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); return; }
+      if (i == 2) { pickSession(false); return; }
       if (i == 3) { if (curFile.empty()) saveAs(); else if (writeFile(curFile, sessionFile(serializePatch(ui)))) { savedNow(); ui.status("SAVED " + fileName(curFile), 4); } else ui.status("COULD NOT SAVE THE FILE", 4); return; }
       if (i == 4) { saveAs(); return; }
       if (i == 5) { SDL_ShowOpenFolderDialog(onFolderDialog, (void*)1, win, nullptr, false); ui.status("PICK A FOLDER FOR THEM", 4); return; }
@@ -799,9 +808,9 @@ int main(int argc, char** argv) {
             if (cmd && free && ev.key.key == SDLK_V) { ui.onPaste(); break; }
             if (cmd && free && ev.key.key == SDLK_A) { ui.pickAll(); break; }
             if (cmd && free && ev.key.key == SDLK_D && ui.picked.size() > 1) { ui.onDuplicateMany(ui.picked); break; }
-            if (cmd && free && ev.key.key == SDLK_O) { if (!blendBusy(true)) SDL_ShowOpenFileDialog(onOpenDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); break; }   // Cmd/Ctrl+O: OPEN
+            if (cmd && free && ev.key.key == SDLK_O) { if (!blendBusy(true)) pickSession(false); break; }   // Cmd/Ctrl+O: OPEN
             if (cmd && free && ev.key.key == SDLK_B) {   // Cmd/Ctrl+B: BLEND TO (while a blend goes on: pause it, or let it carry on)
-              if (curEng->blending() && blendClearT < 0 && ui.blendAt >= 0) ui.onBlendPause(); else if (!blendBusy(true)) SDL_ShowOpenFileDialog(onBlendDialog, nullptr, win, JSON_FILTER, 1, nullptr, false); break; } }
+              if (curEng->blending() && blendClearT < 0 && ui.blendAt >= 0) ui.onBlendPause(); else if (!blendBusy(true)) pickSession(true); break; } }
           if (ev.key.key == SDLK_D && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && !ui.ask) { if (UiMod* u = ui.byId(ui.lastTouched)) if (!u->m->def->fixed) ui.onDuplicate(u); break; }   // Cmd/Ctrl+D: duplicate
           if (ui.ed.open && ((ev.key.key == SDLK_Z && (ev.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) || (ev.key.key == SDLK_Y && (ev.key.mod & SDL_KMOD_CTRL)))) {   // the editor open: its own undo
             ui.editorUndo(ev.key.key == SDLK_Y || (ev.key.mod & SDL_KMOD_SHIFT) ? 1 : -1); break; }
