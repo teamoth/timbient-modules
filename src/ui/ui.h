@@ -289,7 +289,7 @@ private:
   void keysPress(UiMod& u, int x, int y);
   // SIXTEEN: its grid (the page on show: the one chosen, or the one playing with FOLLOW), tapping and dragging its steps, and the
   // controller it learned (LEARN 64 STEPS: a knob of page 1 turned, then pushed)
-  void drawSixteen(Canvas& c, UiMod& u, int x, int y, int w);
+  void drawSixteen(Canvas& c, UiMod& u, int x, int y, int w, float dt);
   void sixPress(UiMod& u, int x, int y);
   int sixPageShown(const UiMod& u) const;
 public:

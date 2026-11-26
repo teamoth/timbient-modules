@@ -547,7 +547,7 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     if (D(7) >= 0) { const int bw = (int)std::lround(clampf(D(7), 0, 1) * (w - 2)); c.rect(x + 1, y + 32, w - 2, 1, 21); c.rect(x + 1, y + 32, bw, 1, 9); }
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
-  } else if (ty == "sixteen") { drawSixteen(c, u, x, y, w);
+  } else if (ty == "sixteen") { drawSixteen(c, u, x, y, w, dt);
   } else if (ty == "keys") {
     const int root = keyOf(u, *eng), sc = scaleOf(u, *eng), n = (int)scales()[sc].steps.size();
     const int oct = (int)m->p[1].load(), rowStep = 8;   // each row carries on up the scale from the row below
@@ -1173,7 +1173,8 @@ static std::string sixSay(const UiMod& u, int st, const Engine& eng, int sc, int
   const Module* m = u.m; const int deg = std::max(0, (int)std::lround(m->seq[Module::si(st, 0)].load())); const int L = (int)std::lround(m->seq[Module::si(st, 0) + 1].load());
   const int note = (int)midiOf(degOf((int)sixV(u, "oct"), deg, sc), root, sc); (void)eng;
   return "STEP " + std::to_string(st + 1) + ": " + noteName(note) + ", " + (L >= 1 ? std::to_string(L) + (L == 1 ? " STEP LONG" : " STEPS LONG") : std::string("THE VOICE'S LENGTH")) + (m->seq[Module::si(st, 1)].load() >= 0.5f ? ", ON" : ", OFF"); }
-void Ui::drawSixteen(Canvas& c, UiMod& u, int x, int y, int w) {
+void Ui::drawSixteen(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
+  for (auto& l : u.lit) l = std::max(0.f, l - dt);   // each flash fades (it was never counted down, so a step that had played stayed lit)
   Module* m = u.m; const int sc = scaleOf(u, *eng), root = keyOf(u, *eng), oct = (int)sixV(u, "oct"), n = std::max(1, std::min(64, (int)std::lround(sixV(u, "steps"))));
   const int page = sixPageShown(u), pos = (int)m->disp[0].load(), cw = w / 4, ch = 12;
   const int played = (int)m->disp[1].load(); if (played != u.sixPlayed) { u.sixPlayed = played; const int k = (int)m->disp[2].load(); if (k >= 0 && k < 64) u.lit[k] = 0.15f; }
@@ -1181,12 +1182,12 @@ void Ui::drawSixteen(Canvas& c, UiMod& u, int x, int y, int w) {
     if (st >= n) { c.px(cx + cw / 2 - 1, cy + ch / 2 - 1, 21); continue; }   // past STEPS: not played
     const bool on = m->seq[Module::si(st, 1)].load() >= 0.5f, lit = u.lit[st] > 0;
     const int deg = std::max(0, (int)std::lround(m->seq[Module::si(st, 0)].load())), L = (int)std::lround(m->seq[Module::si(st, 0) + 1].load());
-    c.rect(cx, cy, cw - 1, ch - 1, lit ? 4 : on ? 24 : 21);
-    if (st == pos) c.frame(cx, cy, cw - 1, ch - 1, 4);   // where it is now
+    c.rect(cx, cy, cw - 1, ch - 1, lit ? 17 : on ? 24 : 21);   // playing: a flash in the cool colour (not another orange), on: pale orange, off: grey
+    if (st == pos) c.frame(cx, cy, cw - 1, ch - 1, 17);   // where it is now (the same cool colour)
     const std::string t = noteName((int)midiOf(degOf(oct, deg, sc), root, sc)); c.text(t, cx + (cw - 1) / 2 - Canvas::tw(t) / 2, cy + 2, lit || on ? 15 : 9);   // an off step: its note on the quieter fill
     if (L >= 1) c.rect(cx + 2, cy + ch - 3, std::max(1, (cw - 5) * std::min(16, L) / 16), 1, lit || on ? 15 : 9); }   // its length: a bar along the bottom
   for (int k = 0; k < 4; k++) { const int px = x + k * cw + 2, py = y + 4 * ch + 1; const bool here = k == page, playing = pos >= 0 && pos / 16 == k;
-    c.rect(px, py, cw - 5, 2, here ? 15 : 21); if (playing) c.rect(px + (cw - 5) / 2 - 1, py + 3, 3, 1, 4); }   // the pages: the one on show, and (below) the one playing
+    c.rect(px, py, cw - 5, 2, here ? 15 : 21); if (playing) c.rect(px + (cw - 5) / 2 - 1, py + 3, 3, 1, 17); }   // the pages: the one on show, and (below) the one playing
 }
 void Ui::sixPress(UiMod& u, int x, int y) {
   const int cw = (geom(u).w - 6) / 4, ch = 12; const int col = x / std::max(1, cw), row = y / ch; if (col < 0 || col > 3) return;

@@ -579,6 +579,7 @@ int main(int argc, char** argv) {
     at(6, px, py); ui.pointerDown(px, py); ui.pointerMove(px, py - 12); ui.pointerUp(px, py - 12); chk(deg(6) == 3 && !on(6), "dragging up: its note, still off");
     ui.shiftHeld = true; ui.pointerDown(px, py); ui.pointerMove(px, py - 8); ui.pointerUp(px, py - 8); ui.shiftHeld = false; chk(len(6) == 2, "Shift-drag: its length");
     ui.pointerDown((float)(sx->x + 3 + cw + cw / 2), (float)(sx->y + g.vy + 4 * 12 + 2)); ui.pointerUp(0, 0); chk(sixV(*sx, "page") == 2, "a page mark");
+    { sx->lit[0] = 0.15f; for (int k = 0; k < 20; k++) { c.beginFrame(); ui.draw(c, 0.016f); } chk(sx->lit[0] == 0, "a step's flash fades"); }
     c.beginFrame(); ui.draw(c, 0.016f); bool notes = false; for (auto& r : c.runs) if (r.s.size() >= 2 && r.s.size() <= 3) notes = true; chk(notes, "notes drawn in the grid");
     // a controller: learned from one knob of page 1 (turns and a push), then used
     ui.set(sx, "page", 1); ui.startSixLearn(sx); ui.midiIn(0, 0xB0, 20, 65); ui.midiIn(0, 0xB0, 20, 65); ui.midiIn(0, 0xB0, 20, 65); ui.midiFrame(0.7f); ui.midiIn(0, 0x90, 36, 127); ui.midiIn(0, 0x80, 36, 0);
