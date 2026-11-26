@@ -40,6 +40,7 @@ struct Sample : Module {
   AudioBuf* buf[NS] = {nullptr};
   struct Seg { bool on = false, rev = false; const AudioBuf* b = nullptr; double pos = 0, inc = 1; long t = 0, d = 0, fi = 1, fo = 1; float gain = 1, gl = 1, gr = 1, fadeV = 1, fadeK = 0; };
   Seg vo[12]; double nextAt = -1, wob = 0; float noteIn = -1, loopVel = 1, dirty = 0; bool looping = false, bounce = false; int slicePos = 0; float sig[5] = {-9, -9, -9, -9, -9}; Biquad lp; float lpSig[2] = {-1, -1};
+  float segLen = 0;   // (the length of the note starting now, if it brought one)
   Sample() { for (auto& r : roots) r.store(60); }
   ~Sample() override { for (auto* b : buf) delete b; delete recBuf.load(); }
   void prepare() override { iChan = pi("chan"); }
@@ -80,6 +81,7 @@ struct Sample : Module {
     v->t = 0; v->d = (long)((once ? d : d + f) * sr);   // LOOP: each pass rings on FADE past its end, fading out under the next (which starts right on time)
     if (once) { v->fi = std::max(1L, (long)(std::min((double)e[ATK], d / 2) * sr)); v->fo = std::max(1L, (long)(std::min((double)e[REL], d / 2) * sr)); }
     else { v->fi = v->fo = std::max(1L, (long)(f * sr)); }
+    if (once && segLen > 0) { const long cut = (long)(segLen * sr) + v->fo; if (cut < v->d) v->d = std::max(v->fi + v->fo, cut); }   // a note with its own length: cut short there (fading out over RELEASE)
     v->gain = gain; v->fadeV = 1; v->fadeK = 0; panGains(rng.bi() * e[WIDTH], v->gl, v->gr);
     if (e[DRIFT] > 0 && (int)e[KIND] != 1) { const double dur = b->dur(); wob = clampf((float)(wob + rng.bi() * e[DRIFT] * std::min(len, 4.0) * 0.5), (float)(-e[START] * dur), (float)((1 - e[START]) * dur * 0.9)); } else wob = 0;
   }
@@ -109,7 +111,7 @@ struct Sample : Module {
     const double now = t + eng->pos / sr; noteIn = ev.note; const float vel = 1 - e[VSENS] + e[VSENS] * ev.vel;
     if (e[MODE] < 0.5f) { fadeAll(0.03f); looping = true; loopVel = vel; wob = 0; nextAt = now; return; }
     { const int ip = pi("poly"); if (ip >= 0 && e[ip] > 0.5f) fadeAll(0.015f); }   // MONO: the last one fades out
-    double d, f; seg(ev.note, vel, d, f);
+    double d, f; segLen = ev.len; seg(ev.note, vel, d, f); segLen = 0;
   }
   void inAt(int i, float& l, float& r) const { const bool mono = iChan >= 0 && e[iChan] < 0.5f; l = in[2][0][i]; r = in[2][1][i]; if (mono) l = r = 0.5f * (l + r); }   // CHANNELS MONO: the two mixed
   float overAt(long k, int ch) const { const AudioBuf* o = overSrc; const double pos = k * (double)o->sr / sr; return readBuf(ch && o->stereo() ? o->r : o->d, pos); }

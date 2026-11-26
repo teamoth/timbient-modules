@@ -27,6 +27,7 @@ static Result run(Engine& eng, float secs) {
   r.cost = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() / secs * 100; r.rms = (float)std::sqrt(sq / std::max(1L, n)); eng.collectGarbage(); return r;
 }
 
+static float sixV(const UiMod& u, const char* k) { const int i = u.m->def->paramIndex(k); return i >= 0 ? u.m->p[i].load() : 0.f; }
 int main(int argc, char** argv) {
   Engine eng; eng.setSampleRate(RATE); Ui ui(eng);
   int fails = 0;
@@ -44,6 +45,7 @@ int main(int argc, char** argv) {
       if (d->ins.size()) ui.connect(clk, "PULSE", m, d->ins[0].name);
       if (d->type == "tracker") { for (int i = 0; i < 16; i += 2) { m->m->seq[i * 2].store(60.f + i); m->m->seq[i * 2 + 1].store(0.8f); } } }
     if (d->type == "stretch") ui.set(m, "src", 1);  // stretch a file
+    if (d->type == "looper") ui.set(m, "len", 1.5f);   // (a short window, so it has heard something well within the 4 seconds)
     if (d->type == "sample" || d->type == "looper" || d->type == "stretch") {   // give it a sound: a few seconds of a gliding tone with some noise
       AudioBuf* b = new AudioBuf(); b->sr = 44100; b->d.resize(44100 * 3); float ph = 0; Rng rr(5);
       for (size_t i = 0; i < b->d.size(); i++) { ph += (220 + i * 0.003f) / 44100.f; b->d[i] = 0.6f * std::sin(TAU * ph) + 0.05f * rr.bi(); }
@@ -549,6 +551,47 @@ int main(int argc, char** argv) {
   // PITCH SHIFT's SHIFT jumps by octaves on a tap, like the other pitch settings
   { const bool ok = Ui::octaveJumps(findDef("pitchshift"), "shift") && Ui::octaveJumps(findDef("pad"), "pitch") && !Ui::octaveJumps(findDef("pitchshift"), "fine");
     if (!ok) fails++; std::printf("pitch shift octave jumps:%s\n", ok ? " all fine" : "  WRONG"); }
+  // NOTE LENGTHS: a note that brings its own length is held that long (in place of HOLD), on a voice and on the sampler (ONCE)
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    auto tail = [&](const char* ty, float len) { ui.clearPatch(); UiMod* o = ui.add("out", 300, 20); UiMod* v = ui.add(ty, 0, 20); ui.connect(v, "OUT", o, "IN");
+      if (std::string(ty) == "pad") { ui.set(v, "hold", 3); ui.set(v, "rel", 0.05f); ui.set(v, "atk", 0.01f); }
+      else { ui.set(v, "mode", 1); ui.set(v, "rel", 0.05f); ui.connect(ui.add("keys", 300, 200), "NOTE", v, "TRIG");   /* (TRIG patched: it plays when told) */ AudioBuf* b = new AudioBuf(); b->sr = RATE; b->d.resize((size_t)(RATE * 4)); for (size_t i = 0; i < b->d.size(); i++) b->d[i] = 0.5f * std::sin(i * 0.05f); eng.setBuffer(v->m->id, b); }
+      run(eng, 0.1f); Event ev; ev.note = 60; ev.vel = 1; ev.len = len; eng.trigger(v->m->id, 0, ev); run(eng, 1.0f); return run(eng, 0.3f).rms; };
+    const float padLong = tail("pad", 0), padShort = tail("pad", 0.2f), smpLong = tail("sample", 0), smpShort = tail("sample", 0.2f);
+    chk(padLong > 0.01f && padShort < padLong * 0.05f, "pad " + std::to_string(padLong) + " / " + std::to_string(padShort));
+    chk(smpLong > 0.01f && smpShort < smpLong * 0.05f, "sampler " + std::to_string(smpLong) + " / " + std::to_string(smpShort));
+    ui.clearPatch(); if (!ok) fails++; std::printf("note lengths:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
+  // SIXTEEN: steps on and off, notes and lengths; directions; the grid (tap, drag, Shift-drag, the page marks); a controller learned and
+  // used (turn: note; push: on or off; push and turn: length; the page following the knob, by number or by channel); kept with the session
+  { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
+    ui.clearPatch(); ui.viewX = ui.viewY = 0; UiMod* sx = ui.add("sixteen", 40, 40); UiMod* kk = ui.add("keys", 300, 40); ui.connect(kk, "NOTE", sx, "CLOCK");   // (a CLOCK patched: it steps only when told)
+    Module* m = sx->m; auto on = [&](int i) { return m->seq[Module::si(i, 1)].load() >= 0.5f; }; auto deg = [&](int i) { return m->seq[Module::si(i, 0)].load(); }; auto len = [&](int i) { return m->seq[Module::si(i, 0) + 1].load(); };
+    ui.set(sx, "steps", 4); ui.sixSet(*sx, 0, 2, 1); ui.sixSet(*sx, 0, 0, 2); ui.sixSet(*sx, 0, 1, 2); ui.sixSet(*sx, 2, 2, 1); run(eng, 0.05f);
+    auto stepOnce = [&] { Event ev; eng.trigger(m->id, 0, ev); run(eng, 0.02f); return (int)m->disp[0].load(); };
+    std::vector<int> seen; const float p0 = m->disp[1].load(); for (int k = 0; k < 8; k++) seen.push_back(stepOnce()); const int played = (int)(m->disp[1].load() - p0);
+    chk(seen == std::vector<int>({0, 1, 2, 3, 0, 1, 2, 3}) && played == 4, "forward, and only the steps that are on play (" + std::to_string(played) + ")");
+    ui.set(sx, "dir", 2); seen.clear(); for (int k = 0; k < 7; k++) seen.push_back(stepOnce()); chk(seen == std::vector<int>({2, 1, 0, 1, 2, 3, 2}), "back and forth");
+    ui.set(sx, "dir", 1); seen.clear(); for (int k = 0; k < 3; k++) seen.push_back(stepOnce()); chk(seen.size() == 3 && seen[1] == (seen[0] + 3) % 4 && seen[2] == (seen[1] + 3) % 4, "backward"); ui.set(sx, "dir", 0);
+    // the grid: tap a step, drag for its note, Shift-drag for its length, a page mark
+    ui.set(sx, "follow", 0); Canvas c; c.fine = true; c.resize(700, 400); c.beginFrame(); ui.draw(c, 0.016f); const Ui::Geom g = ui.geom(*sx); const int cw = (g.w - 6) / 4;
+    auto at = [&](int i, float& px, float& py) { px = (float)(sx->x + 3 + (i % 4) * cw + cw / 2); py = (float)(sx->y + g.vy + (i / 4) * 12 + 5); };
+    float px, py; at(5, px, py); ui.pointerDown(px, py); ui.pointerUp(px, py); chk(on(5), "a tap switches it on");
+    at(6, px, py); ui.pointerDown(px, py); ui.pointerMove(px, py - 12); ui.pointerUp(px, py - 12); chk(deg(6) == 3 && !on(6), "dragging up: its note, still off");
+    ui.shiftHeld = true; ui.pointerDown(px, py); ui.pointerMove(px, py - 8); ui.pointerUp(px, py - 8); ui.shiftHeld = false; chk(len(6) == 2, "Shift-drag: its length");
+    ui.pointerDown((float)(sx->x + 3 + cw + cw / 2), (float)(sx->y + g.vy + 4 * 12 + 2)); ui.pointerUp(0, 0); chk(sixV(*sx, "page") == 2, "a page mark");
+    c.beginFrame(); ui.draw(c, 0.016f); bool notes = false; for (auto& r : c.runs) if (r.s.size() >= 2 && r.s.size() <= 3) notes = true; chk(notes, "notes drawn in the grid");
+    // a controller: learned from one knob of page 1 (turns and a push), then used
+    ui.set(sx, "page", 1); ui.startSixLearn(sx); ui.midiIn(0, 0xB0, 20, 65); ui.midiIn(0, 0xB0, 20, 65); ui.midiIn(0, 0xB0, 20, 65); ui.midiFrame(0.7f); ui.midiIn(0, 0x90, 36, 127); ui.midiIn(0, 0x80, 36, 0);
+    chk(sixV(*sx, "tcc") == 20 && sixV(*sx, "mch") == 0 && sixV(*sx, "tmode") == 1 && sixV(*sx, "pkind") == 0 && sixV(*sx, "pnum") == 36 && !ui.sixLearning(), "learned");
+    const float d9 = std::max(0.f, deg(9)); ui.midiIn(0, 0xB0, 29, 65); chk(deg(9) == d9 + 1 && !on(9), "a turn: its note (still off)");
+    ui.midiIn(0, 0x90, 45, 127); ui.midiIn(0, 0x80, 45, 0); chk(on(9), "a push: on");
+    ui.midiIn(0, 0x90, 46, 127); ui.midiIn(0, 0xB0, 30, 66); ui.midiIn(0, 0x80, 46, 0); chk(len(10) == 2 && !on(10), "push and turn: its length (not switched)");
+    ui.midiIn(0, 0xB0, 20 + 16 + 3, 65); chk(sixV(*sx, "page") == 2 && deg(19) >= 1, "page 2 by number");
+    ui.midiIn(0, 0xB2, 20 + 4, 65); chk(sixV(*sx, "page") == 3 && deg(36) >= 1, "page 3 by channel");
+    // kept with the session
+    { Json j = serializePatch(ui); Json f; Json::parse(j.dump(), f); ui.clearPatch(); loadPatch(ui, f); UiMod* s2 = nullptr; for (auto& up : ui.mods) if (up->m->def->type == "sixteen") s2 = up.get();
+      chk(s2 && s2->m->seq[Module::si(9, 1)].load() >= 0.5f && s2->m->seq[Module::si(6, 0)].load() == 3 && s2->m->seq[Module::si(6, 0) + 1].load() == 2 && s2->m->seq[Module::si(10, 1)].load() < 0.5f && sixV(*s2, "tcc") == 20, "saved and loaded"); }
+    ui.clearPatch(); if (!ok) fails++; std::printf("sixteen:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
   // EXPORT WAV: on SAMPLER (always), GRAIN LOOPER (HELD) and STRETCH (FILE), and in the sound editor; SAVE TAKE has gone
   { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
     for (const char* ty : {"sample", "looper", "stretch"}) { const ModuleDef* d = findDef(ty); const int k = d->paramIndex("export"); chk(k >= 0 && d->params[k].act && d->params[k].label == "EXPORT WAV", ty); }

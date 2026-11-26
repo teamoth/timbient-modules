@@ -134,6 +134,53 @@ static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PT
    ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL"),
    only(ST("w1", "RANDOM 1", 0, 7, 0), "never"), only(ST("w2", "RANDOM 2", 0, 7, 0), "never"), only(ST("w3", "RANDOM 3", 0, 7, 0), "never"), only(ST("w4", "RANDOM 4", 0, 7, 0), "never")},
   85, 92, false, [] { return new Tracker(); }});
+
+// ---------------- SIXTEEN: 64 steps in four pages of 16, made for a controller with 16 push knobs (each knob a step on the page
+// it's on). A step is on or off, has a note (a step of the scale, two octaves from OCTAVE up) and a length (in steps; 0: the voice
+// decides). Its steps are kept as the Tracker's are: column 1 [scale step, length], column 2 [1 when on] ----------------
+static const char* SIX_DIRS[4] = {"FORWARD", "BACKWARD", "BOUNCE", "RANDOM"};
+struct Sixteen : Module {
+  enum { SYNC, BPM, DIV, STEPS, DIR, CHANCE, VEL, OCT, PAGE, FOLLOW, LEARN, CLEAR };
+  static constexpr int N = 64;
+  int pos = -1, way = 1; double next = -1; ClockIn2 ck;
+  Sixteen() { allocSeq(); for (int i = 0; i < N; i++) seq[si(i, 0) + 1].store(0);   // (lengths start at 0: the voice decides)
+    static const int START[4] = {0, 2, 4, 2}; for (int k = 0; k < 4; k++) { seq[si(k * 4, 0)].store((float)START[k]); seq[si(k * 4, 1)].store(1); } }   // a new one starts with four steps on, so it's heard straight away
+  int len() const { return std::max(1, std::min(N, (int)std::lround(e[STEPS]))); }
+  void step() {
+    const bool clk = clockedIn.load(); const float per = clk && ck.cp > 0 ? ck.cp : 60.f / (e[SYNC] > 0.5f ? eng->tempo.bpm.load(std::memory_order_relaxed) : e[BPM]) / TRK_DIV[(int)e[DIV]];
+    const float ppb = clk ? ck.ppb : (float)TRK_DIV[(int)e[DIV]]; const int n = len(), dir = (int)e[DIR];
+    if (pos < 0 || pos >= n) pos = dir == 1 ? n : -1;
+    if (dir == 0) pos = (pos + 1) % n; else if (dir == 1) pos = (pos - 1 + n) % n;
+    else if (dir == 2) { if (n == 1) pos = 0; else { if (pos + way < 0 || pos + way >= n) way = -way; pos += way; } }
+    else pos = (int)(rng.next() % (unsigned)n);
+    disp[0].store((float)pos);
+    if (seq[si(pos, 1)].load(std::memory_order_relaxed) < 0.5f || rng.uni() >= e[CHANCE]) return;
+    const int nsc = (int)scales()[scale()].steps.size(); const int deg = std::max(0, std::min(2 * nsc, (int)std::lround(seq[si(pos, 0)].load(std::memory_order_relaxed))));
+    const float L = seq[si(pos, 0) + 1].load(std::memory_order_relaxed);
+    Event ev; ev.note = note((int)e[OCT], deg); ev.vel = e[VEL]; ev.period = per; ev.ppb = ppb; ev.len = L >= 1 ? L * per : 0; emit(0, ev);
+    disp[1].store(disp[1].load() + 1); disp[2].store((float)pos);   // (what played, for the screen to light)
+  }
+  void blockStart(int) override { clockedIn.store(patched(0)); }
+  void trig(int port, const Event& ev) override { if (port == 0) { ck.tick(t + eng->pos / sr, ev); if (!mute.load(std::memory_order_relaxed)) step(); } else if (port == 1) { pos = -1; way = 1; } }   // RESET: from the top
+  void action(const std::string& k) override { if (k == "clear") { for (int i = 0; i < N; i++) { seq[si(i, 0)].store(-1); seq[si(i, 0) + 1].store(0); seq[si(i, 1)].store(-1); } seqVer.fetch_add(1); } }
+  void render(int a, int b) override {
+    if (mute.load(std::memory_order_relaxed)) { pos = -1; next = -1; }
+    else if (!clockedIn.load()) {
+      const double per = 60.0 / (e[SYNC] > 0.5f ? eng->tempo.bpm.load(std::memory_order_relaxed) : e[BPM]) / TRK_DIV[(int)e[DIV]];
+      for (int i = a; i < b; i++) { const double now = t + i / sr; if (next < 0 || now - next > 1) next = now; while (now >= next) { eng->pos = i; step(); next += per; } }
+    }
+    if (pos < 0) disp[0].store(-1);
+  }
+};
+static Reg rSixteen(new ModuleDef{"sixteen", "SIXTEEN", Cat::Trig, {{"CLOCK", PType::Trig}, {"RESET", PType::Trig}}, {{"TRIG", PType::Trig}},
+  {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.1f; return q; }(), [](float v) { return bpmText(v); }), "own"),
+   only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("steps", "STEPS", 1, 64, 16), OP("dir", "DIRECTION", {SIX_DIRS[0], SIX_DIRS[1], SIX_DIRS[2], SIX_DIRS[3]}, 0),
+   pct("chance", "CHANCE", 1), pct("vel", "VELOCITY", 0.8f), OCTP("oct", 1, 7, 3), noMod(ST("page", "PAGE", 1, 4, 1)), OP("follow", "FOLLOW", {"OFF", "ON"}, 1),
+   ACT("learn", "LEARN 64 STEPS"), ACT("clear", "CLEAR ALL"),
+   // the learned controller (LEARN 64 STEPS): its channel, the first knob's CC and how it sends turns, the first push (a note or a CC)
+   only(ST("mch", "MIDI CH", -1, 15, -1), "never"), only(ST("tcc", "TURN CC", -1, 127, -1), "never"), only(ST("tmode", "TURN MODE", 0, 4, 0), "never"),
+   only(ST("pkind", "PUSH KIND", 0, 1, 0), "never"), only(ST("pnum", "PUSH NUM", -1, 127, -1), "never")},
+  54, 80, false, [] { return new Sixteen(); }});   // (the display: 54 high; 80 wide)
 }  // namespace tb
 
 namespace tb {

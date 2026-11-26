@@ -43,7 +43,7 @@ KeyMatch matchKey(const float chroma[12]) {
 std::vector<const ModuleDef*>& allDefs() { static std::vector<const ModuleDef*> v; return v; }
 void registerDef(ModuleDef* d) {
   d->width += 8;   // room for the - and + beside every slider
-  static const char* KEYED[] = {"clump", "orbits", "hops", "keys", "bursts", "walker", "tools"};   // sequencers that pick notes from a key
+  static const char* KEYED[] = {"clump", "orbits", "hops", "keys", "bursts", "walker", "tools", "sixteen"};   // sequencers that pick notes from a key
   for (const char* k : KEYED) if (d->type == k) {
     std::vector<std::string> keys = {"GLOBAL"}; for (int i = 0; i < 12; i++) keys.push_back(KEY_NAMES[i]);
     std::vector<std::string> sc = {"GLOBAL"}; for (auto& x : scales()) sc.push_back(x.name);
@@ -143,15 +143,15 @@ void Engine::applyCommands() {
 }
 
 // processing order: anything feeding a module runs before it (loops are broken with a one-block delay)
+void Engine::orderVisit(int i) {
+  if (ordState[i]) return; ordState[i] = 1;
+  for (auto& c : cables) { if (c.to != mods[i]->id || c.type == PType::Mod) continue;
+    for (size_t j = 0; j < mods.size(); j++) if (mods[j]->id == c.from && !ordState[j]) orderVisit((int)j); }
+  order.push_back(mods[i]); ordState[i] = 2;
+}
 void Engine::reorder() {
-  order.clear(); std::vector<int> state(mods.size(), 0);
-  std::function<void(int)> visit = [&](int i) {
-    if (state[i]) return; state[i] = 1;
-    for (auto& c : cables) { if (c.to != mods[i]->id || c.type == PType::Mod) continue;
-      for (size_t j = 0; j < mods.size(); j++) if (mods[j]->id == c.from && !state[j]) visit((int)j); }
-    order.push_back(mods[i]); state[i] = 2;
-  };
-  for (size_t i = 0; i < mods.size(); i++) visit((int)i);
+  order.clear(); ordState.assign(mods.size(), 0);
+  for (size_t i = 0; i < mods.size(); i++) orderVisit((int)i);
   soloGates(); dirty = false;
 }
 

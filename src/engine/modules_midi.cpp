@@ -32,7 +32,7 @@ struct MidiOut : Module {
     const int slot = devSlot.load(std::memory_order_relaxed); if (slot < 0) return;
     const double at = wallSeconds() + eng->outLatency + eng->pos / sr; const uint8_t ch = (uint8_t)clampf(e[CH], 0, 15);
     if (port == 0) { const int n = (int)clampf(std::round(ev.note + e[TRANS]), 0, 127), v = (int)clampf(std::round(ev.vel * 127), 1, 127);
-      send(slot, at, 3, 0x90 | ch, (uint8_t)n, (uint8_t)v); send(slot, at + e[LEN], 3, 0x80 | ch, (uint8_t)n, 0); lastNote = n; }
+      send(slot, at, 3, 0x90 | ch, (uint8_t)n, (uint8_t)v); send(slot, at + (ev.len > 0 ? ev.len : e[LEN]), 3, 0x80 | ch, (uint8_t)n, 0);   /* a note with its own length: that long */ lastNote = n; }
     else if (port == 1 && e[CLK] > 0.5f) { const float per = ev.period > 0 ? ev.period : 0.25f, ppb = ev.ppb > 0 ? ev.ppb : 2; const int ticks = std::max(1, (int)std::lround(24 / ppb));
       if (!clkOn) { send(slot, at, 1, 0xFA); clkOn = true; } lastClk = at;
       for (int k = 0; k < ticks; k++) send(slot, at + k * per / ticks, 1, 0xF8); }

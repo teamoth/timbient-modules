@@ -23,6 +23,7 @@ struct UiMod {
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
   float hist[48] = {0}; int hi = 0; float ht = 0;   // recent values, for drawing the LFO's line
+  int sixPlayed = 0; float sixHold = 0; int sixDown[64] = {0};   // SIXTEEN: the last step it played; how long FOLLOW waits after a page was chosen; knobs held down (2: turned while held)
   float lit[64] = {0};                               // Note Grid pads that were just pressed
   float scroll = 0, hold = 0; int seqVer = 0, entered = 0;   // the Tracker: first row on show, a pause in FOLLOW after an edit
   // Sample / Grain Looper: the sounds held (Grain Looper uses only the first), each kept as a file named by id
@@ -79,6 +80,7 @@ public:
   void midiFrame(float dt);                 // each frame: learning, and values going back to the devices
   void startLearn(UiMod* u, const std::string& key);
   void cancelLearn() { learnMod = 0; learnSeen.clear(); }
+  bool sixLearning() const { return sixLearn != 0; } void cancelSixLearn() { sixLearn = 0; }   // SIXTEEN's LEARN 64 STEPS
   bool learning() const { return learnMod != 0; }
   bool learningRow(const UiMod& u, const std::string& key) const { return learnMod == u.m->id && learnKey == key; }
   const MidiMap* mapFor(const UiMod& u, const std::string& key) const;
@@ -285,13 +287,24 @@ public:
   int minusX(const UiMod& u, int j) const;   // where a slider row's "-" sits, from the module's left
 private:
   void keysPress(UiMod& u, int x, int y);
+  // SIXTEEN: its grid (the page on show: the one chosen, or the one playing with FOLLOW), tapping and dragging its steps, and the
+  // controller it learned (LEARN 64 STEPS: a knob of page 1 turned, then pushed)
+  void drawSixteen(Canvas& c, UiMod& u, int x, int y, int w);
+  void sixPress(UiMod& u, int x, int y);
+  int sixPageShown(const UiMod& u) const;
+public:
+  void sixSet(UiMod& u, int st, int what, float v);   // what: 0 its note (a scale step), 1 its length (steps), 2 on (1) or off (0)
+  bool sixteenMidi(int dev, unsigned char st, unsigned char d1, unsigned char d2);   // true: it was for a SIXTEEN
+  void startSixLearn(UiMod* u);
+private:
+  int sixLearn = 0, sixStage = 0; float sixLearnT = 0, sixWait = -1; std::vector<Seen> sixSeen;
   void drawTracker(Canvas& c, UiMod& u, int x, int y, int w, float dt);
   void trackerWatch(UiMod& u);
   void changed() { if (onChange) onChange(); }
   struct Drag { int kind = 0; UiMod* m = nullptr; int ox = 0, oy = 0, k = -1; float sx = 0, sy = 0, n0 = 0; int vx0 = 0, vy0 = 0;
     JackHit from; bool rev = false; int wx = 0, wy = 0; bool moved = false, held = false; float holdT = 0, holdSum = 0; int dir = 0; UiCable grab{}; int splice = -1; bool hasOrig = false; UiCable orig{};
     struct At { int id, x, y; }; std::vector<At> group; } drag;   // group: the selection being moved, where each started
-  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE, D_PADMOVE, D_NOTESEL, D_BOX };
+  enum { D_NONE, D_PAN, D_MOVE, D_PARAM, D_CABLE, D_XFADE, D_MENU, D_SCROLL, D_GRAB, D_TEMPO, D_STEP, D_BROWSE, D_PULL, D_EDIT, D_NLOOP, D_WANDER, D_EUCLID, D_BLEND, D_NOTESIZE, D_PADMOVE, D_NOTESEL, D_BOX, D_SIX };
   UiMod* tapM = nullptr; int tapK = -1; std::vector<double> tapTimes;   // TAP on speed rows
   float wanderTapT = -9; int wanderTapK = -1; UiMod* wanderTapM = nullptr;   // the Tracker's column numbers: a second tap soon after sets RANDOM NOTE back to 0
   // cables as curves you can touch

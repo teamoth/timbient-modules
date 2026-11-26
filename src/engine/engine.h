@@ -44,7 +44,7 @@ struct ParamDef {
 };
 
 // a note or trigger travelling down a TRIG cable
-struct Event { float note = 60, vel = 1, period = 0, ppb = 0; int offset = 0; int sw = -1; };   // sw: a switch event (0 off, 1 on, 2 over); -1 for an ordinary trigger
+struct Event { float note = 60, vel = 1, period = 0, ppb = 0; int offset = 0; int sw = -1; float len = 0; };   // sw: a switch event (0 off, 1 on, 2 over); -1 for an ordinary trigger. len: how long the note lasts, in seconds (0: the voice decides, with its HOLD)
 
 class Engine;
 class Module;
@@ -177,7 +177,7 @@ struct AudioInput { std::vector<float> buf; size_t frames = 0; std::atomic<int> 
 
 class Engine {
 public:
-  Engine() { mods.reserve(512); cables.reserve(4096); order.reserve(512); }
+  Engine() { mods.reserve(512); cables.reserve(4096); order.reserve(512); ordState.reserve(512); }   // room made now, so modules arriving later (a blend's) don't make the sound thread find more
   float sr = 48000;
   Tempo tempo; Key key; AudioInput input;
   std::atomic<bool> freeze{false};
@@ -243,7 +243,7 @@ public:
 private:
   void send(const Command& c) { while (!cmds.push(c)) {} }
   void applyCommands();
-  void reorder();
+  void reorder(); void orderVisit(int i); std::vector<int> ordState;   // (reorder's working space, kept: nothing to allocate on the sound thread)
   void soloGates();
   void block(float* L, float* R, int n);
   int soloSig = 0;

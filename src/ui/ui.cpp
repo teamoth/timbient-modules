@@ -60,7 +60,7 @@ static int typeCol(PType t) { return t == PType::Audio ? 43 : t == PType::Trig ?
 
 // the ADD menu, in the web version's order (types not built yet are skipped)
 static const std::vector<std::pair<std::string, std::vector<std::string>>> MENU = {
-  {"RHYTHM", {"clock", "tracker", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "journey", "midi", "midiout", "qwerty"}},
+  {"RHYTHM", {"clock", "tracker", "sixteen", "keys", "clump", "bursts", "orbits", "hops", "walker", "tombola", "tools", "nloop", "journey", "midi", "midiout", "qwerty"}},
   {"VOICES", {"tone", "pluck", "mi", "click", "euclid", "analog", "pad", "formant", "breath", "additive", "fold", "sample", "noinput", "audioin"}},
   {"PROCESS", {"amp", "vca", "filter", "phaser", "echo", "reverb", "pitchshift", "stretch", "resonator", "ducker", "looper", "tape", "comp", "limit", "master", "mixer", "xfade", "level", "listen", "spectrum"}},
   {"MOD", {"lfo", "env", "rand", "follow"}},
@@ -257,6 +257,7 @@ static int scaleOf(const UiMod& u, const Engine& eng) { if (u.m->scaleIn.load() 
 // NOTE GRID's SIZE: bigger buttons (and a wider module) so long note names sit comfortably
 void keysCell(const UiMod& u, int& cw, int& ch) { cw = 15; ch = 9; if (u.m->def->type != "keys") return; const int k = u.m->def->paramIndex("size"); const int z = k >= 0 ? (int)u.m->p[k].load() : 0;
   static const int W[3] = {15, 19, 24}, H[3] = {9, 11, 13}; cw = W[std::max(0, std::min(2, z))]; ch = H[std::max(0, std::min(2, z))]; }
+static float sixV(const UiMod& u, const char* k); static std::string sixSay(const UiMod& u, int st, const Engine& eng, int sc, int root);   // (SIXTEEN's, below)
 Ui::Geom Ui::geom(const UiMod& u) const {
   const ModuleDef* d = u.m->def; const int jr = (int)std::max(d->ins.size(), outInHead(u) ? (size_t)0 : d->outs.size()), np = u.fold ? 0 : (int)rowOrder(u).size();
   int cw = 15, ch = 9; keysCell(u, cw, ch);
@@ -546,6 +547,7 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     if (D(7) >= 0) { const int bw = (int)std::lround(clampf(D(7), 0, 1) * (w - 2)); c.rect(x + 1, y + 32, w - 2, 1, 21); c.rect(x + 1, y + 32, bw, 1, 9); }
   } else if (ty == "tracker") {
     drawTracker(c, u, x, y, w, dt);
+  } else if (ty == "sixteen") { drawSixteen(c, u, x, y, w);
   } else if (ty == "keys") {
     const int root = keyOf(u, *eng), sc = scaleOf(u, *eng), n = (int)scales()[sc].steps.size();
     const int oct = (int)m->p[1].load(), rowStep = 8;   // each row carries on up the scale from the row below
@@ -971,6 +973,11 @@ std::string Ui::helpAt(float sx, float sy) {
         : bz ? std::string("WHERE SOUND OFTEN PILES UP (") + bz + "). NOT WRONG IN ITSELF; IF IT'S CROWDED HERE, TRY TAKING A LITTLE AWAY." : "THE MAIN RANGE OF HEARING.";
       if (specPeak(*u, kb)) t = "A NARROW PEAK, WELL ABOVE ITS NEIGHBOURS: A RESONANCE THAT CAN RING OR WHISTLE. TRY A NARROW CUT HERE. " + t;
       return std::string(b) + "|" + t; }
+    if (d->type == "sixteen" && ly >= g.vy && ly < g.vy + g.vh) {   // SIXTEEN: a step (or a page mark), and what's in it
+      const int cw = (g.w - 6) / 4, col = (lx - 3) / std::max(1, cw), row = (ly - g.vy) / 12;
+      if (col >= 0 && col < 4 && row >= 4) return "Page " + std::to_string(col + 1) + "|TAP TO SHOW PAGE " + std::to_string(col + 1) + " (STEPS " + std::to_string(col * 16 + 1) + " TO " + std::to_string(col * 16 + 16) + "). THE MARK UNDER A PAGE SHOWS IT'S THE ONE PLAYING.";
+      if (col >= 0 && col < 4 && row >= 0) { const int st = sixPageShown(*u) * 16 + row * 4 + col;
+        return sixSay(*u, st, *eng, scaleOf(*u, *eng), keyOf(*u, *eng)) + "|TAP TO SWITCH IT ON OR OFF. DRAG UP OR DOWN FOR ITS NOTE; WITH SHIFT, FOR ITS LENGTH (THE BAR ALONG ITS BOTTOM; NO BAR: THE VOICE DECIDES)."; } }
     if (d->type == "journey" && ly >= g.vy && ly < g.vy + 17) {   // KEY JOURNEY: a step, and how smooth the change into it is, in words
       const int N = std::max(1, std::min(8, (int)std::lround(u->m->p[0].load()))), sw = std::min(16, (g.w - 6 + 1) / N), i = (lx - 3) / std::max(1, sw); const int nsc = (int)scales().size();
       if (i >= 0 && i < N) { auto keyAt = [&](int k) { return (int)std::lround(u->m->seq[Module::si(k, 0)].load()); };
@@ -1150,6 +1157,76 @@ void Ui::keysPress(UiMod& u, int x, int y) {
   eng->trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;
 }
 
+// ---------------- SIXTEEN ----------------
+static int sixP(const UiMod& u, const char* k) { return u.m->def->paramIndex(k); }
+static float sixV(const UiMod& u, const char* k) { const int i = sixP(u, k); return i >= 0 ? u.m->p[i].load() : 0.f; }
+int Ui::sixPageShown(const UiMod& u) const {
+  const int chosen = std::max(0, std::min(3, (int)std::lround(sixV(u, "page")) - 1)); const int pos = (int)u.m->disp[0].load();
+  return sixV(u, "follow") > 0.5f && u.sixHold <= 0 && pos >= 0 && !u.m->mute.load() ? std::min(3, pos / 16) : chosen; }
+void Ui::sixSet(UiMod& u, int st, int what, float v) {
+  if (st < 0 || st >= 64) return; Module* m = u.m; const int nsc = (int)scales()[scaleOf(u, *eng)].steps.size();
+  if (m->seq[Module::si(st, 0)].load() < 0) m->seq[Module::si(st, 0)].store(0);   // (a step never touched: its note is the bottom one)
+  if (what == 0) m->seq[Module::si(st, 0)].store((float)std::max(0, std::min(2 * nsc, (int)std::lround(v))));
+  else if (what == 1) m->seq[Module::si(st, 0) + 1].store((float)std::max(0, std::min(16, (int)std::lround(v))));
+  else m->seq[Module::si(st, 1)].store(v > 0.5f ? 1.f : -1.f); }
+static std::string sixSay(const UiMod& u, int st, const Engine& eng, int sc, int root) {   // "STEP 5: D4, 2 STEPS LONG, ON"
+  const Module* m = u.m; const int deg = std::max(0, (int)std::lround(m->seq[Module::si(st, 0)].load())); const int L = (int)std::lround(m->seq[Module::si(st, 0) + 1].load());
+  const int note = (int)midiOf(degOf((int)sixV(u, "oct"), deg, sc), root, sc); (void)eng;
+  return "STEP " + std::to_string(st + 1) + ": " + noteName(note) + ", " + (L >= 1 ? std::to_string(L) + (L == 1 ? " STEP LONG" : " STEPS LONG") : std::string("THE VOICE'S LENGTH")) + (m->seq[Module::si(st, 1)].load() >= 0.5f ? ", ON" : ", OFF"); }
+void Ui::drawSixteen(Canvas& c, UiMod& u, int x, int y, int w) {
+  Module* m = u.m; const int sc = scaleOf(u, *eng), root = keyOf(u, *eng), oct = (int)sixV(u, "oct"), n = std::max(1, std::min(64, (int)std::lround(sixV(u, "steps"))));
+  const int page = sixPageShown(u), pos = (int)m->disp[0].load(), cw = w / 4, ch = 12;
+  const int played = (int)m->disp[1].load(); if (played != u.sixPlayed) { u.sixPlayed = played; const int k = (int)m->disp[2].load(); if (k >= 0 && k < 64) u.lit[k] = 0.15f; }
+  for (int i = 0; i < 16; i++) { const int st = page * 16 + i, cx = x + (i % 4) * cw, cy = y + (i / 4) * ch;
+    if (st >= n) { c.px(cx + cw / 2 - 1, cy + ch / 2 - 1, 21); continue; }   // past STEPS: not played
+    const bool on = m->seq[Module::si(st, 1)].load() >= 0.5f, lit = u.lit[st] > 0;
+    const int deg = std::max(0, (int)std::lround(m->seq[Module::si(st, 0)].load())), L = (int)std::lround(m->seq[Module::si(st, 0) + 1].load());
+    c.rect(cx, cy, cw - 1, ch - 1, lit ? 4 : on ? 24 : 21);
+    if (st == pos) c.frame(cx, cy, cw - 1, ch - 1, 4);   // where it is now
+    const std::string t = noteName((int)midiOf(degOf(oct, deg, sc), root, sc)); c.text(t, cx + (cw - 1) / 2 - Canvas::tw(t) / 2, cy + 2, lit || on ? 15 : 9);   // an off step: its note on the quieter fill
+    if (L >= 1) c.rect(cx + 2, cy + ch - 3, std::max(1, (cw - 5) * std::min(16, L) / 16), 1, lit || on ? 15 : 9); }   // its length: a bar along the bottom
+  for (int k = 0; k < 4; k++) { const int px = x + k * cw + 2, py = y + 4 * ch + 1; const bool here = k == page, playing = pos >= 0 && pos / 16 == k;
+    c.rect(px, py, cw - 5, 2, here ? 15 : 21); if (playing) c.rect(px + (cw - 5) / 2 - 1, py + 3, 3, 1, 4); }   // the pages: the one on show, and (below) the one playing
+}
+void Ui::sixPress(UiMod& u, int x, int y) {
+  const int cw = (geom(u).w - 6) / 4, ch = 12; const int col = x / std::max(1, cw), row = y / ch; if (col < 0 || col > 3) return;
+  if (row >= 4) { set(&u, "page", (float)(col + 1)); u.sixHold = 6; status("SIXTEEN  PAGE " + std::to_string(col + 1), 1); changed(); return; }   // a page mark: that page (FOLLOW waits a moment)
+  const int st = sixPageShown(u) * 16 + row * 4 + col; if (st >= 64) return;
+  drag.kind = D_SIX; drag.m = &u; drag.k = st; drag.moved = false; drag.held = shiftHeld; u.sixHold = 6;
+  drag.n0 = shiftHeld ? u.m->seq[Module::si(st, 0) + 1].load() : std::max(0.f, u.m->seq[Module::si(st, 0)].load()); }
+// LEARN 64 STEPS: turn the first knob (page 1, knob 1), then push it. Knob k of page p is then the first turn CC + 16p + k on the
+// learned channel, or the first CC + k on channel + p (some controllers number their pages one way, some the other); pushes the same
+bool Ui::sixteenMidi(int dev, unsigned char st, unsigned char d1, unsigned char d2) {
+  const int ty = st & 0xF0, ch = st & 15;
+  if (sixLearn) { UiMod* u = byId(sixLearn); if (!u) { sixLearn = 0; return false; }
+    if (sixStage == 0) { if (ty != 0xB0) return true; sixSeen.push_back({dev, st, d1, d2}); if (sixWait < 0) sixWait = 0.6f; return true; }
+    const int tcc = (int)sixV(*u, "tcc");
+    if ((ty == 0x90 && d2 > 0) || (ty == 0xB0 && d1 != tcc && d2 > 0)) { set(u, "pkind", ty == 0x90 ? 0.f : 1.f); set(u, "pnum", (float)d1);
+      sixLearn = 0; status("SIXTEEN LEARNED: EACH KNOB TURNS ITS STEP'S NOTE, A PUSH SWITCHES IT ON OR OFF, PUSH AND TURN SETS ITS LENGTH", 6); changed(); }
+    return true; }
+  if (ty != 0xB0 && ty != 0x90 && ty != 0x80) return false;
+  bool used = false;
+  for (auto& up : mods) { UiMod& u = *up; if (u.m->def->type != "sixteen") continue; const int mch = (int)sixV(u, "mch"), tcc = (int)sixV(u, "tcc"); if (mch < 0 || tcc < 0) continue;
+    if (!u.dev.empty() && dev >= 0 && dev < (int)midiDevNames.size() && midiDevNames[dev] != u.dev && std::find(midiDevNames.begin(), midiDevNames.end(), u.dev) != midiDevNames.end()) continue;
+    auto idxOf = [&](int base) { if (base < 0) return -1; if (ch == mch && d1 >= base && d1 < base + 64) return d1 - base; if (ch > mch && ch <= mch + 3 && d1 >= base && d1 < base + 16) return (ch - mch) * 16 + d1 - base; return -1; };
+    const int pk = (int)sixV(u, "pkind"), pn = (int)sixV(u, "pnum");
+    const bool pushMsg = (pk == 0 && (ty == 0x90 || ty == 0x80)) || (pk == 1 && ty == 0xB0 && idxOf(pn) >= 0 && (pn < tcc || pn >= tcc + 64 || ch != mch));
+    if (pushMsg) { const int i = idxOf(pn); if (i < 0) continue; used = true; const bool down = ty == 0x90 ? d2 > 0 : ty == 0xB0 ? d2 > 63 : false;
+      if (down) { if (u.sixDown[i] == 1) sixSet(u, i, 2, u.m->seq[Module::si(i, 1)].load() < 0.5f ? 1.f : 0.f); u.sixDown[i] = 1; }   // (pressed again with no letting go between: that was a tap)
+      else { if (u.sixDown[i] == 1) { sixSet(u, i, 2, u.m->seq[Module::si(i, 1)].load() < 0.5f ? 1.f : 0.f); status(sixSay(u, i, *eng, scaleOf(u, *eng), keyOf(u, *eng)), 1.5f); midiQuiet = 0.6f; } u.sixDown[i] = 0; }   // let go without turning: on, or off
+      if (sixV(u, "page") != (float)(i / 16 + 1)) set(&u, "page", (float)(i / 16 + 1)); u.sixHold = 6; continue; }
+    if (ty != 0xB0) continue; const int i = idxOf(tcc); if (i < 0) continue; used = true;
+    const int mode = (int)sixV(u, "tmode"); const bool rel = mode >= 1 && mode <= 3; const int nsc = (int)scales()[scaleOf(u, *eng)].steps.size();
+    const bool len = u.sixDown[i] != 0; if (len) u.sixDown[i] = 2;   // pushed and turning: its length
+    if (rel) { int dl = mode == 1 ? d2 - 64 : mode == 2 ? (d2 < 64 ? d2 : d2 - 128) : (d2 < 64 ? d2 : -(d2 - 64)); dl = std::max(-2, std::min(2, dl));
+      if (len) sixSet(u, i, 1, u.m->seq[Module::si(i, 0) + 1].load() + dl); else sixSet(u, i, 0, std::max(0.f, u.m->seq[Module::si(i, 0)].load()) + dl); }
+    else { if (len) sixSet(u, i, 1, d2 / 127.f * 16); else sixSet(u, i, 0, d2 / 127.f * 2 * nsc); }   // an absolute knob: its place across the range
+    if (sixV(u, "page") != (float)(i / 16 + 1)) set(&u, "page", (float)(i / 16 + 1)); u.sixHold = 6;   // the page it's on comes up
+    status(sixSay(u, i, *eng, scaleOf(u, *eng), keyOf(u, *eng)), 1.5f); midiQuiet = 0.6f; }
+  return used; }
+void Ui::startSixLearn(UiMod* u) { sixLearn = u->m->id; sixStage = 0; sixWait = -1; sixLearnT = 15; sixSeen.clear();
+  status("LEARN 64 STEPS: TURN THE FIRST KNOB OF PAGE 1 A LITTLE (ESCAPE: CANCEL)", 15); }
+
 void Ui::setBpm(float v) { const float b = roundBpm(clampf(v, 20, 240)); eng->tempo.bpm.store(b); status("SHARED TEMPO " + bpmText(b) + " BPM", 1.5f); changed(); }   // in tenths
 bool Ui::tempoDown(float sx, float sy) {   // true if the tap was inside the panel
   const int x = tp.x, y = tp.y; if (sx < x || sx >= x + TPW || sy < y || sy >= y + TPH) return false;
@@ -1258,7 +1335,7 @@ void Ui::pointerDown(float sx, float sy) {
   if (!u) {   // cables run behind modules, so only where you can see them
     bool onControl = false;
     if (u) { const Geom g0 = geom(*u); const ModuleDef* d0 = u->m->def;
-      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + g0.vh && (d0->type == "keys" || d0->type == "xfade" || d0->type == "tracker" || d0->type == "sample" || (d0->type == "tombola" && ly < g0.vy + 7 && lx >= g0.w - 30))); }
+      onControl = (!d0->fixed && ly >= g0.h - FOOT) || paramAt(u, ly) >= 0 || (d0->vis && ly >= g0.vy && ly < g0.vy + g0.vh && (d0->type == "keys" || d0->type == "sixteen" || d0->type == "xfade" || d0->type == "tracker" || d0->type == "sample" || (d0->type == "tombola" && ly < g0.vy + 7 && lx >= g0.w - 30))); }
     const int ci = onControl ? -1 : cableAt(wx, wy, u ? 2.5f : 4.f);
     if (ci >= 0) { drag.kind = D_GRAB; drag.grab = cables[ci]; return; }
   }
@@ -1296,6 +1373,7 @@ void Ui::pointerDown(float sx, float sy) {
   if (d->vis && ly >= g.vy && ly < g.vy + g.vh) {
     const int vx = lx - 3, vy = ly - g.vy;
     if (d->type == "keys") { keysPress(*u, vx, vy); return; }
+    if (d->type == "sixteen") { sixPress(*u, vx, vy); return; }
     if (d->type == "journey" && vy < 17) {   // KEY JOURNEY: a step's key (top), or its own scale (below)
       const int N = std::max(1, std::min(8, (int)std::lround(u->m->p[0].load()))), sw = std::min(16, (g.w - 6 + 1) / N), i = vx / std::max(1, sw); if (i < 0 || i >= N) return;
       Module* m = u->m; Dropdown q; q.x = u->x - viewX + 3 + i * sw; q.y = u->y - viewY + g.vy + (vy < 9 ? 9 : 17); const int id = m->id;
@@ -1360,6 +1438,7 @@ void Ui::pointerDown(float sx, float sy) {
         if (u->m->disp[2].load() <= 0) { status("NOTHING HEARD YET"); return; }
         const int r = (int)u->m->disp[0].load(), sc = (int)u->m->disp[1].load(); eng->key.root.store(r); eng->key.scale.store(sc);
         status(std::string("KEY ") + KEY_NAMES[r % 12] + " " + scales()[sc].name + ": THE SEQUENCERS FOLLOW IT NOW", 4); changed(); return; }
+      if (d->type == "sixteen" && q.key == "learn") { startSixLearn(u); return; }
       if (q.key == "clear" && u->clearAsk <= 0) { u->clearAsk = 2.5f; status(d->name + ": TAP CLEAR AGAIN TO CLEAR", 2.5f); return; }   // it wipes things: a second tap
       if (q.key == "clear") { u->clearAsk = 0; status(d->name + " CLEARED", 1.5f); }
       if (onAction && onAction(u, q.key)) return;
@@ -1441,6 +1520,10 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
   else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
     drag.m->m->p[drag.m->m->def->paramIndex("fade")].store(v); char b[32]; std::snprintf(b, 32, "FADE  A %d / B %d", (int)std::lround((1 - v) * 100), (int)std::lround(v * 100)); status(b, 1); }
+  else if (drag.kind == D_SIX && drag.m) {   // SIXTEEN: up and down for a step's note (with Shift: its length), about 4 pixels a step
+    if (std::fabs(sy - drag.sy) >= 3) drag.moved = true;
+    if (drag.moved) { const float v = std::round(drag.n0 + (drag.sy - sy) / 4); sixSet(*drag.m, drag.k, drag.held ? 1 : 0, v); drag.m->sixHold = 6;
+      status(sixSay(*drag.m, drag.k, *eng, scaleOf(*drag.m, *eng), keyOf(*drag.m, *eng)), 1.5f); } }
   else if (drag.kind == D_EUCLID) {   // EUCLID DRUMS: up for more HITS, sideways to ROTATE (about 6 pixels a step)
     Module* m = drag.m->m; const ModuleDef* d = m->def; const std::string k = std::to_string(drag.k + 1); const int st = (int)std::lround(m->p[d->paramIndex("st" + k)].load());
     const float h = std::max(0.f, std::min((float)st, std::round(drag.n0 + (drag.sy - sy) / 6))); const int ro = (((drag.dir + (int)std::lround((sx - drag.sx) / 6)) % st) + st) % st;
@@ -1474,6 +1557,7 @@ void Ui::insertInto(const UiCable& c0, int mid) { UiMod *a = byId(c0.from), *b =
 void Ui::pointerUp(float sx, float sy) {
   const int wx = (int)sx + viewX, wy = (int)sy + viewY; const Drag d = drag; drag = Drag();
   if (d.kind == D_TEMPO) { changed(); return; }
+  if (d.kind == D_SIX && d.m) { if (!d.moved) { sixSet(*d.m, d.k, 2, d.m->m->seq[Module::si(d.k, 1)].load() < 0.5f ? 1.f : 0.f); status(sixSay(*d.m, d.k, *eng, scaleOf(*d.m, *eng), keyOf(*d.m, *eng)), 1.5f); } changed(); return; }   // a tap: on, or off
   if (d.kind == D_PAN && !d.moved && !picked.empty()) { picked.clear(); status("NOTHING SELECTED", 1); return; }   // a tap on empty space lets the selection go
   if (d.kind == D_BOX) {   // every module the box touches joins the selection
     const int x0 = std::min(d.vx0, wx), x1 = std::max(d.vx0, wx), y0 = std::min(d.vy0, wy), y1 = std::max(d.vy0, wy); int n = 0;
@@ -1556,6 +1640,7 @@ void Ui::midiIn(int dev, unsigned char st, unsigned char d1, unsigned char d2) {
   const int ty = st & 0xF0, ch = st & 15;
   if (ty != 0xB0 && ty != 0x90 && ty != 0x80 && ty != 0xE0) return;
   if (learnMod) { if (learnSeen.empty() && ty == 0x80) return; learnSeen.push_back({dev, st, d1, d2}); if (learnWait < 0) learnWait = 0.6f; return; }   // gather for a moment, then decide
+  if (sixteenMidi(dev, st, d1, d2)) return;   // a SIXTEEN's knobs
   const std::string dn = dev >= 0 && dev < (int)midiDevNames.size() ? midiDevNames[dev] : std::string();
   auto devOk = [&](const MidiMap& m) {   // the same device; or the mapped one isn't here (another computer, say): any
     if (m.dev.empty() || m.dev == dn) return true; return std::find(midiDevNames.begin(), midiDevNames.end(), m.dev) == midiDevNames.end(); };
@@ -1622,6 +1707,7 @@ void Ui::mapApply(MidiMap& m, float v, int delta, int press) {
     if (q.key == "clear" && u->clearAsk <= 0) { u->clearAsk = 2.5f; status(d->name + ": PRESS AGAIN TO CLEAR", 2.5f); return; }
     if (q.key == "clear") u->clearAsk = 0;
     if (d->type == "tracker" && q.key == "clear") return;   // (that one only from the screen: it wipes every step)
+    if (d->type == "sixteen" && q.key == "learn") { startSixLearn(u); done(); return; }
     if (onAction && onAction(u, q.key)) { done(); return; } eng->action(u->m->id, q.key); status(d->name + "  " + q.label, 1.2f); done(); return; }
   if (!q.opts.empty()) { const int n = (int)q.opts.size(); int i = (int)std::lround(v0);
     if (m.kind == 1 || (press == 1 && v < 0)) { if (press != 1) return; i = n == 2 ? 1 - i : (i + 1) % n; }   // a button: on/off, or the next one round
@@ -1659,6 +1745,15 @@ void Ui::mapSend(MidiMap& m, float v) {
 }
 
 void Ui::midiFrame(float dt) {
+  for (auto& up : mods) if (up->sixHold > 0) up->sixHold -= dt;
+  if (sixLearn) { UiMod* u = byId(sixLearn); sixLearnT -= dt;
+    if (!u || sixLearnT <= 0) { sixLearn = 0; status("LEARN 64 STEPS: NOTHING CAME, SO NOTHING CHANGED", 3); }
+    else if (sixWait >= 0 && (sixWait -= dt) < 0) {   // the first knob, turned: its channel, number, and how it sends turns
+      std::vector<Seen> s; s.swap(sixSeen); sixWait = -1; const int ch = s[0].st & 15, cc = s[0].d1; std::vector<int> v; for (auto& x : s) if ((x.st & 15) == ch && x.d1 == cc) v.push_back(x.d2);
+      int same = 0; for (size_t i = 1; i < v.size(); i++) if (v[i] == v[i - 1]) same++; auto all = [&](auto f) { for (int x : v) if (!f(x)) return false; return true; }; int mode = 0;
+      if (v.size() >= 2 && same * 2 >= (int)v.size() - 1) { if (all([](int x) { return x >= 49 && x <= 79 && x != 64; })) mode = 1; else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 113 && x <= 127); })) mode = 2; else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 65 && x <= 79); })) mode = 3; }
+      set(u, "mch", (float)ch); set(u, "tcc", (float)cc); set(u, "tmode", (float)mode); u->dev = s[0].dev >= 0 && s[0].dev < (int)midiDevNames.size() ? midiDevNames[s[0].dev] : std::string();
+      sixStage = 1; sixLearnT = 15; status("LEARN 64 STEPS: NOW PUSH THAT SAME KNOB DOWN (CC " + std::to_string(cc) + ", CHANNEL " + std::to_string(ch + 1) + (mode ? ", TURNS" : ", POSITIONS") + ")", 15); } }
   if (learnMod) { learnT -= dt; if (learnWait >= 0 && (learnWait -= dt) < 0) learnDecide(); else if (learnT <= 0) { cancelLearn(); status("MIDI LEARN: NOTHING CAME, SO NOTHING CHANGED", 3); } }
   if (midiQuiet > 0 && (midiQuiet -= dt) <= 0) changed();   // a run of knob turns: saved (and one step to undo) once it settles
   fbT -= dt; if (fbT > 0) return; fbT = 0.03f;

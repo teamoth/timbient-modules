@@ -24,6 +24,7 @@ template <class V> struct Poly : Module {
     if (!best) { best = &v[0]; for (auto& x : v) if (x.age < best->age) best = &x; }
     V& x = *best; x.age = ++stamp;
     if (iAtk >= 0) { x.env.atk = e[iAtk]; x.env.dec = e[iAtk + 1]; x.env.sus = e[iAtk + 2]; x.env.hold = e[iAtk + 3]; x.env.rel = e[iAtk + 4]; }
+    if (ev.len > 0) x.env.hold = ev.len;   // a note with its own length (SIXTEEN's): held that long, in place of HOLD
     x.env.sr = sr; x.env.v = 0; x.env.start();
     if (!selfPan) panGains(rng.bi() * (iWidth >= 0 ? e[iWidth] : 0), x.pl, x.pr); else x.pl = x.pr = 1;
     x.vel = iVs >= 0 ? 1 - e[iVs] + e[iVs] * ev.vel : ev.vel; x.f = mtof(ev.note + (iPitch >= 0 ? e[iPitch] : 0));   // VEL SENS: how much harder notes are louder
