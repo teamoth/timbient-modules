@@ -73,7 +73,7 @@ static const std::map<std::string, std::string> PARAMS = {
   {"skey", "Key|The key it plays in. GLOBAL follows the session's (SETTINGS > KEY). A KEY JOURNEY patched into its KEY socket moves it."},
   {"sscale", "Scale|The scale it plays in. GLOBAL follows the session's (SETTINGS > SCALE)."},
   {"sync", "Tempo|SHARED follows the session's tempo (SETTINGS > BPM); OWN uses its own BPM. A cable into CLOCK overrides both."},
-  {"bpm", "BPM|Its own tempo, in beats a minute (when TEMPO is OWN)."},
+  {"bpm", "BPM|Its own tempo, in beats a minute, to a tenth (when TEMPO is OWN)."},
   {"div", "Step|How long each step is: 1/4 is a beat, 1/8 half a beat, 1/16 a quarter; T is a triplet."},
   {"swing", "Swing|Pushes every other step a little late, for a lilting feel."},
   {"pitch", "Pitch|Tunes it up or down, in semitones."},

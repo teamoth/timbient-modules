@@ -486,22 +486,21 @@ int main(int argc, char** argv) {
       const int x0 = ui.padX, y0 = ui.padY; ui.pointerDown((float)x0 + 20, (float)y0 + 3); ui.pointerMove((float)x0 - 80, (float)y0 + 43); ui.pointerUp(0, 0); frame();
       chk(ui.padX == x0 - 100 && ui.padY == y0 + 40, "moves"); ui.pointerDown((float)ui.padX + g.w - 5, (float)ui.padY + 3); ui.pointerUp(0, 0); chk(!ui.padOpen, "X closes"); }
     ui.onChange = oc; ui.padOpen = false; ui.pad.reset(); ui.padX = ui.padY = -1; ui.clearPatch(); if (!ok) fails++; std::printf("notepad:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
-  // HALF BPMs: tempos go in halves (72.5), shown without .5 when whole; the shared tempo's - and + move half a BPM; a module's own BPM
-  // steps by halves too
+  // BPMs in tenths (72.1), shown without .0 when whole; the shared tempo's - and + move a tenth; a module's own BPM steps by tenths too
   { std::string res; bool ok = true; auto chk = [&](bool c, const std::string& w) { if (!c) { ok = false; res += " [" + w + "]"; } };
-    chk(bpmText(72) == "72" && bpmText(72.5f) == "72.5" && bpmText(72.3f) == "72.5" && bpmText(72.2f) == "72" && halfBpm(99.76f) == 100, "text and rounding");
-    const ModuleDef* cd = findDef("clock"); const ParamDef& q = cd->params[cd->paramIndex("bpm")]; chk(q.step == 0.5f && fmtParam(q, 72.5f, 0) == "72.5" && fmtParam(q, 90, 0) == "90", "clock BPM");
-    const ModuleDef* hd = findDef("hops"); const ParamDef& hq = hd->params[hd->paramIndex("rate")]; chk(fmtParam(hq, 72.5f / 60, 0) == "72.5 BPM", "steps a second shown as BPM");
+    chk(bpmText(72) == "72" && bpmText(72.5f) == "72.5" && bpmText(72.1f) == "72.1" && bpmText(72.04f) == "72" && bpmText(119.96f) == "120" && roundBpm(99.76f) == 99.8f, "text and rounding");
+    const ModuleDef* cd = findDef("clock"); const ParamDef& q = cd->params[cd->paramIndex("bpm")]; chk(q.step == 0.1f && fmtParam(q, 72.1f, 0) == "72.1" && fmtParam(q, 90, 0) == "90", "clock BPM");
+    const ModuleDef* hd = findDef("hops"); const ParamDef& hq = hd->params[hd->paramIndex("rate")]; chk(fmtParam(hq, 72.1f / 60, 0) == "72.1 BPM", "steps a second shown as BPM");
     ui.clearPatch(); ui.add("out", 300, 30); Canvas c; c.fine = true; c.resize(700, 400); auto frame = [&] { c.beginFrame(); ui.draw(c, 0.016f); };
     eng.tempo.bpm.store(72); ui.openTempo(100, 40); frame(); ui.pointerDown(100 + 126 - 9, 40 + 14); ui.pointerUp(100 + 126 - 9, 40 + 14); const float up = eng.tempo.bpm.load();
     ui.pointerDown(100 + 8, 40 + 14); ui.pointerUp(100 + 8, 40 + 14); ui.pointerDown(100 + 8, 40 + 14); ui.pointerUp(100 + 8, 40 + 14); const float down = eng.tempo.bpm.load();
-    frame(); bool shown = false; for (auto& r : c.runs) if (r.s == "71.5 BPM") shown = true;
-    chk(up == 72.5f && down == 71.5f && shown, "tempo panel +, - (" + bpmText(up) + ", " + bpmText(down) + ")");
-    // a CLOCK at 72.5 BPM ticks at 72.5 (not 72 or 73)
-    ui.closeList(); ui.pointerDown(5, 300); ui.pointerUp(5, 300); ui.clearPatch(); eng.tempo.bpm.store(72.5f); UiMod* ck = ui.add("clock", 40, 40); ui.set(ck, "sync", 1); ui.set(ck, "div", 2);
-    const unsigned f0 = ck->m->fires[0].load(); run(eng, 60.f); const int ticks = (int)(ck->m->fires[0].load() - f0);
-    chk(std::abs(ticks - 290) <= 1, "clock at 72.5, 1/16: " + std::to_string(ticks) + " ticks in 60 s (72 would be 288, 73 292)");
-    eng.tempo.bpm.store(72); ui.clearPatch(); if (!ok) fails++; std::printf("half bpms:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
+    frame(); bool shown = false; for (auto& r : c.runs) if (r.s == "71.9 BPM") shown = true;
+    chk(up == roundBpm(72.1f) && down == roundBpm(71.9f) && shown, "tempo panel +, - (" + bpmText(up) + ", " + bpmText(down) + ")");
+    // a CLOCK at 72.1 BPM ticks at 72.1
+    ui.closeList(); ui.pointerDown(5, 300); ui.pointerUp(5, 300); ui.clearPatch(); eng.tempo.bpm.store(roundBpm(72.1f)); UiMod* ck = ui.add("clock", 40, 40); ui.set(ck, "sync", 1); ui.set(ck, "div", 2);
+    const unsigned f0 = ck->m->fires[0].load(); run(eng, 300.f); const int ticks = (int)(ck->m->fires[0].load() - f0);
+    chk(std::abs(ticks - 1442) <= 1, "clock at 72.1, 1/16: " + std::to_string(ticks) + " ticks in 300 s (72 would be 1440, 72.2 1444)");
+    eng.tempo.bpm.store(72); ui.clearPatch(); if (!ok) fails++; std::printf("bpms in tenths:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
   // SELECTING several modules: a Shift-drag box picks the modules it touches, Shift-click on a title adds one; dragging one title
   // moves them all; a group of them (and the cables between them) copies, pastes as new modules wired the same way, OUTPUT
   // meaning this session's own; deleting asks, then takes them all; a tap on empty space lets go. Ctx menus offer it all

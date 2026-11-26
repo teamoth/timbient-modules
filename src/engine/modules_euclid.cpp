@@ -97,7 +97,7 @@ struct Euclid : Module {
 
 static std::vector<ParamDef> euclidParams() {
   std::vector<ParamDef> v = {
-    only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 100); q.step = 0.5f; return q; }(), [](float x) { return bpmText(x); }), "own"),
+    only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 100); q.step = 0.1f; return q; }(), [](float x) { return bpmText(x); }), "own"),
     only(OP("div", "STEP", {"1/8", "1/16", "1/32"}, 1), "free"), only(pct("swing", "SWING", 0), "free"),
     pct("accent", "ACCENT", 0.5f), pct("chance", "CHANCE", 1), pct("mutate", "MUTATE", 0), pct("level", "LEVEL", 0.6f),
     noMod(OP("lane", "LANE", {"KICK", "SNARE", "HAT", "PERC"}, 0))};

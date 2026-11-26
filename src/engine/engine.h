@@ -160,9 +160,9 @@ template <typename T, int N> struct SpscQueue {   // single producer, single con
 };
 
 struct Tempo { std::atomic<float> bpm{72}; };
-// tempos go in halves (72, 72.5, 73...); shown without the .5 when whole
-inline float halfBpm(float v) { return std::round(v * 2) / 2; }
-inline std::string bpmText(float v) { v = halfBpm(v); const int w = (int)std::floor(v); return std::to_string(w) + (v - w > 0.25f ? ".5" : ""); }
+// tempos go in tenths (72, 72.1, 72.2...); shown without the .0 when whole
+inline float roundBpm(float v) { return std::round(v * 10) / 10; }
+inline std::string bpmText(float v) { const long t = std::lround(v * 10); return std::to_string(t / 10) + (t % 10 ? "." + std::to_string(t % 10) : ""); }
 // MIDI: bytes from the devices (each input has its own queue, filled by that device's thread), and bytes going out
 struct MidiMsg { uint8_t st = 0, d1 = 0, d2 = 0; };
 struct MidiOutMsg { int slot = 0, n = 0; uint8_t b[3] = {0, 0, 0}; double at = 0; };   // at: when to send, in seconds on the steady clock

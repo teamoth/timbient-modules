@@ -129,7 +129,7 @@ struct Tracker : Module {
 };
 static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PType::Trig}, {"STEP ENTER", PType::Trig}},
   {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}, {"CHN 1", PType::Trig}, {"CHN 2", PType::Trig}, {"CHN 3", PType::Trig}, {"CHN 4", PType::Trig}},
-  {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.5f; return q; }(), [](float v) { return bpmText(v); }), "own"),
+  {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.1f; return q; }(), [](float v) { return bpmText(v); }), "own"),
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), noMod(ST("estep", "STEP JUMP", 0, 8, 1)), OP("rec", "STEP RECORD", {"OFF", "ON"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL"),
    only(ST("w1", "RANDOM 1", 0, 7, 0), "never"), only(ST("w2", "RANDOM 2", 0, 7, 0), "never"), only(ST("w3", "RANDOM 3", 0, 7, 0), "never"), only(ST("w4", "RANDOM 4", 0, 7, 0), "never")},
@@ -307,7 +307,7 @@ static Reg rNoteLooper(new ModuleDef{"nloop", "NOTE LOOPER", Cat::Trig, {{"NOTES
   {OP("rec", "RECORD", {"OFF", "ON"}, 0), OP("thru", "THRU", {"OFF", "ON"}, 1),
    fine(fmt(pr("start", "START", 0, 128, 0), beatsText)), fmt(prExp("lenb", "LENGTH", 0.25f, 128, 16), beatsText),
    OP("dir", "PLAYS", {"FORWARDS", "BACKWARDS", "PING-PONG"}, 0),
-   only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.5f; return q; }(), [](float v) { return bpmText(v); }), "own"),
+   only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.1f; return q; }(), [](float v) { return bpmText(v); }), "own"),
    ST("trans", "TRANSPOSE", -24, 24, 0),
    OP("quant", "QUANTISE", {"OFF", "1/16", "1/8", "1/4"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("undo", "UNDO LAYER"), ACT("rrhythm", "RANDOM RHYTHM"), ACT("rorder", "RANDOM ORDER"), ACT("urand", "UNDO RANDOM"), ACT("clear", "CLEAR"),

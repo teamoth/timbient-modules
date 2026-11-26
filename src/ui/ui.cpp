@@ -18,7 +18,7 @@ static const int HEAD = 8, ROW = 7, FOOT = 9, TOP = 10;
 static int catCol(Cat c) { switch (c) { case Cat::Trig: return 24; case Cat::Voice: return 7; case Cat::Proc: return 17; case Cat::Mod: return 11; case Cat::Misc: return 54; default: return 9; } }
 // TRACKER, NOTE LOOPER: moving BPM while TEMPO is SHARED makes it OWN, starting from the session's tempo
 static void takeOwnTempo(UiMod* u, int k, Engine& eng) { const ModuleDef* d = u->m->def; if (d->type == "clock" || d->params[k].key != "bpm") return; const int si = d->paramIndex("sync");
-  if (si < 0 || u->m->p[si].load() < 0.5f || u->m->clockedIn.load()) return; u->m->p[si].store(0); u->m->p[k].store(halfBpm(eng.tempo.bpm.load())); }
+  if (si < 0 || u->m->p[si].load() < 0.5f || u->m->clockedIn.load()) return; u->m->p[si].store(0); u->m->p[k].store(roundBpm(eng.tempo.bpm.load())); }
 static void clockToTempo(UiMod* u, int k, Engine& eng);
 // TAP: the speed controls follow taps in rhythm (three or more). What a tap gap means for each:
 // 0 not tappable, 1 BPM, 2 steps a second (shown as BPM), 3 seconds, 4 Hz
@@ -41,7 +41,7 @@ bool Ui::tapRow(UiMod* u, int k) {
   if (nn < 2 || med < 0.05) return false;
   const double gap = sum / nn; float v = 0;
   switch (kind) { case 1: v = (float)(60 / gap); break; case 2: v = (float)(1 / gap); break; case 3: v = (float)gap; break; default: v = (float)(1 / gap); break; }
-  v = clampf(v, q.min, q.max); if (kind == 1) v = halfBpm(v); else if (kind == 2) v = halfBpm(v * 60) / 60;   // tempos in halves
+  v = clampf(v, q.min, q.max); if (kind == 1) v = roundBpm(v); else if (kind == 2) v = roundBpm(v * 60) / 60;   // tempos in tenths
   takeOwnTempo(u, k, *eng); u->m->p[k].store(v); clockToTempo(u, k, *eng);
   char b[48]; if (kind <= 2) std::snprintf(b, 48, "TAP %s BPM", bpmText(kind == 1 ? v : v * 60).c_str()); else if (kind == 3) std::snprintf(b, 48, "TAP %.2f S", v); else std::snprintf(b, 48, "TAP %.2f HZ", v);
   status(d->name + "  " + q.label + "  " + b, 1.5f); changed(); return true;
@@ -906,7 +906,7 @@ void Ui::draw(Canvas& c, float dt) {
   }
   // the tempo panel
   if (tp.open) {
-    tp.x = std::max(2, std::min(tp.x, c.W - TPW - 2)); tp.y = std::max(TOP + 1, std::min(tp.y, c.H - TPH - 2)); const int x = tp.x, y = tp.y; const float bpm = halfBpm(eng->tempo.bpm.load());
+    tp.x = std::max(2, std::min(tp.x, c.W - TPW - 2)); tp.y = std::max(TOP + 1, std::min(tp.y, c.H - TPH - 2)); const int x = tp.x, y = tp.y; const float bpm = roundBpm(eng->tempo.bpm.load());
     c.rect(x + 2, y + 2, TPW, TPH, 26); c.rect(x, y, TPW, TPH, MENU_BG); c.frame(x, y, TPW, TPH, 21);
     c.text("SHARED TEMPO", x + 4, y + 3, 18); const std::string v = bpmText(bpm) + " BPM"; c.text(v, x + TPW - 4 - Canvas::tw(v), y + 3, 4);
     auto btn = [&](int bx, int by, int w, const char* l) { c.frame(bx, by, w, 7, 18); c.text(l, bx + (w - Canvas::tw(l)) / 2, by + 1, 9); };
@@ -1150,12 +1150,12 @@ void Ui::keysPress(UiMod& u, int x, int y) {
   eng->trigger(u.m->id, -1, ev); u.lit[i] = 0.25f;
 }
 
-void Ui::setBpm(float v) { const float b = halfBpm(clampf(v, 20, 240)); eng->tempo.bpm.store(b); status("SHARED TEMPO " + bpmText(b) + " BPM", 1.5f); changed(); }   // in halves
+void Ui::setBpm(float v) { const float b = roundBpm(clampf(v, 20, 240)); eng->tempo.bpm.store(b); status("SHARED TEMPO " + bpmText(b) + " BPM", 1.5f); changed(); }   // in tenths
 bool Ui::tempoDown(float sx, float sy) {   // true if the tap was inside the panel
   const int x = tp.x, y = tp.y; if (sx < x || sx >= x + TPW || sy < y || sy >= y + TPH) return false;
   const float bpm = eng->tempo.bpm.load();
   if (sy >= y + 10 && sy < y + 19) {
-    if (sx < x + 15) setBpm(bpm - 0.5f); else if (sx >= x + TPW - 15) setBpm(bpm + 0.5f);   // - and +: half a BPM
+    const float st = shiftHeld ? 1.f : 0.1f; if (sx < x + 15) setBpm(bpm - st); else if (sx >= x + TPW - 15) setBpm(bpm + st);   // - and +: a tenth of a BPM (with Shift: a whole one)
     else { drag.kind = D_TEMPO; pointerMove(sx, sy); }
   } else if (sy >= y + 20 && sy < y + 29) {
     if (sx >= x + 4 && sx < x + 25) { taps.erase(std::remove_if(taps.begin(), taps.end(), [&](float t) { return blink - t > 3; }), taps.end()); taps.push_back(blink);
@@ -1381,7 +1381,7 @@ void Ui::pointerDown(float sx, float sy) {
 }
 
 // a CLOCK on SHARED tempo: its BPM is the session's tempo, shown on the top bar
-static void clockToTempo(UiMod* u, int k, Engine& eng) { if (u->m->def->type == "clock" && u->m->def->params[k].key == "bpm" && u->m->p[0].load() > 0.5f) eng.tempo.bpm.store(halfBpm(u->m->p[k].load())); }
+static void clockToTempo(UiMod* u, int k, Engine& eng) { if (u->m->def->type == "clock" && u->m->def->params[k].key == "bpm" && u->m->p[0].load() > 0.5f) eng.tempo.bpm.store(roundBpm(u->m->p[k].load())); }
 // - and +: one step for settings that move in steps, otherwise about a hundredth of the way along
 void Ui::nudge(UiMod* u, int k, int dir) { u->valK = k; u->valT = 1.2f;   /* - and +: the value shows where the name was, for a moment */
   takeOwnTempo(u, k, *eng);
@@ -1436,7 +1436,7 @@ void Ui::pointerMove(float sx, float sy) {
   else if (drag.kind == D_PARAM && drag.held) {}
   else if (drag.kind == D_PARAM) { drag.moved = true; const ParamDef& q = drag.m->m->def->params[drag.k]; const float v = q.fromNorm(drag.n0 + (sx - drag.sx) / (q.step > 0 && !q.exp ? 40.f : 70.f));
     verbTypeSet(drag.m, drag.k, drag.m->m->p[drag.k].load(), v); drag.m->m->p[drag.k].store(v); clockToTempo(drag.m, drag.k, *eng); status(drag.m->m->def->name + "  " + statusLabel(*drag.m, q) + "  " + valueText(*drag.m, drag.k, v, eng->key.root.load()), 1.5f); }
-  else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = halfBpm(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if (b != halfBpm(eng->tempo.bpm.load())) { eng->tempo.bpm.store(b); status("SHARED TEMPO " + bpmText(b) + " BPM", 1.5f); } }
+  else if (drag.kind == D_TEMPO) { const float tx = tp.x + 17.f, tw = TPW - 34.f; const float b = roundBpm(20 + clampf((sx - tx) / (tw - 1), 0, 1) * 220); if (b != roundBpm(eng->tempo.bpm.load())) { eng->tempo.bpm.store(b); status("SHARED TEMPO " + bpmText(b) + " BPM", 1.5f); } }
   else if (drag.kind == D_EDIT) editorMove(sx, sy);
   else if (drag.kind == D_BROWSE) { if (std::fabs(sy - drag.sy) > 2) drag.moved = true; if (drag.moved) { br.scroll = drag.n0; browserScroll(-(sy - drag.sy) / 8); } }
   else if (drag.kind == D_XFADE) { const Geom g = geom(*drag.m); const float x = (float)(wx - drag.m->x - 3); const float v = clampf((x - 6) / (g.w - 6 - 12), 0, 1);
