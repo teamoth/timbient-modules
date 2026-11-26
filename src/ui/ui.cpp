@@ -510,7 +510,7 @@ void Ui::drawDisplay(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
     for (int i = 0; i < n; i++) { const float tt = m->ev[i * 4].load(); const float nt = m->ev[i * 4 + 1].load(), vel = m->ev[i * 4 + 2].load(); const int ly = (int)m->ev[i * 4 + 3].load();
       const bool in = st == 1 || (tt >= S && tt < S + L); const int px0 = X(tt), py0 = y + H - 2 - (int)std::lround((nt - lo) / (hi - lo) * (H - 3));
       c.rect(px0, py0, 2, 2, !in ? 21 : ly == top ? (vel > 0.6f ? 4 : 9) : ly == top - 1 ? 24 : 44); }
-    auto label = [&](const std::string& t, int col) { c.rect(x + 1, y + 1, Canvas::tw(t) + 3, 7, 26); c.text(t, x + 2, y + 2, col); };   // on its own patch, clear of the grid
+    auto label = [&](const std::string& t, int col) { c.rect(x + 1, y + 1, Canvas::tw(t) + 3, 7, 25); c.text(t, x + 2, y + 2, col); };   // on its own patch (the inset colour), clear of the grid
     if (st == 1) { char b[32]; std::snprintf(b, 32, "RECORDING %.1f BEATS", D(3)); label(b, 14); }
     else if (n == 0) label("RECORD SOME NOTES", 18);
     else { const int hx = X(D(0)); for (int j = 0; j < H; j++) c.px(hx, y + j, st == 2 ? 14 : 9);

@@ -36,7 +36,11 @@ inline const std::vector<std::pair<const char*, Theme>>& presets() { static cons
   {"NAVY", {"#0f1a2e", "#1f2d47", "#6fb0e0", "#f0b45a", "#c28fd9"}}, {"INK TEAL", {"#0c2226", "#183a3f", "#5fd1c0", "#f08a6a", "#b6a2f0"}},
   {"PLUM NIGHT", {"#1d1426", "#33263f", "#d98ad0", "#7fc7d9", "#f0c070"}}, {"CHARCOAL", {"#18191c", "#2b2d32", "#59c3e8", "#f2a541", "#e86f8a"}},
   {"SLATE", {"#141414", "#262626", "#e2563b", "#e8e2d0", "#8fa6b3"}}, {"FOREST NIGHT", {"#0f1d17", "#1d3329", "#8fd17a", "#e0a86a", "#7fb0e0"}},
-  {"MIDNIGHT ROSE", {"#1a1420", "#2e2236", "#ef8fa8", "#8fd3c2", "#e8c27a"}}, {"DEEP SEA", {"#08202e", "#12384a", "#4fc3d9", "#f4d35e", "#ee8a8a"}}}; return v; }
+  {"MIDNIGHT ROSE", {"#1a1420", "#2e2236", "#ef8fa8", "#8fd3c2", "#e8c27a"}}, {"DEEP SEA", {"#08202e", "#12384a", "#4fc3d9", "#f4d35e", "#ee8a8a"}},
+  // in between: a mid-tone background, the modules a step lighter (so their text stays clear)
+  {"DUSK", {"#4a5260", "#c8cfda", "#9cc7e8", "#f0b97a", "#e0a8d0"}}, {"STONE", {"#66635d", "#cdc8be", "#a9d6de", "#f2c27a", "#d7b0e4"}},
+  {"SAGE", {"#54625a", "#c4d1c4", "#ecd59a", "#f2a47a", "#a3c6ea"}}, {"CLAY", {"#664c44", "#d3bcb1", "#9fd4cb", "#f0c27a", "#cbb4ea"}},
+  {"DENIM", {"#3d5270", "#bdcbde", "#f0c890", "#f29a8a", "#a8e0c8"}}, {"HEATHER", {"#5a4e66", "#cdc2d9", "#a8dbd2", "#f2c47a", "#eea4bc"}}}; return v; }
 // a colour's name from its hue (for the presets' colours in the lists): GREY, RED, CORAL, AMBER ... ROSE
 inline std::string hueName(const std::string& hex) {
   if (hex.size() < 7 || hex[0] != '#') return "COLOUR"; const int v = (int)std::strtol(hex.c_str() + 1, nullptr, 16);
@@ -124,7 +128,7 @@ inline std::string headerOf(const std::string& c) { std::string h = c; for (int 
 // MENUS: the top bar, menus, dropdowns and panels. 0 MATCH (a shade of the background, with text to suit), 1 BLACK, 2 DARK (a dark shade of the background)
 inline void applyTheme(Canvas& cv, const Theme& t, int menus = 0) {
   const bool pond = t.bg == "pond"; const std::string bg = pond ? "#07131d" : t.bg, md = t.mod; const bool lightMod = lum(md) > 0.5f;
-  cv.setColour(25, bg.c_str()); cv.setColour(26, (lum(bg) > 0.4f ? mixHex(bg, "#000000", 0.25f) : mixHex(bg, "#000000", 0.6f)).c_str()); cv.setColour(27, md.c_str());
+  cv.setColour(25, (lightMod && lum(bg) > 0.12f && lum(bg) < 0.45f ? mixHex(bg, md, 0.7f) : bg).c_str());   /* the insets (displays, little labels): the background, or for a mid-tone one under pale modules, most of the way to the modules (so their dark text reads) */ cv.setColour(26, (lum(bg) > 0.4f ? mixHex(bg, "#000000", 0.25f) : mixHex(bg, "#000000", 0.6f)).c_str()); cv.setColour(27, md.c_str());
   cv.setColour(28, lightMod ? "#1b1b1f" : "#d2c7a6"); cv.setColour(29, (lightMod ? mixHex(md, "#000000", 0.55f) : mixHex(md, "#ffffff", 0.5f)).c_str());
   cv.setColour(30, (lightMod ? mixHex(md, "#000000", 0.3f) : mixHex(md, "#000000", 0.5f)).c_str());   // quiet lines and fills
   cv.setColour(31, (lightMod ? mixHex(md, "#000000", 0.45f) : mixHex(md, "#ffffff", 0.38f)).c_str());   // quiet text: away from the module colour either way (it used 30, darker even on dark modules, so it was hard to read)
