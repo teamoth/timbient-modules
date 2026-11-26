@@ -872,8 +872,8 @@ void Ui::draw(Canvas& c, float dt) {
   else if (infoX0 > bx) c.text(info, infoX0, 3, 18);
   // the NOTEPAD: drawn as a module is (so it suits every theme), with a title of its own, kept on screen
   if (padOpen) if (UiMod* p = padMod()) {
-    const Geom g = geom(*p); if (padX < 0) { padX = c.W - g.w - 8; padY = TOP + 8; }
-    padX = std::max(0, std::min(padX, c.W - g.w)); padY = std::max(TOP + 1, std::min(padY, c.H - 12));
+    const Geom g = geom(*p); if (padX == PAD_UNSET || padY == PAD_UNSET) { padX = c.W - g.w - 8; padY = TOP + 8; }
+    padX = std::max(24 - g.w, std::min(padX, c.W - 24)); padY = std::max(TOP + 1, std::min(padY, c.H - 12));   // it can go off an edge, like a module, as long as 24 pixels of it stay in reach
     const uint8_t* ink0 = c.ink; const uint8_t* tink0 = c.textInk; p->x = padX + viewX; p->y = padY + viewY; drawModule(c, *p, dt);
     c.ink = nullptr; c.textInk = nullptr; c.rect(padX, padY, g.w, HEAD, catCol(Cat::Misc)); c.text("NOTEPAD", padX + 2, padY + 2, 15); c.text("x", padX + g.w - 6, padY + 2, 15);
     c.ink = ink0; c.textInk = tink0; }

@@ -635,7 +635,7 @@ int main(int argc, char** argv) {
   // NOTEPAD: the app's own note, kept with the settings (saved a moment after it changes, and on quitting)
   if (const Json* np = settings.get("notepad")) if (UiMod* p = ui.padMod()) {
     p->text = np->str("text"); p->noteW = std::max(60, (int)np->num("w", 150)); p->noteH = std::max(16, (int)np->num("h", 110));
-    ui.padX = (int)np->num("x", -1); ui.padY = (int)np->num("y", -1); ui.padOpen = np->num("open", 0) > 0.5; p->fold = np->num("fold", 0) > 0.5; }
+    ui.padX = (int)np->num("x", Ui::PAD_UNSET); ui.padY = (int)np->num("y", Ui::PAD_UNSET); ui.padOpen = np->num("open", 0) > 0.5; p->fold = np->num("fold", 0) > 0.5; }
   float padSaveT = -1;
   auto savePad = [&] { if (!ui.pad) return; Json j = Json::object(); j.set("text", Json::string(ui.pad->text)); j.set("w", Json::number(ui.pad->noteW)); j.set("h", Json::number(ui.pad->noteH));
     j.set("x", Json::number(ui.padX)); j.set("y", Json::number(ui.padY)); j.set("open", Json::number(ui.padOpen ? 1 : 0)); j.set("fold", Json::number(ui.pad->fold ? 1 : 0)); settings.set("notepad", j); saveSettings(); };

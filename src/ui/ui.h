@@ -219,7 +219,7 @@ public:
   // NOTEPAD: one note of your own, not in any session (a set list, reminders): a panel floating over the patch, shown or hidden
   // from the top bar, moved by its title, resized by its corner; it stays whatever session is opened. The app saves it
   static constexpr int PAD_ID = -77;
-  std::unique_ptr<UiMod> pad; bool padOpen = false, padDirty = false; int padX = -1, padY = -1;
+  std::unique_ptr<UiMod> pad; bool padOpen = false, padDirty = false; int padX = PAD_UNSET, padY = PAD_UNSET; static constexpr int PAD_UNSET = -99999;   // (not placed yet: top right)
   UiMod* padMod();                        // (made the first time it's needed)
   void noteChanged() { if (noteEdit == PAD_ID) padDirty = true; else changed(); }
   bool padAt(float sx, float sy) const;   // is this point on the panel
