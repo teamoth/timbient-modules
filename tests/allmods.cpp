@@ -589,6 +589,12 @@ int main(int argc, char** argv) {
     ui.midiIn(0, 0x90, 46, 127); ui.midiIn(0, 0xB0, 30, 66); ui.midiIn(0, 0x80, 46, 0); chk(len(10) == 2 && !on(10), "push and turn: its length (not switched)");
     ui.midiIn(0, 0xB0, 20 + 16 + 3, 65); chk(sixV(*sx, "page") == 2 && deg(19) >= 1, "page 2 by number");
     ui.midiIn(0, 0xB2, 20 + 4, 65); chk(sixV(*sx, "page") == 3 && deg(36) >= 1, "page 3 by channel");
+    // a knob sending positions (0 to 127): learned as such (even turned against its end), and moving a note by how far it turns, with no jump
+    ui.set(sx, "page", 1); ui.startSixLearn(sx); ui.midiIn(0, 0xB0, 0, 127); ui.midiIn(0, 0xB0, 0, 127); ui.midiIn(0, 0xB0, 0, 127); ui.midiIn(0, 0xB0, 0, 127); ui.midiFrame(0.7f); ui.midiIn(0, 0x90, 0, 127); ui.midiIn(0, 0x80, 0, 0);
+    chk(sixV(*sx, "tmode") == 0 && sixV(*sx, "tcc") == 0, "a position knob at its end: positions");
+    ui.sixSet(*sx, 3, 0, 4); ui.midiIn(0, 0xB0, 3, 100); const float a0 = deg(3); ui.midiIn(0, 0xB0, 3, 103); ui.midiIn(0, 0xB0, 3, 106); const float a1 = deg(3); ui.midiIn(0, 0xB0, 3, 97);
+    chk(a0 == 4 && a1 == 6 && deg(3) == 3, "positions move it by how far (" + std::to_string(a0) + " " + std::to_string(a1) + " " + std::to_string(deg(3)) + ")");
+    ui.set(sx, "tcc", 20); ui.set(sx, "tmode", 1); ui.set(sx, "pnum", 36);   // (back as it was learned above)
     // kept with the session
     { Json j = serializePatch(ui); Json f; Json::parse(j.dump(), f); ui.clearPatch(); loadPatch(ui, f); UiMod* s2 = nullptr; for (auto& up : ui.mods) if (up->m->def->type == "sixteen") s2 = up.get();
       chk(s2 && s2->m->seq[Module::si(9, 1)].load() >= 0.5f && s2->m->seq[Module::si(6, 0)].load() == 3 && s2->m->seq[Module::si(6, 0) + 1].load() == 2 && s2->m->seq[Module::si(10, 1)].load() < 0.5f && sixV(*s2, "tcc") == 20, "saved and loaded"); }

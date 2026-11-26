@@ -23,7 +23,8 @@ struct UiMod {
   float holdL = 0, holdR = 0, holdLT = 0, holdRT = 0;   // OUTPUT's meters: the loudest moment, held
   Module* m = nullptr; int x = 0, y = 0; bool fold = false;
   float hist[48] = {0}; int hi = 0; float ht = 0;   // recent values, for drawing the LFO's line
-  int sixPlayed = 0; float sixHold = 0; int sixDown[64] = {0};   // SIXTEEN: the last step it played; how long FOLLOW waits after a page was chosen; knobs held down (2: turned while held)
+  int sixPlayed = 0; float sixHold = 0; int sixDown[64] = {0}, sixLast[64] = {0}; bool sixKnown[64] = {false}; float sixAcc[64] = {0};   // sixLast, sixAcc: a knob sending positions, where it was and how far it has gone since the last step
+     // SIXTEEN: the last step it played; how long FOLLOW waits after a page was chosen; knobs held down (2: turned while held)
   float lit[64] = {0};                               // Note Grid pads that were just pressed
   float scroll = 0, hold = 0; int seqVer = 0, entered = 0;   // the Tracker: first row on show, a pause in FOLLOW after an edit
   // Sample / Grain Looper: the sounds held (Grain Looper uses only the first), each kept as a file named by id

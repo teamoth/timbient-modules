@@ -1200,7 +1200,7 @@ void Ui::sixPress(UiMod& u, int x, int y) {
 bool Ui::sixteenMidi(int dev, unsigned char st, unsigned char d1, unsigned char d2) {
   const int ty = st & 0xF0, ch = st & 15;
   if (sixLearn) { UiMod* u = byId(sixLearn); if (!u) { sixLearn = 0; return false; }
-    if (sixStage == 0) { if (ty != 0xB0) return true; sixSeen.push_back({dev, st, d1, d2}); if (sixWait < 0) sixWait = 0.6f; return true; }
+    if (sixStage == 0) { if (ty != 0xB0) return true; sixSeen.push_back({dev, st, d1, d2}); if (sixWait < 0 || sixSeen.size() < 4) sixWait = 0.6f; return true; }   // (it waits for a few clicks before deciding)
     const int tcc = (int)sixV(*u, "tcc");
     if ((ty == 0x90 && d2 > 0) || (ty == 0xB0 && d1 != tcc && d2 > 0)) { set(u, "pkind", ty == 0x90 ? 0.f : 1.f); set(u, "pnum", (float)d1);
       sixLearn = 0; status("SIXTEEN LEARNED: EACH KNOB TURNS ITS STEP'S NOTE, A PUSH SWITCHES IT ON OR OFF, PUSH AND TURN SETS ITS LENGTH", 6); changed(); }
@@ -1221,7 +1221,10 @@ bool Ui::sixteenMidi(int dev, unsigned char st, unsigned char d1, unsigned char 
     const bool len = u.sixDown[i] != 0; if (len) u.sixDown[i] = 2;   // pushed and turning: its length
     if (rel) { int dl = mode == 1 ? d2 - 64 : mode == 2 ? (d2 < 64 ? d2 : d2 - 128) : (d2 < 64 ? d2 : -(d2 - 64)); dl = std::max(-2, std::min(2, dl));
       if (len) sixSet(u, i, 1, u.m->seq[Module::si(i, 0) + 1].load() + dl); else sixSet(u, i, 0, std::max(0.f, u.m->seq[Module::si(i, 0)].load()) + dl); }
-    else { if (len) sixSet(u, i, 1, d2 / 127.f * 16); else sixSet(u, i, 0, d2 / 127.f * 2 * nsc); }   // an absolute knob: its place across the range
+    else {   // a knob sending positions: how far it moved (about 3 a step), not where it is, so nothing jumps to the knob's own place
+      if (!u.sixKnown[i]) { u.sixKnown[i] = true; u.sixLast[i] = d2; u.sixAcc[i] = 0; }
+      else { u.sixAcc[i] += (float)(d2 - u.sixLast[i]); u.sixLast[i] = d2; int dl = 0; while (u.sixAcc[i] >= 3) { dl++; u.sixAcc[i] -= 3; } while (u.sixAcc[i] <= -3) { dl--; u.sixAcc[i] += 3; }
+        if (dl) { if (len) sixSet(u, i, 1, u.m->seq[Module::si(i, 0) + 1].load() + dl); else sixSet(u, i, 0, std::max(0.f, u.m->seq[Module::si(i, 0)].load()) + dl); } } }
     if (sixV(u, "page") != (float)(i / 16 + 1)) set(&u, "page", (float)(i / 16 + 1)); u.sixHold = 6;   // the page it's on comes up
     status(sixSay(u, i, *eng, scaleOf(u, *eng), keyOf(u, *eng)), 1.5f); midiQuiet = 0.6f; }
   return used; }
@@ -1752,7 +1755,8 @@ void Ui::midiFrame(float dt) {
     else if (sixWait >= 0 && (sixWait -= dt) < 0) {   // the first knob, turned: its channel, number, and how it sends turns
       std::vector<Seen> s; s.swap(sixSeen); sixWait = -1; const int ch = s[0].st & 15, cc = s[0].d1; std::vector<int> v; for (auto& x : s) if ((x.st & 15) == ch && x.d1 == cc) v.push_back(x.d2);
       int same = 0; for (size_t i = 1; i < v.size(); i++) if (v[i] == v[i - 1]) same++; auto all = [&](auto f) { for (int x : v) if (!f(x)) return false; return true; }; int mode = 0;
-      if (v.size() >= 2 && same * 2 >= (int)v.size() - 1) { if (all([](int x) { return x >= 49 && x <= 79 && x != 64; })) mode = 1; else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 113 && x <= 127); })) mode = 2; else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 65 && x <= 79); })) mode = 3; }
+      const bool endStop = !v.empty() && std::all_of(v.begin(), v.end(), [&](int x) { return x == v[0]; }) && (v[0] == 0 || v[0] == 127);   // a position knob turned against its end: the same 0 or 127 again, not turns
+      if (v.size() >= 3 && !endStop && same * 2 >= (int)v.size() - 1) { if (all([](int x) { return x >= 49 && x <= 79 && x != 64; })) mode = 1; else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 113 && x <= 127); })) mode = 2; else if (all([](int x) { return (x >= 1 && x <= 15) || (x >= 65 && x <= 79); })) mode = 3; }
       set(u, "mch", (float)ch); set(u, "tcc", (float)cc); set(u, "tmode", (float)mode); u->dev = s[0].dev >= 0 && s[0].dev < (int)midiDevNames.size() ? midiDevNames[s[0].dev] : std::string();
       sixStage = 1; sixLearnT = 15; status("LEARN 64 STEPS: NOW PUSH THAT SAME KNOB DOWN (CC " + std::to_string(cc) + ", CHANNEL " + std::to_string(ch + 1) + (mode ? ", TURNS" : ", POSITIONS") + ")", 15); } }
   if (learnMod) { learnT -= dt; if (learnWait >= 0 && (learnWait -= dt) < 0) learnDecide(); else if (learnT <= 0) { cancelLearn(); status("MIDI LEARN: NOTHING CAME, SO NOTHING CHANGED", 3); } }
