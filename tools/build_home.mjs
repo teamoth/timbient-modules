@@ -9,10 +9,12 @@ const md = readFileSync(mdPath, 'utf8').replace(/<!--[\s\S]*?-->/g, '').replace(
 const tpl = readFileSync(tplPath, 'utf8');
 
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// a link to another site (not this one, and not this project's own downloads) opens in a new tab
+const away = (u) => /^https?:\/\//.test(u) && !/^https?:\/\/(teamoth\.github\.io\/timbient-modules|github\.com\/teamoth\/timbient-modules)/.test(u.replace(/&amp;/g, '&'));
 const inline = (s) => {
   const codes = []; s = s.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
   s = esc(s)
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => `<a href="${u}">${t}</a>`)
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => `<a href="${u}"${away(u) ? ' target="_blank" rel="noopener"' : ''}>${t}</a>`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>');
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code class="inline">${esc(codes[+i])}</code>`);
