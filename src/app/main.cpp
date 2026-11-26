@@ -40,6 +40,8 @@ static inline void flushDenormals() {}
 // DROPOUTS: a callback that took longer than the sound it made (the computer couldn't keep up), or one that came far later than
 // it should have (it was held up). Counted here, told on screen. gDropArm: none counted until the sound has settled (just started)
 static std::atomic<unsigned> gDropouts{0}; static std::atomic<bool> gDropArm{false}; static std::atomic<float> gDropRate{48000};
+// the worst since the screen last looked: how long a callback took and how long it had (ms), or how late it came (ms)
+static std::atomic<float> gDropTook{0}, gDropHad{0}, gDropLate{0};
 static void audioCallback(ma_device*, void* output, const void*, ma_uint32 frames) {
   flushDenormals();
   using clk = std::chrono::steady_clock; static clk::time_point lastStart; static bool had = false; const clk::time_point t0 = clk::now();
@@ -53,7 +55,9 @@ static void audioCallback(ma_device*, void* output, const void*, ma_uint32 frame
   }
   const double period = frames / (double)gDropRate.load(std::memory_order_relaxed), took = std::chrono::duration<double>(clk::now() - t0).count();
   const double gap = had ? std::chrono::duration<double>(t0 - lastStart).count() : 0; lastStart = t0; had = true;
-  if (gDropArm.load(std::memory_order_relaxed) && (took > period * 0.95 || gap > period * 3 + 0.004)) gDropouts.fetch_add(1, std::memory_order_relaxed);
+  if (gDropArm.load(std::memory_order_relaxed)) {
+    if (took > period * 0.95) { if (took * 1000 > gDropTook.load(std::memory_order_relaxed)) { gDropTook.store((float)(took * 1000), std::memory_order_relaxed); gDropHad.store((float)(period * 1000), std::memory_order_relaxed); } gDropouts.fetch_add(1, std::memory_order_relaxed); }
+    else if (gap > period * 3 + 0.004) { const float late = (float)((gap - period) * 1000); if (late > gDropLate.load(std::memory_order_relaxed)) gDropLate.store(late, std::memory_order_relaxed); gDropouts.fetch_add(1, std::memory_order_relaxed); } }
 }
 static const int BUFFERS[5] = {128, 256, 512, 1024, 2048};
 // QUALITY: samples per second (0: the sound output's own rate). Lower rates cost less and lose the very highest treble
@@ -427,6 +431,7 @@ int main(int argc, char** argv) {
       SDL_ShowSaveFileDialog(onSaveDialog, nullptr, win, JSON_FILTER, 1, start.c_str()); });
     if (ui.ask) { ui.ask->check = settings.num("keyInName", 0) > 0.5 ? 1 : 0; ui.ask->checkLabel = "ADD KEY AND SCALE";
       if (!curFile.empty()) { std::string n = fileName(curFile); const size_t dot = n.rfind('.'); if (dot != std::string::npos && dot > 0) n.resize(dot); ui.ask->text = n; } } };   // a saved session: its own name to start from (NEW NAME: a random one)
+  std::vector<std::string> dropLog;   // DROPOUT LOG (SETTINGS): the last dozen, newest last
   // ---- GROUPS: several modules together, with the cables between them. COPY puts them on the clipboard (as text), PASTE adds
   // them to whatever session is open, at the pointer; SAVE AS A GROUP keeps them as a file (with their sounds) in the groups folder,
   // and ADD > GROUPS lists those. OUTPUT is never copied, but cables into it are: pasted, they go into this session's OUTPUT ----
@@ -647,7 +652,7 @@ int main(int argc, char** argv) {
     Dropdown d; d.x = x0; d.y = 11;
     const std::string bpm = "BPM  " + bpmText((*curEng).tempo.bpm.load());
     char buf[64]; std::snprintf(buf, 64, "AUDIO BUFFER  %d (%.0f MS)", BUFFERS[sound.bufIdx], BUFFERS[sound.bufIdx] * 3 * 1000.0 / (*curEng).sr);
-    d.items = {std::string("KEY  ") + KEY_NAMES[(*curEng).key.root.load()], std::string("SCALE  ") + scales()[(*curEng).key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround((*curEng).sr / 100) / 10) + "." + std::to_string((int)std::lround((*curEng).sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS", "MIDI", "SEND FEEDBACK"};
+    d.items = {std::string("KEY  ") + KEY_NAMES[(*curEng).key.root.load()], std::string("SCALE  ") + scales()[(*curEng).key.scale.load()].name, bpm, buf, "OUTPUT  " + (sound.want.empty() ? std::string("SYSTEM DEFAULT") : sound.want), "INPUT  " + (settings.str("inputDevice").empty() ? std::string("SYSTEM DEFAULT") : settings.str("inputDevice")), std::string("QUALITY  ") + (rateIdx == 0 ? "AUTO " : "") + std::to_string((int)std::lround((*curEng).sr / 100) / 10) + "." + std::to_string((int)std::lround((*curEng).sr / 100) % 10) + "K", "SCREEN  " + std::to_string(FPS[fpsIdx]) + " FPS", std::string("CABLE MOTION  ") + (ui.cableMotion ? "ON" : "OFF"), "THEME", "ABOUT AND CREDITS", "MIDI", "SEND FEEDBACK", "DROPOUT LOG" + (dropLog.empty() ? std::string("  (NONE YET)") : "  (" + std::to_string(dropLog.size()) + ")")};
     d.title = -1;
     d.pick = [&, x0](int i) {
       Dropdown q; q.x = x0; q.y = 11;
@@ -687,6 +692,10 @@ int main(int argc, char** argv) {
         ui.status(ui.cableMotion ? "CABLE MOTION ON: PULSES AND FLOW ALONG THE CABLES" : "CABLE MOTION OFF: A LITTLE LIGHTER ON OLDER COMPUTERS", 4); return; }
       else if (i == 9) { openTheme(x0); return; }
       else if (i == 11) { ui.openMidiMenu(x0, 11); return; }   // MIDI: DEVICES, MONITOR, MIDI MAP
+      else if (i == 13) {   // DROPOUT LOG: the last few, newest first, with which kind and when (tap one: nothing; CLEAR empties it)
+        q.title = 0; q.items = {dropLog.empty() ? "NO DROPOUTS SINCE THE APP STARTED" : "DROPOUTS, NEWEST FIRST"}; for (auto it = dropLog.rbegin(); it != dropLog.rend(); ++it) q.items.push_back(*it);
+        if (!dropLog.empty()) q.items.push_back("CLEAR THE LOG"); const int nl = (int)dropLog.size();
+        q.pick = [&, nl](int j) { if (j == nl + 1) { dropLog.clear(); ui.dropouts = 0; ui.status("DROPOUT LOG CLEARED", 1.5f); } }; }
       else if (i == 12) {   // SEND FEEDBACK: the form on the website, with this copy's version and set-up filled in (nothing personal)
         auto enc = [](const std::string& v) { std::string o; char b[4]; for (unsigned char ch : v) { if (std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_') o += (char)ch; else { std::snprintf(b, sizeof b, "%%%02X", ch); o += b; } } return o; };
         int midiIns = 0; for (auto& md : ui.midiDevs) if (md.input && md.open) midiIns++;
@@ -912,7 +921,14 @@ int main(int argc, char** argv) {
     { static float armT = 0, quietT = 0; static unsigned seen = 0; quietT -= ldt;   // DROPOUTS: said on screen (at most every few seconds)
       if (!gDropArm.load()) { armT += ldt; if (armT > 2) { armT = 0; gDropArm.store(true); seen = gDropouts.load(); } }
       const unsigned n = gDropouts.load(); if (n != seen) { const unsigned k = n - seen; seen = n; ui.dropouts += (int)k;   // (kept in the top bar too, until tapped)
-        if (quietT <= 0) { quietT = 4; ui.status(std::string(k > 1 ? "SOUND DROPOUTS" : "A SOUND DROPOUT") + (curEng->blending() ? " AS THE BLEND WENT ON" : "") + ": THE COMPUTER COULDN'T KEEP UP. A BIGGER BUFFER (SETTINGS) GIVES IT MORE TIME", 5); } } }
+        // which kind: TOO SLOW (working it out took longer than the sound lasts) or LATE (the computer asked for it late: held up)
+        const float took = gDropTook.exchange(0), had = gDropHad.exchange(0), late = gDropLate.exchange(0); char what[64];
+        if (took > 0) std::snprintf(what, sizeof what, "TOO SLOW: TOOK %.0f MS OF %.0f", took, had); else std::snprintf(what, sizeof what, "LATE BY %.0f MS", late);
+        char when[16]; { const std::time_t tt = std::time(nullptr); std::strftime(when, sizeof when, "%H:%M:%S", std::localtime(&tt)); }
+        const bool bl = curEng->blending() != nullptr; const float bat = bl ? ui.blendAt : -1;
+        std::string line = std::string(when) + "  " + (k > 1 ? std::to_string(k) + " " : "") + what + (bl ? (bat < 0.02f ? "  BLEND STARTING" : "  MID-BLEND") : "");
+        dropLog.push_back(line); if (dropLog.size() > 12) dropLog.erase(dropLog.begin()); ui.dropLast = line;
+        if (quietT <= 0) { quietT = 4; ui.status(std::string(k > 1 ? "SOUND DROPOUTS" : "A SOUND DROPOUT") + (bl ? " AS A BLEND WENT ON" : "") + ", " + what + ". SETTINGS > DROPOUT LOG KEEPS THEM", 6); } } }
     // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
     { bool want = false; for (auto& up : ui.mods) if (up->m->def->type == "audioin") want = true;   // AUDIO IN: the input open while there's one (closed a little after the last goes)
       captureT -= ldt; if (want) captureIdle = 0; else captureIdle += ldt;
