@@ -45,7 +45,8 @@ int main(int argc, char** argv) {
       if (d->ins.size()) ui.connect(clk, "PULSE", m, d->ins[0].name);
       if (d->type == "tracker") { for (int i = 0; i < 16; i += 2) { m->m->seq[i * 2].store(60.f + i); m->m->seq[i * 2 + 1].store(0.8f); } } }
     if (d->type == "stretch") ui.set(m, "src", 1);  // stretch a file
-    if (d->type == "looper") ui.set(m, "len", 1.5f);   // (a short window, so it has heard something well within the 4 seconds)
+    if (d->type == "looper") ui.set(m, "len", 1.5f);
+    if (d->type == "sixteen") for (int k : {0, 4, 8, 12}) m->m->seq[Module::si(k, 1)].store(1);   // (it starts blank: some steps on, to hear it)   // (a short window, so it has heard something well within the 4 seconds)
     if (d->type == "sample" || d->type == "looper" || d->type == "stretch") {   // give it a sound: a few seconds of a gliding tone with some noise
       AudioBuf* b = new AudioBuf(); b->sr = 44100; b->d.resize(44100 * 3); float ph = 0; Rng rr(5);
       for (size_t i = 0; i < b->d.size(); i++) { ph += (220 + i * 0.003f) / 44100.f; b->d[i] = 0.6f * std::sin(TAU * ph) + 0.05f * rr.bi(); }
@@ -595,6 +596,10 @@ int main(int argc, char** argv) {
     ui.sixSet(*sx, 3, 0, 4); ui.midiIn(0, 0xB0, 3, 100); const float a0 = deg(3); ui.midiIn(0, 0xB0, 3, 103); ui.midiIn(0, 0xB0, 3, 106); const float a1 = deg(3); ui.midiIn(0, 0xB0, 3, 97);
     chk(a0 == 4 && a1 == 6 && deg(3) == 3, "positions move it by how far (" + std::to_string(a0) + " " + std::to_string(a1) + " " + std::to_string(deg(3)) + ")");
     ui.set(sx, "tcc", 20); ui.set(sx, "tmode", 1); ui.set(sx, "pnum", 36);   // (back as it was learned above)
+    // a step past STEPS: drawn (an outline, its note) and still set with a tap
+    { ui.set(sx, "steps", 16); ui.set(sx, "page", 2); ui.set(sx, "follow", 0); c.beginFrame(); ui.draw(c, 0.016f); bool shown = false; for (auto& r : c.runs) if (r.s.size() >= 2 && r.s.size() <= 3 && r.y > sx->y + g.vy - 2 && r.y < sx->y + g.vy + 48) shown = true;
+      const bool was = on(16); ui.pointerDown((float)(sx->x + 3 + cw / 2), (float)(sx->y + g.vy + 5)); ui.pointerUp((float)(sx->x + 3 + cw / 2), (float)(sx->y + g.vy + 5));
+      chk(shown && on(16) != was, "past STEPS: shown and set"); ui.set(sx, "page", 1); ui.set(sx, "steps", 4); }
     // RANGE: how far a note reaches (a five-note scale: 2 octaves is 10 steps up, 4 octaves 20)
     { ui.set(sx, "sscale", 0); const int nsc = (int)scales()[eng.key.scale.load()].steps.size(); ui.sixSet(*sx, 7, 0, 999); const float r2 = deg(7); ui.set(sx, "range", 4); ui.sixSet(*sx, 7, 0, 999);
       chk(r2 == 2 * nsc && deg(7) == 4 * nsc, "RANGE (" + std::to_string(r2) + ", " + std::to_string(deg(7)) + ")"); ui.set(sx, "range", 2); }

@@ -1172,16 +1172,19 @@ void Ui::sixSet(UiMod& u, int st, int what, float v) {
 static std::string sixSay(const UiMod& u, int st, const Engine& eng, int sc, int root) {   // "STEP 5: D4, 2 STEPS LONG, ON"
   const Module* m = u.m; const int deg = std::max(0, (int)std::lround(m->seq[Module::si(st, 0)].load())); const int L = (int)std::lround(m->seq[Module::si(st, 0) + 1].load());
   const int note = (int)midiOf(degOf((int)sixV(u, "oct"), deg, sc), root, sc); (void)eng;
-  return "STEP " + std::to_string(st + 1) + ": " + noteName(note) + ", " + (L >= 1 ? std::to_string(L) + (L == 1 ? " STEP LONG" : " STEPS LONG") : std::string("THE VOICE'S LENGTH")) + (m->seq[Module::si(st, 1)].load() >= 0.5f ? ", ON" : ", OFF"); }
+  return "STEP " + std::to_string(st + 1) + ": " + noteName(note) + ", " + (L >= 1 ? std::to_string(L) + (L == 1 ? " STEP LONG" : " STEPS LONG") : std::string("THE VOICE'S LENGTH")) + (m->seq[Module::si(st, 1)].load() >= 0.5f ? ", ON" : ", OFF")
+    + (st >= (int)std::lround(sixV(u, "steps")) ? " (PAST STEPS: RAISE STEPS TO " + std::to_string(st + 1) + " OR MORE TO HEAR IT)" : ""); }
 void Ui::drawSixteen(Canvas& c, UiMod& u, int x, int y, int w, float dt) {
   for (auto& l : u.lit) l = std::max(0.f, l - dt);   // each flash fades (it was never counted down, so a step that had played stayed lit)
   Module* m = u.m; const int sc = scaleOf(u, *eng), root = keyOf(u, *eng), oct = (int)sixV(u, "oct"), n = std::max(1, std::min(64, (int)std::lround(sixV(u, "steps"))));
   const int page = sixPageShown(u), pos = (int)m->disp[0].load(), cw = w / 4, ch = 12;
   const int played = (int)m->disp[1].load(); if (played != u.sixPlayed) { u.sixPlayed = played; const int k = (int)m->disp[2].load(); if (k >= 0 && k < 64) u.lit[k] = 0.15f; }
   for (int i = 0; i < 16; i++) { const int st = page * 16 + i, cx = x + (i % 4) * cw, cy = y + (i / 4) * ch;
-    if (st >= n) { c.px(cx + cw / 2 - 1, cy + ch / 2 - 1, 21); continue; }   // past STEPS: not played
     const bool on = m->seq[Module::si(st, 1)].load() >= 0.5f, lit = u.lit[st] > 0;
     const int deg = std::max(0, (int)std::lround(m->seq[Module::si(st, 0)].load())), L = (int)std::lround(m->seq[Module::si(st, 0) + 1].load());
+    if (st >= n) {   // past STEPS: not played, but there to set up (an outline: orange when on)
+      c.frame(cx, cy, cw - 1, ch - 1, on ? 24 : 21); const std::string t = noteName((int)midiOf(degOf(oct, deg, sc), root, sc)); c.text(t, cx + (cw - 1) / 2 - Canvas::tw(t) / 2, cy + 2, on ? 9 : 18);
+      if (L >= 1) c.rect(cx + 2, cy + ch - 3, std::max(1, (cw - 5) * std::min(16, L) / 16), 1, 18); continue; }
     c.rect(cx, cy, cw - 1, ch - 1, lit ? 17 : on ? 24 : 21);   // playing: a flash in the cool colour (not another orange), on: pale orange, off: grey
     if (st == pos) c.frame(cx, cy, cw - 1, ch - 1, 17);   // where it is now (the same cool colour)
     const std::string t = noteName((int)midiOf(degOf(oct, deg, sc), root, sc)); c.text(t, cx + (cw - 1) / 2 - Canvas::tw(t) / 2, cy + 2, lit || on ? 15 : 9);   // an off step: its note on the quieter fill

@@ -143,8 +143,7 @@ struct Sixteen : Module {
   enum { SYNC, BPM, DIV, STEPS, DIR, CHANCE, VEL, OCT, RANGE, PAGE, FOLLOW, LEARN, CLEAR };
   static constexpr int N = 64;
   int pos = -1, way = 1; double next = -1; ClockIn2 ck;
-  Sixteen() { allocSeq(); for (int i = 0; i < N; i++) seq[si(i, 0) + 1].store(0);   // (lengths start at 0: the voice decides)
-    static const int START[4] = {0, 2, 4, 2}; for (int k = 0; k < 4; k++) { seq[si(k * 4, 0)].store((float)START[k]); seq[si(k * 4, 1)].store(1); } }   // a new one starts with four steps on, so it's heard straight away
+  Sixteen() { allocSeq(); for (int i = 0; i < N; i++) seq[si(i, 0) + 1].store(0); }   // lengths start at 0 (the voice decides); a new one starts blank, every step off
   int len() const { return std::max(1, std::min(N, (int)std::lround(e[STEPS]))); }
   void step() {
     const bool clk = clockedIn.load(); const float per = clk && ck.cp > 0 ? ck.cp : 60.f / (e[SYNC] > 0.5f ? eng->tempo.bpm.load(std::memory_order_relaxed) : e[BPM]) / TRK_DIV[(int)e[DIV]];
