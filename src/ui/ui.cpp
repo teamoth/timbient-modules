@@ -1166,7 +1166,7 @@ int Ui::sixPageShown(const UiMod& u) const {
 void Ui::sixSet(UiMod& u, int st, int what, float v) {
   if (st < 0 || st >= 64) return; Module* m = u.m; const int nsc = (int)scales()[scaleOf(u, *eng)].steps.size();
   if (m->seq[Module::si(st, 0)].load() < 0) m->seq[Module::si(st, 0)].store(0);   // (a step never touched: its note is the bottom one)
-  if (what == 0) m->seq[Module::si(st, 0)].store((float)std::max(0, std::min(2 * nsc, (int)std::lround(v))));
+  if (what == 0) m->seq[Module::si(st, 0)].store((float)std::max(0, std::min(std::max(1, (int)std::lround(sixV(u, "range"))) * nsc, (int)std::lround(v))));   // up to RANGE octaves
   else if (what == 1) m->seq[Module::si(st, 0) + 1].store((float)std::max(0, std::min(16, (int)std::lround(v))));
   else m->seq[Module::si(st, 1)].store(v > 0.5f ? 1.f : -1.f); }
 static std::string sixSay(const UiMod& u, int st, const Engine& eng, int sc, int root) {   // "STEP 5: D4, 2 STEPS LONG, ON"

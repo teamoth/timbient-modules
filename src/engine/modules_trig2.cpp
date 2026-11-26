@@ -136,11 +136,11 @@ static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PT
   85, 92, false, [] { return new Tracker(); }});
 
 // ---------------- SIXTEEN: 64 steps in four pages of 16, made for a controller with 16 push knobs (each knob a step on the page
-// it's on). A step is on or off, has a note (a step of the scale, two octaves from OCTAVE up) and a length (in steps; 0: the voice
+// it's on). A step is on or off, has a note (a step of the scale, up to RANGE octaves from OCTAVE up) and a length (in steps; 0: the voice
 // decides). Its steps are kept as the Tracker's are: column 1 [scale step, length], column 2 [1 when on] ----------------
 static const char* SIX_DIRS[4] = {"FORWARD", "BACKWARD", "BOUNCE", "RANDOM"};
 struct Sixteen : Module {
-  enum { SYNC, BPM, DIV, STEPS, DIR, CHANCE, VEL, OCT, PAGE, FOLLOW, LEARN, CLEAR };
+  enum { SYNC, BPM, DIV, STEPS, DIR, CHANCE, VEL, OCT, RANGE, PAGE, FOLLOW, LEARN, CLEAR };
   static constexpr int N = 64;
   int pos = -1, way = 1; double next = -1; ClockIn2 ck;
   Sixteen() { allocSeq(); for (int i = 0; i < N; i++) seq[si(i, 0) + 1].store(0);   // (lengths start at 0: the voice decides)
@@ -155,7 +155,7 @@ struct Sixteen : Module {
     else pos = (int)(rng.next() % (unsigned)n);
     disp[0].store((float)pos);
     if (seq[si(pos, 1)].load(std::memory_order_relaxed) < 0.5f || rng.uni() >= e[CHANCE]) return;
-    const int nsc = (int)scales()[scale()].steps.size(); const int deg = std::max(0, std::min(2 * nsc, (int)std::lround(seq[si(pos, 0)].load(std::memory_order_relaxed))));
+    const int nsc = (int)scales()[scale()].steps.size(); const int deg = std::max(0, std::min((int)e[RANGE] * nsc, (int)std::lround(seq[si(pos, 0)].load(std::memory_order_relaxed))));   // (RANGE: how many octaves up from OCTAVE)
     const float L = seq[si(pos, 0) + 1].load(std::memory_order_relaxed);
     Event ev; ev.note = note((int)e[OCT], deg); ev.vel = e[VEL]; ev.period = per; ev.ppb = ppb; ev.len = L >= 1 ? L * per : 0; emit(0, ev);
     disp[1].store(disp[1].load() + 1); disp[2].store((float)pos);   // (what played, for the screen to light)
@@ -175,7 +175,7 @@ struct Sixteen : Module {
 static Reg rSixteen(new ModuleDef{"sixteen", "SIXTEEN", Cat::Trig, {{"CLOCK", PType::Trig}, {"RESET", PType::Trig}}, {{"TRIG", PType::Trig}},
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.1f; return q; }(), [](float v) { return bpmText(v); }), "own"),
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("steps", "STEPS", 1, 64, 16), OP("dir", "DIRECTION", {SIX_DIRS[0], SIX_DIRS[1], SIX_DIRS[2], SIX_DIRS[3]}, 0),
-   pct("chance", "CHANCE", 1), pct("vel", "VELOCITY", 0.8f), OCTP("oct", 1, 7, 3), noMod(ST("page", "PAGE", 1, 4, 1)), OP("follow", "FOLLOW", {"OFF", "ON"}, 1),
+   pct("chance", "CHANCE", 1), pct("vel", "VELOCITY", 0.8f), OCTP("oct", 1, 7, 3), fmt(ST("range", "RANGE", 1, 4, 2), [](float v) { const int n = (int)std::lround(v); return std::to_string(n) + (n == 1 ? " OCTAVE" : " OCTAVES"); }), noMod(ST("page", "PAGE", 1, 4, 1)), OP("follow", "FOLLOW", {"OFF", "ON"}, 1),
    ACT("learn", "LEARN 64 STEPS"), ACT("clear", "CLEAR ALL"),
    // the learned controller (LEARN 64 STEPS): its channel, the first knob's CC and how it sends turns, the first push (a note or a CC)
    only(ST("mch", "MIDI CH", -1, 15, -1), "never"), only(ST("tcc", "TURN CC", -1, 127, -1), "never"), only(ST("tmode", "TURN MODE", 0, 4, 0), "never"),

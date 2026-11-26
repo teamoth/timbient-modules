@@ -424,6 +424,7 @@ static const std::map<std::string, std::string> PARAMS = {
   {"sixteen.steps", "Steps|How many steps it plays round (1 to 64: past 16, it goes on into the next page)."},
   {"sixteen.dir", "Direction|Which way it goes round: forward, backward, bouncing back and forth, or a random step each time."},
   {"sixteen.chance", "Chance|How likely each step that's on is to play."},
+  {"sixteen.range", "Range|How far its notes reach: 1 to 4 octaves up from OCTAVE (the knobs and dragging go no further). Notes already past a smaller range play at its top."},
   {"sixteen.page", "Page|The 16 steps on show (and that a controller's knobs reach first). Touching a knob on another page brings that page up."},
   {"sixteen.follow", "Follow|ON: the page on show follows the step playing (it waits a few seconds after you choose a page or touch a knob)."},
   {"sixteen.learn", "Learn 64 Steps|Teaches it your controller: turn the first knob of page 1, then push it. The rest follow on (the next numbers, or the next channels for the next pages). On a Faderfox EC4, pages 1 to 4 are its groups 1 to 4."},
