@@ -39,7 +39,7 @@ struct Clock : Module {
 };
 static Reg rClock(new ModuleDef{"clock", "CLOCK", Cat::Trig, {}, {{"PULSE", PType::Trig}, {"BAR", PType::Trig}},
   {tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), fmt([] { auto q = ST("bpm", "BPM", 20, 240, 72); q.step = 0.1f; return q; }(), [](float v) { return bpmText(v); }),   // on SHARED, this is the session's tempo (the top bar's)
-   OP("div", "STEP", {"1/4", "1/8", "1/16", "1/8T"}, 1), pct("swing", "SWING", 0), pct("vel", "VELOCITY", 1)}, 5, 68, false, [] { return new Clock(); }});
+   OP("div", "EVERY", {"1/4", "1/8", "1/16", "1/8T"}, 1), pct("swing", "SWING", 0), pct("vel", "VELOCITY", 1)}, 5, 68, false, [] { return new Clock(); }});
 
 // ---------------- CLUMP SEQ ----------------
 struct Clump : Module {

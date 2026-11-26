@@ -130,7 +130,7 @@ struct Tracker : Module {
 static Reg rTracker(new ModuleDef{"tracker", "TRACKER", Cat::Trig, {{"CLOCK", PType::Trig}, {"STEP ENTER", PType::Trig}},
   {{"TRIG", PType::Trig}, {"PULSE", PType::Trig}, {"CHN 1", PType::Trig}, {"CHN 2", PType::Trig}, {"CHN 3", PType::Trig}, {"CHN 4", PType::Trig}},
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.1f; return q; }(), [](float v) { return bpmText(v); }), "own"),
-   only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "LENGTH", 1, 128, 16), noMod(ST("estep", "STEP JUMP", 0, 8, 1)), OP("rec", "STEP RECORD", {"OFF", "ON"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
+   only(OP("div", "EVERY", {"1/4", "1/8", "1/16"}, 1), "free"), ST("len", "STEPS", 1, 128, 16), noMod(ST("estep", "STEP JUMP", 0, 8, 1)), OP("rec", "STEP RECORD", {"OFF", "ON"}, 0), pct("vel", "VELOCITY", 1), pct("chance", "CHANCE", 1),
    ACT("del", "CLEAR STEP"), ACT("clear", "CLEAR ALL"),
    only(ST("w1", "RANDOM 1", 0, 7, 0), "never"), only(ST("w2", "RANDOM 2", 0, 7, 0), "never"), only(ST("w3", "RANDOM 3", 0, 7, 0), "never"), only(ST("w4", "RANDOM 4", 0, 7, 0), "never")},
   85, 92, false, [] { return new Tracker(); }});
@@ -173,7 +173,7 @@ struct Sixteen : Module {
 };
 static Reg rSixteen(new ModuleDef{"sixteen", "SIXTEEN", Cat::Trig, {{"CLOCK", PType::Trig}, {"RESET", PType::Trig}}, {{"TRIG", PType::Trig}},
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.1f; return q; }(), [](float v) { return bpmText(v); }), "own"),
-   only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("steps", "STEPS", 1, 64, 16), OP("dir", "DIRECTION", {SIX_DIRS[0], SIX_DIRS[1], SIX_DIRS[2], SIX_DIRS[3]}, 0),
+   only(OP("div", "EVERY", {"1/4", "1/8", "1/16"}, 1), "free"), ST("steps", "STEPS", 1, 64, 16), OP("dir", "DIRECTION", {SIX_DIRS[0], SIX_DIRS[1], SIX_DIRS[2], SIX_DIRS[3]}, 0),
    pct("chance", "CHANCE", 1), pct("vel", "VELOCITY", 0.8f), OCTP("oct", 1, 7, 3), fmt(ST("range", "RANGE", 1, 4, 2), [](float v) { return std::to_string((int)std::lround(v)) + " OCT"; })   /* (short: it sits between - and +) */, noMod(ST("page", "PAGE", 1, 4, 1)), OP("follow", "FOLLOW", {"OFF", "ON"}, 1),
    ACT("learn", "LEARN 64 STEPS"), ACT("clear", "CLEAR ALL"),
    // the learned controller (LEARN 64 STEPS): its channel, the first knob's CC and how it sends turns, the first push (a note or a CC)
