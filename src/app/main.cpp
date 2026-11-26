@@ -24,7 +24,7 @@
 
 using namespace tb;
 
-static const char* VERSION = "0.58.1";
+static const char* VERSION = "0.58.3";
 static std::atomic<Engine*> gEngine{nullptr};   // the engine the sound card renders: the session on the screen (while blending, it plays the last one too)
 
 // ---------------- sound ----------------
