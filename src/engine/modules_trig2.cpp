@@ -175,7 +175,7 @@ struct Sixteen : Module {
 static Reg rSixteen(new ModuleDef{"sixteen", "SIXTEEN", Cat::Trig, {{"CLOCK", PType::Trig}, {"RESET", PType::Trig}}, {{"TRIG", PType::Trig}},
   {only(tog(OP("sync", "TEMPO", {"OWN", "SHARED"}, 1)), "free"), only(fmt([] { auto q = ST("bpm", "BPM", 20, 240, 90); q.step = 0.1f; return q; }(), [](float v) { return bpmText(v); }), "own"),
    only(OP("div", "STEP", {"1/4", "1/8", "1/16"}, 1), "free"), ST("steps", "STEPS", 1, 64, 16), OP("dir", "DIRECTION", {SIX_DIRS[0], SIX_DIRS[1], SIX_DIRS[2], SIX_DIRS[3]}, 0),
-   pct("chance", "CHANCE", 1), pct("vel", "VELOCITY", 0.8f), OCTP("oct", 1, 7, 3), fmt(ST("range", "RANGE", 1, 4, 2), [](float v) { const int n = (int)std::lround(v); return std::to_string(n) + (n == 1 ? " OCTAVE" : " OCTAVES"); }), noMod(ST("page", "PAGE", 1, 4, 1)), OP("follow", "FOLLOW", {"OFF", "ON"}, 1),
+   pct("chance", "CHANCE", 1), pct("vel", "VELOCITY", 0.8f), OCTP("oct", 1, 7, 3), fmt(ST("range", "RANGE", 1, 4, 2), [](float v) { return std::to_string((int)std::lround(v)) + " OCT"; })   /* (short: it sits between - and +) */, noMod(ST("page", "PAGE", 1, 4, 1)), OP("follow", "FOLLOW", {"OFF", "ON"}, 1),
    ACT("learn", "LEARN 64 STEPS"), ACT("clear", "CLEAR ALL"),
    // the learned controller (LEARN 64 STEPS): its channel, the first knob's CC and how it sends turns, the first push (a note or a CC)
    only(ST("mch", "MIDI CH", -1, 15, -1), "never"), only(ST("tcc", "TURN CC", -1, 127, -1), "never"), only(ST("tmode", "TURN MODE", 0, 4, 0), "never"),
