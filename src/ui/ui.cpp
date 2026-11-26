@@ -849,7 +849,10 @@ void Ui::draw(Canvas& c, float dt) {
   }
   int nIn = 0; for (auto& d : midiDevs) if (d.input && d.open) nIn++;
   char info[64]; std::snprintf(info, sizeof info, "MIDI %d  AUDIO %d%%", nIn, (int)std::lround(eng->cpuLoad.load() * 100));   // (how many MIDI inputs are listened to: SETTINGS > MIDI > DEVICES)
-  int ix = ix0 - Canvas::tw(info) - 10; infoX0 = ix; infoX1 = ix + Canvas::tw(info);
+  const std::string drops = dropouts > 0 ? std::to_string(dropouts) + (dropouts == 1 ? " DROP" : " DROPS") : std::string();   // DROPOUTS since last cleared (a tap clears them)
+  const int dw = drops.empty() ? 0 : Canvas::tw(drops) + 8;
+  int ix = ix0 - Canvas::tw(info) - 10 - dw; infoX0 = ix; infoX1 = ix + Canvas::tw(info);
+  if (dw && ix > bx) { const int dx = infoX1 + 8; c.text(drops, dx, 3, 14); barHits.push_back({dx - 2, dx + Canvas::tw(drops) + 2, [this] { dropouts = 0; status("DROPOUT COUNT CLEARED", 1.5f); }, "DROPS"}); }
   blendBarX0 = blendBarX1 = 0;
   if (blendAt >= 0) {   // BLEND TO: how far it has got, and NOW (finish it in a few seconds) or CANCEL (back to where it came from)
     const std::string a = "BLEND", ps = blendPaused ? "GO" : "PAUSE", n = "NOW", k = "CANCEL"; const int bw = 60, w = Canvas::tw(a) + 4 + bw + 6 + Canvas::tw(ps) + 6 + Canvas::tw(n) + 6 + Canvas::tw(k);

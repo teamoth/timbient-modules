@@ -714,6 +714,7 @@ static const std::map<std::string, std::string> OTHER = {
   {"GROUPS", "Groups|Modules you saved together (right-click one, or a selection: SAVE AS A GROUP). Pick one to add it, wired up as it was. Groups are files that keep their sounds, so you can share them too."},
   {"WINDOW", "Window|Back to a window."},
   {"ZOOM", "Zoom|Smaller or bigger (Ctrl or Cmd and the mouse wheel too)."},
+  {"DROPS", "Dropouts|How many times the sound has missed its deadline (a click or a gap) since this was last cleared. Tap it to clear it. A bigger AUDIO BUFFER (SETTINGS) gives the computer more time."},
   {"AUDIO", "Audio|How much of the time the sound has, the modules are using. Near 100% it may crackle: a bigger AUDIO BUFFER helps."},
 };
 

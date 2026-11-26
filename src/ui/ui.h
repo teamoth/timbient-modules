@@ -156,6 +156,7 @@ public:
   std::function<void(const std::vector<int>&)> onDuplicateMany, onCopy, onSaveGroup;   // the app: copies with the cables between them; the clipboard; a group file
   std::function<void()> onPaste;              // Cmd/Ctrl+V, or PASTE in the right-click menu: the copied modules, at the pointer
   std::function<void(int, int)> onGroups;     // ADD > GROUPS: the app's list of saved groups
+  int dropouts = 0;   // sound dropouts since the count was last cleared (shown in the top bar; the app counts them, a tap there clears them)
   float lastPX = 0, lastPY = 0;               // where the pointer last was (canvas pixels): pasting goes there
   int lastTouched = -1;                      // the module last tapped (Ctrl/Cmd + D duplicates it)
   void pointerMove(float x, float y);

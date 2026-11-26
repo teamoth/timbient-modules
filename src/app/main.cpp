@@ -911,7 +911,7 @@ int main(int argc, char** argv) {
           const std::string want = up->dev.empty() ? (names.empty() ? std::string() : names[0]) : up->dev; if (!want.empty()) up->m->devSlot.store(midi.openOutput(want)); } } }
     { static float armT = 0, quietT = 0; static unsigned seen = 0; quietT -= ldt;   // DROPOUTS: said on screen (at most every few seconds)
       if (!gDropArm.load()) { armT += ldt; if (armT > 2) { armT = 0; gDropArm.store(true); seen = gDropouts.load(); } }
-      const unsigned n = gDropouts.load(); if (n != seen) { const unsigned k = n - seen; seen = n;
+      const unsigned n = gDropouts.load(); if (n != seen) { const unsigned k = n - seen; seen = n; ui.dropouts += (int)k;   // (kept in the top bar too, until tapped)
         if (quietT <= 0) { quietT = 4; ui.status(std::string(k > 1 ? "SOUND DROPOUTS" : "A SOUND DROPOUT") + (curEng->blending() ? " AS THE BLEND WENT ON" : "") + ": THE COMPUTER COULDN'T KEEP UP. A BIGGER BUFFER (SETTINGS) GIVES IT MORE TIME", 5); } } }
     // a Grain Looper with nothing in it catches what it hears, every couple of seconds, until it has something
     { bool want = false; for (auto& up : ui.mods) if (up->m->def->type == "audioin") want = true;   // AUDIO IN: the input open while there's one (closed a little after the last goes)

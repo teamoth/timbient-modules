@@ -563,6 +563,10 @@ int main(int argc, char** argv) {
     ui.openSessions("/s", false); ui.browserPick(2); ui.browserLoad(); chk(got == "/s/amber dunes (f_yo).tmbnt" && !blended, "ENTER: OPEN");
     ui.openBrowser(0, 0, "/s"); chk(ui.br.items.size() == 3 && ui.br.items[2].name == "kick.wav", "the sound browser still lists sounds"); ui.closeBrowser();
     ui.onList = nullptr; ui.onSessionPick = nullptr; if (!ok) fails++; std::printf("sessions picker:%s%s\n", ok ? " all fine" : "  WRONG", res.c_str()); }
+  // DROPOUTS: counted in the top bar until a tap clears them
+  { Canvas c; c.fine = true; c.resize(700, 400); ui.dropouts = 2; c.beginFrame(); ui.draw(c, 0.016f); int x = -1; for (auto& r : c.runs) if (r.s == "2 DROPS") x = r.x;
+    if (x >= 0) { ui.pointerDown((float)x + 4, 4); ui.pointerUp((float)x + 4, 4); } c.beginFrame(); ui.draw(c, 0.016f); bool gone = true; for (auto& r : c.runs) if (r.s == "2 DROPS") gone = false;
+    const bool ok = x >= 0 && ui.dropouts == 0 && gone; if (!ok) fails++; std::printf("dropout count:%s (x %d, left %d)\n", ok ? " all fine" : "  WRONG", x, ui.dropouts); }
   // PITCH SHIFT's SHIFT jumps by octaves on a tap, like the other pitch settings
   { const bool ok = Ui::octaveJumps(findDef("pitchshift"), "shift") && Ui::octaveJumps(findDef("pad"), "pitch") && !Ui::octaveJumps(findDef("pitchshift"), "fine");
     if (!ok) fails++; std::printf("pitch shift octave jumps:%s\n", ok ? " all fine" : "  WRONG"); }
