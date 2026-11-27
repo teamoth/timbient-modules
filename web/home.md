@@ -15,27 +15,27 @@ A pixelated, modular patch-bay playground for ambient and experimental music: se
 
 Also: [Windows 32-bit](https://github.com/teamoth/timbient-modules/releases/download/latest/Timbient-Modules-Windows-32bit.zip) · [all downloads](https://github.com/teamoth/timbient-modules/releases/tag/latest)
 
-## What it is
+## What is it?
 
-Well, it's sort of growing and developing as I figure out what I want from an ambient music making app, but where this is different from a DAW is that there isn't just one BPM, and you don't need to input specific notes. Everything _can_ be clock-synced together (and there _are_ note-entry modules), but the idea is that separate voices can have completely different timings from each other, and you choose a scale, key and range in which notes are generated.
+Well, it's sort of growing and developing as I figure out what I want from an ambient music making app, but where this is different from a DAW is that there isn't just one BPM, and you don't need to input specific notes. Everything *can* be clock-synced together (and there *are* note-entry modules), but the idea is that separate voices can have completely different timings from each other, and you choose a scale, key and range in which notes are generated.
 
 Sessions can be blended!!! While one plays, the next loads in the background, then fades in as the first fades out, keeping the overall level steady. A blend can run over a set time or be moved by hand, by dragging or with a MIDI knob, which makes it easy to drift from one piece to the next in a live set.
 
 The plan is to keep it as CPU light as possible, so that it'll run well on older hardware too, including 32-bit Windows machines.
 
-Things that inspired timbient modules: SunVox, Monome Norns scripts, Polyend Tracker, Modular synths.
+Things that inspired timbient modules: SunVox, Monome Norns, Polyend Tracker, Modular synths.
 
 [timbient instagram](https://www.instagram.com/timbient/)
 
 ## Installing
 
-**Mac** (Intel and Apple Silicon, macOS 10.13 or later): unzip, drag *Timbient Modules.app* into Applications, then run this once in Terminal (the app isn't signed with an Apple developer certificate):
+**Mac** (Intel and Apple Silicon, macOS 10.13 or later): unzip, drag *timbient modules.app* into Applications, then run this once in Terminal (the app isn't signed with an Apple developer certificate):
 
 ```
 xattr -cr "/Applications/Timbient Modules.app"
 ```
 
-**Windows**: unzip and run *Timbient Modules.exe*. If Windows warns, click *More info*, then *Run anyway*.
+**Windows**: unzip and run *timbient modules.exe*. If Windows warns, click *More info*, then *Run anyway*.
 
 **Linux**: unpack and run *timbient-modules*.
 
